@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.5.5
-// @description  只需输入一次问题，就能自动去各家大模型网页提问，免去手动粘贴问题到其他网页、并苦苦等待的麻烦。注意：浏览器要给扩展开启开发者模式才能使用。支持范围：DeepSeek，Kimi，ChatGPT，Gemini，通义千问，豆包，ChatGPT（zchat原生界面版），更多介绍见本页面下方。
+// @version      1.5.13
+// @description  只需输入一次问题，就能自动去各家大模型网页提问，免去手动粘贴问题到其他网页、并苦苦等待的麻烦。注意：浏览器要给扩展开启开发者模式才能使用。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini，更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -11,6 +11,7 @@
 // @match        https://www.doubao.com/*
 // @match        https://chat.zchat.tech/*
 // @match        https://gemini.google.com/*
+// @match        https://chat.qwen.ai/*
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -28,6 +29,7 @@
     console.log("ai script, start");
 
     let MAX_QUEUE = 10; // 历史对话的记忆数量
+    const version = "1.5.13";
 
     const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
     const HASH_LEN = 16; // 问题的哈希长度
@@ -35,8 +37,8 @@
     const maxRetries = 150;
     const OPEN_GAP = 300; // 打开网页的间隔
 
-    const version = "1.5.5";
     let testLocalFlag = 1;
+    const HIBERNATE_GAP = 600; // 单位：秒
 
     // 存储时的特征词
     const T = "tool-";
@@ -49,7 +51,8 @@
     let DOMAIN = "https://www.ratetend.com:5001";
     let testDOMAIN = "https://www.ratetend.com:5002";
     // let testDOMAIN = "http://localhost:8002";
-
+    const DEVELOPER_USERID = "7bca846c-be51-4c49-ba2b6"
+    const TEST_KIMI_WIDTH = "90%";
 
     let userid = getGV("userid");
     if(isEmpty(userid)){
@@ -58,7 +61,7 @@
 
     // 本地调试用，连接本地服务器
     }else{
-        if(userid === "7bca846c-be51-4c49-ba2b6"){
+        if(userid === DEVELOPER_USERID){
             MAX_QUEUE = 3;
             if(testLocalFlag === 1){
                 DOMAIN = testDOMAIN;
@@ -77,13 +80,23 @@
         "chatgpt": 3,
         "doubao": 4,
         "zchat": 5,
-        "gemini": 6
+        "gemini": 6,
+        "qwen": 7
     };
     // 根据当前网址关键词，设置site值
     for (const keyword in keywords) {
         if (url.indexOf(keyword) > -1) {
             site = keywords[keyword];
             break;
+        }
+    }
+
+    setTimeout(developTest, 2000);
+    function developTest(){
+        // kimi表格太窄，脚本作者自测调大用
+        if(DEVELOPER_USERID === userid && site === 0){
+            // let kimiPage = document.getElementsByClassName("chat-content-list")[0];
+            // kimiPage.style.maxWidth = TEST_KIMI_WIDTH;
         }
     }
 
@@ -95,7 +108,8 @@
         3: ["https://chatgpt.com/", "c/"],
         4: ["https://www.doubao.com/chat", "/"],
         5: ["https://chat.zchat.tech/", "c/"],
-        6: ["https://gemini.google.com/app", "/"]
+        6: ["https://gemini.google.com/app", "/"],
+        7: ["https://chat.qwen.ai/", "c/"]
     };
     const newSites = Object.fromEntries(
         Object.entries(webSites).map(([key, [baseUrl]]) => [key, baseUrl])
@@ -117,7 +131,8 @@
         3: pat1,
         4: pat3,
         5: pat1,
-        6: pat3
+        6: pat3,
+        7: pat1
     }
 
     let startUrl = DOMAIN + "/start";
@@ -127,6 +142,65 @@
         "version": version
     };
     http(startUrl, startData);
+
+    // 面板数据
+    const CHOSEN_SITE = "chosenSite";
+    const panel = document.createElement('div');
+    const contentContainer = document.createElement('div');
+    let panelDelay = site === 5 ? 500 : 50;
+
+    // 模式切换相关变量
+    let isCompactMode = false;
+    let originalHTML = contentContainer.innerHTML;
+
+    const wordConfig = [
+        { site: 1, word: 'DeepSeek', alias: 'D'},
+        { site: 0, word: 'Kimi', alias: 'K' },
+        { site: 5, word: 'ChatGPT (zchat)', alias: 'Z' },
+        { site: 3, word: 'ChatGPT (官网)', alias: 'C' },
+        { site: 2, word: '通义千问', alias: '通' },
+        { site: 4, word: '豆包', alias: '豆' },
+        { site: 6, word: 'Gemini', alias: 'G' },
+        { site: 7, word: 'qwen', alias: 'q' }
+    ];
+
+    // 生成映射
+    const wordToSite = {};
+    const siteToWord = {};
+    const siteToAlias = {};
+    const wordToAlias = {};
+    const words = [];
+
+    wordConfig.forEach(({ site, word, alias }) => {
+        words.push(word);
+
+        wordToSite[word] = site;
+        siteToWord[site] = word;
+        siteToAlias[site] = alias;
+        wordToAlias[word] = alias;
+    });
+
+    // 从url提取各大模型网站的对话唯一标识
+    function getChatId(){
+        let url = getUrl();
+        if(isEmpty(url)){
+            return "";
+        }
+        if(site === 4 && url.indexOf("local") > -1){
+            return "";
+        }
+        const regex = new RegExp(pattern[site]);
+        let ret = url.match(regex);
+        if(isEmpty(ret)){
+            return "";
+        }
+        return ret[0];
+    }
+
+    function getUrl(){
+        return window.location.href;
+    }
+
 
     // 面板样式
     const panelStyle = `
@@ -184,62 +258,6 @@
             border-bottom: 8px solid transparent;
     `;
 
-    // 面板数据
-    const CHOSEN_SITE = "chosenSite";
-    const panel = document.createElement('div');
-    const contentContainer = document.createElement('div');
-    let panelDelay = site === 5 ? 500 : 50;
-
-    // 模式切换相关变量
-    let isCompactMode = false;
-    let originalHTML = contentContainer.innerHTML;
-
-    const wordConfig = [
-        { site: 1, word: 'DeepSeek', alias: 'D'},
-        { site: 0, word: 'Kimi', alias: 'K' },
-        { site: 5, word: 'ChatGPT (zchat)', alias: 'Z' },
-        { site: 3, word: 'ChatGPT (官网)', alias: 'C' },
-        { site: 2, word: '通义千问', alias: '通' },
-        { site: 4, word: '豆包', alias: '豆' },
-        { site: 6, word: 'Gemini', alias: 'G' }
-    ];
-
-    // 生成映射
-    const wordToSite = {};
-    const siteToWord = {};
-    const siteToAlias = {};
-    const wordToAlias = {};
-    const words = [];
-
-    wordConfig.forEach(({ site, word, alias }) => {
-        words.push(word);
-
-        wordToSite[word] = site;
-        siteToWord[site] = word;
-        siteToAlias[site] = alias;
-        wordToAlias[word] = alias;
-    });
-
-    // 从url提取各大模型网站的对话唯一标识
-    function getChatId(){
-        let url = getUrl();
-        if(isEmpty(url)){
-            return "";
-        }
-        if(site === 4 && url.indexOf("local") > -1){
-            return "";
-        }
-        const regex = new RegExp(pattern[site]);
-        let ret = url.match(regex);
-        if(isEmpty(ret)){
-            return "";
-        }
-        return ret[0];
-    }
-
-    function getUrl(){
-        return window.location.href;
-    }
 
     // 给发送环节加锁。能否不要这个锁？不能，因为send环节是异步轮询，新问题来时send未必轮询结束
     let sendLock = false;
@@ -331,11 +349,16 @@
             };
         http(remoteUrl, data);
 
+        let isDisable = getGV("disable");
+        if(isDisable){
+            return;
+        }
+
         let openCount = 0;
         sites.forEach(site => {
             let lastHeartbeat = getGV(HEART_KEY_PREFIX + site);
-            // 如果从节点70秒没有更新心跳时刻，则认为已经关闭，需打开
-            if(isEmpty(lastHeartbeat) || Date.now() - lastHeartbeat > 1000* 70){
+            // 如果从节点 xx 秒没有更新心跳时刻，则认为已经关闭，需打开
+            if(isEmpty(lastHeartbeat) || Date.now() - lastHeartbeat > 1000 * HIBERNATE_GAP){
                 openCount++;
                 setTimeout(function(){
                     window.open(newSites[site], '_blank');
@@ -672,6 +695,7 @@
         }, checkGap);
     }
 
+    // 不同网站分别处理css元素
     function getQuestionList() {
         let questions = [];
         switch (site) {
@@ -680,9 +704,8 @@
                 break;
             case 1:
                 {
-                    let scrollable = document.getElementsByClassName("scrollable")[1];
-                    if (!isEmpty(scrollable)) {
-                        let list = scrollable.firstElementChild.firstElementChild.children;
+                    let list = document.getElementsByClassName("ds-message");
+                    if (!isEmpty(list)) {
                         let elementsArray = Array.from(list);
                         questions = elementsArray.filter((item, index) => index % 2 === 0);
                     }
@@ -705,6 +728,9 @@
             case 6:
                 questions = document.getElementsByTagName('user-query');
                 break;
+            case 7:
+                questions = document.getElementsByClassName("user-message-content");;
+                break;
             default:
                 break;
         }
@@ -716,9 +742,9 @@
             case 0:
                 return document.getElementsByClassName('chat-input-editor')[0];
             case 1:
-                return document.getElementById('chat-input');
             case 2:
             case 4:
+            case 7:
                 return document.getElementsByTagName('textarea')[0];
             case 3:
             case 5:
@@ -746,6 +772,8 @@
                 return document.getElementById('flow-end-msg-send');
             case 6:
                 return document.querySelector('button.send-button');
+            case 7:
+                return document.getElementById('send-message-button');
         }
 	}
 
@@ -853,18 +881,22 @@
           .filter(word => document.getElementById(`word-${word}`)?.checked)
           .map(word => wordToSite[word]);
 
+        setGV(CHOSEN_SITE, selectedSites);
+        console.log('Current selected sites:', selectedSites);
+
+        let isDisable = getGV("disable");
+        if(isDisable){
+            return;
+        }
         let siteOfWord = wordToSite[word];
         if (siteOfWord!== site && selectedSites.includes(siteOfWord)) {
             let lastHeartbeat = getGV(HEART_KEY_PREFIX + siteOfWord);
-            if(isEmpty(lastHeartbeat) || Date.now() - lastHeartbeat > 1000* 70){
+            if(isEmpty(lastHeartbeat) || Date.now() - lastHeartbeat > 1000 * HIBERNATE_GAP){
                 setTimeout(function(){
                     window.open(newSites[siteOfWord], '_blank');
                 }, OPEN_GAP);
             }
         }
-
-        setGV(CHOSEN_SITE, selectedSites);
-        console.log('Current selected sites:', selectedSites);
     };
 
     // 存储-->复选框
@@ -938,9 +970,9 @@
         reloadDisableStatus();
 
         setTimeout(function(){
-            if(isEmpty(getGV("notice2"))){
-                alert("网页右下角提供了多选面板。\n点击网页空白处可缩略它；点击缩略后的面板可恢复原样。\n点击“禁用”可一键关闭同步提问。\n本提示只会出现一次");
-                setGV("notice2", 1);
+            if(isEmpty(getGV("notice4"))){
+                alert("1、网页右下角提供了多选面板。\n点击网页空白处可缩略它；点击缩略后的面板可恢复原样；\n点击“禁用”可一键关闭同步提问。\n\n2、自动提问的前提，是先手动打开其他家大模型网页。\n\n本提示只会出现一次。");
+                setGV("notice4", 1);
             }
         }, 800);
     }, panelDelay);
@@ -973,8 +1005,8 @@
     }
 
     function reloadDisableStatus(){
-        let disableStatus = getGV("disable");
-        let status = disableStatus === true ? true : false;
+        let isDisable = getGV("disable");
+        let status = isDisable ? true : false;
         changeDisable(status);
     }
 
