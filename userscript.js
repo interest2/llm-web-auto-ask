@@ -2,7 +2,7 @@
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
 // @version      1.5.13
-// @description  只需输入一次问题，就能自动去各家大模型网页提问，免去手动粘贴问题到其他网页、并苦苦等待的麻烦。注意：浏览器要给扩展开启开发者模式才能使用。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini，更多介绍见本页面下方。
+// @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了反复粘贴问题到各家网页并等待的麻烦。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini，更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -37,7 +37,7 @@
     const maxRetries = 150;
     const OPEN_GAP = 300; // 打开网页的间隔
 
-    let testLocalFlag = 1;
+    let testLocalFlag = 0;
     const HIBERNATE_GAP = 600; // 单位：秒
 
     // 存储时的特征词
@@ -141,7 +141,7 @@
         "site": site,
         "version": version
     };
-    http(startUrl, startData);
+    remoteHttp(startUrl, startData);
 
     // 面板数据
     const CHOSEN_SITE = "chosenSite";
@@ -347,7 +347,7 @@
                 "sites": sites,
 
             };
-        http(remoteUrl, data);
+        remoteHttp(remoteUrl, data);
 
         let isDisable = getGV("disable");
         if(isDisable){
@@ -368,7 +368,7 @@
 
     }
 
-    function http(remoteUrl, data){
+    function remoteHttp(remoteUrl, data){
         GM_xmlhttpRequest({
             method: "POST",
             url: remoteUrl,
