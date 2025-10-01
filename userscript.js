@@ -73,15 +73,25 @@
     let url = window.location.href;
     const HEART_KEY_PREFIX ="lastHeartbeat-";
 
+    // 定义站点常量
+    const KIMI = 0;
+    const DEEPSEEK = 1;
+    const TONGYI = 2;
+    const CHATGPT = 3;
+    const DOUBAO = 4;
+    const ZCHAT = 5;
+    const GEMINI = 6;
+    const QWEN = 7;
+
     const keywords = {
-        "kimi": 0,
-        "deepseek": 1,
-        "tongyi": 2,
-        "chatgpt": 3,
-        "doubao": 4,
-        "zchat": 5,
-        "gemini": 6,
-        "qwen": 7
+        "kimi": KIMI,
+        "deepseek": DEEPSEEK,
+        "tongyi": TONGYI,
+        "chatgpt": CHATGPT,
+        "doubao": DOUBAO,
+        "zchat": ZCHAT,
+        "gemini": GEMINI,
+        "qwen": QWEN
     };
     // 根据当前网址关键词，设置site值
     for (const keyword in keywords) {
@@ -94,7 +104,7 @@
     setTimeout(developTest, 2000);
     function developTest(){
         // kimi表格太窄，脚本作者自测调大用
-        if(DEVELOPER_USERID === userid && site === 0){
+        if(DEVELOPER_USERID === userid && site === KIMI){
             // let kimiPage = document.getElementsByClassName("chat-content-list")[0];
             // kimiPage.style.maxWidth = TEST_KIMI_WIDTH;
         }
@@ -102,14 +112,14 @@
 
     // 各家大模型的网址（新对话，历史对话的前缀）
     const webSites = {
-        0: ["https://www.kimi.com/", "chat/"],
-        1: ["https://chat.deepseek.com/", "a/chat/s/"],
-        2: ["https://www.tongyi.com/", "?sessionId="],
-        3: ["https://chatgpt.com/", "c/"],
-        4: ["https://www.doubao.com/chat", "/"],
-        5: ["https://chat.zchat.tech/", "c/"],
-        6: ["https://gemini.google.com/app", "/"],
-        7: ["https://chat.qwen.ai/", "c/"]
+        [KIMI]: ["https://www.kimi.com/", "chat/"],
+        [DEEPSEEK]: ["https://chat.deepseek.com/", "a/chat/s/"],
+        [TONGYI]: ["https://www.tongyi.com/", "?sessionId="],
+        [CHATGPT]: ["https://chatgpt.com/", "c/"],
+        [DOUBAO]: ["https://www.doubao.com/chat", "/"],
+        [ZCHAT]: ["https://chat.zchat.tech/", "c/"],
+        [GEMINI]: ["https://gemini.google.com/app", "/"],
+        [QWEN]: ["https://chat.qwen.ai/", "c/"]
     };
     const newSites = Object.fromEntries(
         Object.entries(webSites).map(([key, [baseUrl]]) => [key, baseUrl])
@@ -119,20 +129,21 @@
     );
 
 
-    let pat0 = "[0-9a-z]{20}";
-    let pat1 = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-    let pat2 = "[0-9a-f]{32}";
-    let pat3 = "[0-9a-f]{16}";
+    // 各大模型对话ID的正则表达式模式
+    const PATTERN_KIMI = "[0-9a-z]{20}";
+    const PATTERN_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
+    const PATTERN_MD5 = "[0-9a-f]{32}";
+    const PATTERN_HEX16 = "[0-9a-f]{16}";
 
     const pattern ={
-        0: pat0,
-        1: pat1,
-        2: pat2,
-        3: pat1,
-        4: pat3,
-        5: pat1,
-        6: pat3,
-        7: pat1
+        [KIMI]: PATTERN_KIMI,
+        [DEEPSEEK]: PATTERN_UUID,
+        [TONGYI]: PATTERN_MD5,
+        [CHATGPT]: PATTERN_UUID,
+        [DOUBAO]: PATTERN_HEX16,
+        [ZCHAT]: PATTERN_UUID,
+        [GEMINI]: PATTERN_HEX16,
+        [QWEN]: PATTERN_UUID
     }
 
     let startUrl = DOMAIN + "/start";
@@ -147,21 +158,21 @@
     const CHOSEN_SITE = "chosenSite";
     const panel = document.createElement('div');
     const contentContainer = document.createElement('div');
-    let panelDelay = site === 5 ? 500 : 50;
+    let panelDelay = site === ZCHAT ? 500 : 50;
 
     // 模式切换相关变量
     let isCompactMode = false;
     let originalHTML = contentContainer.innerHTML;
 
     const wordConfig = [
-        { site: 1, word: 'DeepSeek', alias: 'D'},
-        { site: 0, word: 'Kimi', alias: 'K' },
-        { site: 5, word: 'ChatGPT (zchat)', alias: 'Z' },
-        { site: 3, word: 'ChatGPT (官网)', alias: 'C' },
-        { site: 2, word: '通义千问', alias: '通' },
-        { site: 4, word: '豆包', alias: '豆' },
-        { site: 6, word: 'Gemini', alias: 'G' },
-        { site: 7, word: 'qwen', alias: 'q' }
+        { site: DEEPSEEK, word: 'DeepSeek', alias: 'D'},
+        { site: KIMI, word: 'Kimi', alias: 'K' },
+        { site: ZCHAT, word: 'ChatGPT (zchat)', alias: 'Z' },
+        { site: CHATGPT, word: 'ChatGPT (官网)', alias: 'C' },
+        { site: TONGYI, word: '通义千问', alias: '通' },
+        { site: DOUBAO, word: '豆包', alias: '豆' },
+        { site: GEMINI, word: 'Gemini', alias: 'G' },
+        { site: QWEN, word: 'qwen', alias: 'q' }
     ];
 
     // 生成映射
@@ -186,7 +197,7 @@
         if(isEmpty(url)){
             return "";
         }
-        if(site === 4 && url.indexOf("local") > -1){
+        if(site === DOUBAO && url.indexOf("local") > -1){
             return "";
         }
         const regex = new RegExp(pattern[site]);
@@ -510,7 +521,7 @@
         let lastUrl = getUrl();
         let count = 0;
         let waitTime = 15000;
-        if(site === 3){
+        if(site === CHATGPT){
             waitTime *= 2;
         }
 
@@ -598,7 +609,7 @@
 
     function sendContent(textarea, content, chatId){
         // 当豆包是新对话，元素不可见会异常，故适当延迟
-        let sendGap = (site === 4 && isEmpty(chatId)) ? 1500 : 100;
+        let sendGap = (site === DOUBAO && isEmpty(chatId)) ? 1500 : 100;
         setTimeout(function(){
             textarea.focus();
             document.execCommand('insertText', false, content);
@@ -699,10 +710,10 @@
     function getQuestionList() {
         let questions = [];
         switch (site) {
-            case 0:
+            case KIMI:
                 questions = document.getElementsByClassName("user-content");
                 break;
-            case 1:
+            case DEEPSEEK:
                 {
                     let list = document.getElementsByClassName("ds-message");
                     if (!isEmpty(list)) {
@@ -711,24 +722,24 @@
                     }
                 }
                 break;
-            case 2:
+            case TONGYI:
                 questions = document.querySelectorAll('[class^="bubble-"]');
                 break;
-            case 3:
-            case 5:
+            case CHATGPT:
+            case ZCHAT:
                 questions = document.querySelectorAll('[data-message-author-role="user"]');
                 break;
-            case 4:
+            case DOUBAO:
                 {
                     let list = document.querySelectorAll('[data-testid="message_text_content"]');
                     let elementsArray = Array.from(list);
                     questions = elementsArray.filter((item, index) => index % 2 === 0);
                 }
                 break;
-            case 6:
+            case GEMINI:
                 questions = document.getElementsByTagName('user-query');
                 break;
-            case 7:
+            case QWEN:
                 questions = document.getElementsByClassName("user-message-content");;
                 break;
             default:
@@ -739,17 +750,17 @@
 
     function getTextArea(site) {
         switch (site) {
-            case 0:
+            case KIMI:
                 return document.getElementsByClassName('chat-input-editor')[0];
-            case 1:
-            case 2:
-            case 4:
-            case 7:
+            case DEEPSEEK:
+            case TONGYI:
+            case DOUBAO:
+            case QWEN:
                 return document.getElementsByTagName('textarea')[0];
-            case 3:
-            case 5:
+            case CHATGPT:
+            case ZCHAT:
                 return document.getElementById('prompt-textarea');
-            case 6:
+            case GEMINI:
                 return document.getElementsByClassName('textarea')[0];
             default:
                 return null;
@@ -758,21 +769,21 @@
 
 	function getBtn(site){
         switch(site){
-            case 0:
+            case KIMI:
                 return document.getElementsByClassName('send-button')[0];
-            case 1:
+            case DEEPSEEK:
                 var btns = document.querySelectorAll('[role="button"]');
                 return btns[btns.length - 1];
-            case 2:
+            case TONGYI:
                 return document.querySelectorAll('[class^="operateBtn-"], [class*=" operateBtn-"]')[0];
-            case 3:
-            case 5:
+            case CHATGPT:
+            case ZCHAT:
                 return document.getElementById('composer-submit-button');
-            case 4:
+            case DOUBAO:
                 return document.getElementById('flow-end-msg-send');
-            case 6:
+            case GEMINI:
                 return document.querySelector('button.send-button');
-            case 7:
+            case QWEN:
                 return document.getElementById('send-message-button');
         }
 	}
@@ -944,8 +955,8 @@
     });
 
     // zchat特殊处理
-    if(site === 5){
-    // if(site === 5 && getGV(DEFAULT_DISPLAY_KEY) === true){
+    if(site === ZCHAT){
+    // if(site === ZCHAT && getGV(DEFAULT_DISPLAY_KEY) === true){
         let lastVisibleState = false; // 记录上一次的可见状态
         const observer = new IntersectionObserver((entries, instance) => {
             entries.forEach(entry => {
