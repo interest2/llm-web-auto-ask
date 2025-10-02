@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.5.13
-// @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了反复粘贴问题到各家网页并等待的麻烦。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini，更多介绍见本页面下方。
+// @version      1.5.14
+// @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了反复粘贴提问并等待的麻烦。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini，更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -29,7 +29,7 @@
     console.log("ai script, start");
 
     let MAX_QUEUE = 10; // 历史对话的记忆数量
-    const version = "1.5.13";
+    const version = "1.5.14";
 
     const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
     const HASH_LEN = 16; // 问题的哈希长度
@@ -351,6 +351,11 @@
 
         addCurrentToStorage();
 
+        let isDisable = getGV("disable");
+        if(isDisable){
+            return;
+        }
+
         let remoteUrl = DOMAIN + "/masterQ";
         let sites = getSitesExcludeCurrent();
         let data = {
@@ -359,11 +364,6 @@
 
             };
         remoteHttp(remoteUrl, data);
-
-        let isDisable = getGV("disable");
-        if(isDisable){
-            return;
-        }
 
         let openCount = 0;
         sites.forEach(site => {
