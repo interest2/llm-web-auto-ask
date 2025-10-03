@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.6.2
-// @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了各处粘贴提问并等待的麻烦。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini……Claude的启用及其他更多介绍见本页面下方。
+// @version      1.6.3
+// @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了各处粘贴提问并等待的麻烦。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini……Claude 的启用及其他更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -31,7 +31,7 @@
 
     const ENABLE_CLAUDE = 0; // 是否启用Claude：0 关闭，1 启用
     let MAX_QUEUE = 10; // 历史对话的记忆数量
-    const version = "1.6.2";
+    const version = "1.6.3";
 
     const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
     const HASH_LEN = 16; // 问题的哈希长度
@@ -1472,6 +1472,7 @@
                 case 'donated':
                     console.log('用户已打赏');
                     message = '感谢资瓷！';
+                    setGV('never_remind_appreciate', true);
                     break;
                 case 'next_time':
                     console.log('用户选择下次一定');
