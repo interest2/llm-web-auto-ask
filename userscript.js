@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.5.14
-// @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了反复粘贴提问并等待的麻烦。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini，更多介绍见本页面下方。
+// @version      1.6.2
+// @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了各处粘贴提问并等待的麻烦。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini……Claude的启用及其他更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -12,6 +12,7 @@
 // @match        https://chat.zchat.tech/*
 // @match        https://gemini.google.com/*
 // @match        https://chat.qwen.ai/*
+// @match        https://claude.ai/*
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -28,8 +29,9 @@
     'use strict';
     console.log("ai script, start");
 
+    const ENABLE_CLAUDE = 0; // 是否启用Claude：0 关闭，1 启用
     let MAX_QUEUE = 10; // 历史对话的记忆数量
-    const version = "1.5.14";
+    const version = "1.6.2";
 
     const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
     const HASH_LEN = 16; // 问题的哈希长度
@@ -49,8 +51,8 @@
     const DEFAULT_DISPLAY_KEY = "defaultDisplay";
 
     let DOMAIN = "https://www.ratetend.com:5001";
-    let testDOMAIN = "https://www.ratetend.com:5002";
-    // let testDOMAIN = "http://localhost:8002";
+    // let testDOMAIN = "https://www.ratetend.com:5002";
+    let testDOMAIN = "http://localhost:8002";
     const DEVELOPER_USERID = "7bca846c-be51-4c49-ba2b6"
     const TEST_KIMI_WIDTH = "90%";
 
@@ -59,7 +61,7 @@
         userid = guid();
         setGV("userid", userid);
 
-    // 本地调试用，连接本地服务器
+        // 本地调试用，连接本地服务器
     }else{
         if(userid === DEVELOPER_USERID){
             MAX_QUEUE = 3;
@@ -82,6 +84,7 @@
     const ZCHAT = 5;
     const GEMINI = 6;
     const QWEN = 7;
+    const CLAUDE = 8;
 
     const keywords = {
         "kimi": KIMI,
@@ -91,7 +94,8 @@
         "doubao": DOUBAO,
         "zchat": ZCHAT,
         "gemini": GEMINI,
-        "qwen": QWEN
+        "qwen": QWEN,
+        "claude": CLAUDE
     };
     // 根据当前网址关键词，设置site值
     for (const keyword in keywords) {
@@ -119,7 +123,8 @@
         [DOUBAO]: ["https://www.doubao.com/chat", "/"],
         [ZCHAT]: ["https://chat.zchat.tech/", "c/"],
         [GEMINI]: ["https://gemini.google.com/app", "/"],
-        [QWEN]: ["https://chat.qwen.ai/", "c/"]
+        [QWEN]: ["https://chat.qwen.ai/", "c/"],
+        [CLAUDE]: ["https://claude.ai/chat", "/"],
     };
     const newSites = Object.fromEntries(
         Object.entries(webSites).map(([key, [baseUrl]]) => [key, baseUrl])
@@ -143,7 +148,8 @@
         [DOUBAO]: PATTERN_HEX16,
         [ZCHAT]: PATTERN_UUID,
         [GEMINI]: PATTERN_HEX16,
-        [QWEN]: PATTERN_UUID
+        [QWEN]: PATTERN_UUID,
+        [CLAUDE]: PATTERN_UUID
     }
 
     let startUrl = DOMAIN + "/start";
@@ -164,7 +170,7 @@
     let isCompactMode = false;
     let originalHTML = contentContainer.innerHTML;
 
-    const wordConfig = [
+    let wordConfig = [
         { site: DEEPSEEK, word: 'DeepSeek', alias: 'D'},
         { site: KIMI, word: 'Kimi', alias: 'K' },
         { site: ZCHAT, word: 'ChatGPT (zchat)', alias: 'Z' },
@@ -173,7 +179,11 @@
         { site: DOUBAO, word: '豆包', alias: '豆' },
         { site: GEMINI, word: 'Gemini', alias: 'G' },
         { site: QWEN, word: 'qwen', alias: 'q' }
+
     ];
+    if(ENABLE_CLAUDE){
+        wordConfig.push({ site: CLAUDE, word: 'Claude', alias: 'Cl' });
+    }
 
     // 生成映射
     const wordToSite = {};
@@ -219,7 +229,7 @@
         position: fixed;
         right: 10px;
         bottom: 80px;
-        max-height: 300px;
+        max-height: 400px;
         background: white;
         border: 1px solid #ddd;
         border-radius: 8px;
@@ -286,8 +296,8 @@
     }, 1000);
 
     /**
-    * 主从节点的逻辑
-    */
+     * 主从节点的逻辑
+     */
 
     // 发送端
     function masterCheckNew(){
@@ -359,10 +369,9 @@
         let remoteUrl = DOMAIN + "/masterQ";
         let sites = getSitesExcludeCurrent();
         let data = {
-                "userid": userid,
-                "sites": sites,
-
-            };
+            "userid": userid,
+            "sites": sites
+        };
         remoteHttp(remoteUrl, data);
 
         let openCount = 0;
@@ -388,6 +397,10 @@
                 "Content-Type": "application/json"
             },
             onload: function(response) {
+                let responseText = response.responseText;
+                if(responseText === "1"){
+                    setTimeout(showAppreciatePopup, 300);
+                }
                 // console.log(response.responseText);
             },
             onerror: function(error) {
@@ -414,106 +427,106 @@
     });
 
     function receiveNew(){
-         if(sendLock){
-             return;
-         }
-         let msg = getGV("msg");
-         let curSlaveId = getChatId();
+        if(sendLock){
+            return;
+        }
+        let msg = getGV("msg");
+        let curSlaveId = getChatId();
 
-         let questionBeforeJump = getS("questionBeforeJump");
+        let questionBeforeJump = getS("questionBeforeJump");
 
-         // 如果是经跳转而来，无需处理主节点信息，直接从缓存取对话内容
-         if(!isEmpty(questionBeforeJump)){
-             console.log("questionBeforeJump: " + questionBeforeJump);
-             questionBeforeJump = JSON.parse(questionBeforeJump);
-             let cachedQuestion = questionBeforeJump[0];
-             let cachedUid = questionBeforeJump[1];
+        // 如果是经跳转而来，无需处理主节点信息，直接从缓存取对话内容
+        if(!isEmpty(questionBeforeJump)){
+            console.log("questionBeforeJump: " + questionBeforeJump);
+            questionBeforeJump = JSON.parse(questionBeforeJump);
+            let cachedQuestion = questionBeforeJump[0];
+            let cachedUid = questionBeforeJump[1];
 
-             let cachedSlaveId = "";
-             if(!isEmpty(curSlaveId)){
-                 cachedSlaveId = questionBeforeJump[2];
-                 if(curSlaveId !== cachedSlaveId){
-                     setS("questionBeforeJump", "");
-                     return;
-                 }
-                 hsetS(T + curSlaveId, LAST_Q, getQuesOrHash(cachedQuestion));
-             }
+            let cachedSlaveId = "";
+            if(!isEmpty(curSlaveId)){
+                cachedSlaveId = questionBeforeJump[2];
+                if(curSlaveId !== cachedSlaveId){
+                    setS("questionBeforeJump", "");
+                    return;
+                }
+                hsetS(T + curSlaveId, LAST_Q, getQuesOrHash(cachedQuestion));
+            }
 
-             // 清空跳转用的缓存
-             setS("questionBeforeJump", "");
-             console.log(curDate() + "h1 send");
-             abstractSend(cachedQuestion, cachedSlaveId);
+            // 清空跳转用的缓存
+            setS("questionBeforeJump", "");
+            console.log(curDate() + "h1 send");
+            abstractSend(cachedQuestion, cachedSlaveId);
 
-             if(isEmpty(curSlaveId)){
-                 setUid(cachedUid, cachedQuestion);
-             }
-             return;
-         }
+            if(isEmpty(curSlaveId)){
+                setUid(cachedUid, cachedQuestion);
+            }
+            return;
+        }
 
-         let uid = msg.uid;
-         let targetUrl = "";
-         let slaveIdFlag = false;
-         let slaveId = "";
-         let uidJson = getGV(uid);
-         let lastQuestionOfComingSlaveId = "";
+        let uid = msg.uid;
+        let targetUrl = "";
+        let slaveIdFlag = false;
+        let slaveId = "";
+        let uidJson = getGV(uid);
+        let lastQuestionOfComingSlaveId = "";
 
         let question = msg.question;
-         // 来者消息的uid，是否关联了从节点的chatId？
-         if(!isEmpty(uidJson)){
-             // console.log("uidJson " + JSON.stringify(uidJson));
-             slaveId = uidJson[site];
-             if(!isEmpty(slaveId)){
-                 lastQuestionOfComingSlaveId = hgetS(T + slaveId, LAST_Q);
-                 // console.log("lastQuestionOfComingSlaveId "+lastQuestionOfComingSlaveId);
+        // 来者消息的uid，是否关联了从节点的chatId？
+        if(!isEmpty(uidJson)){
+            // console.log("uidJson " + JSON.stringify(uidJson));
+            slaveId = uidJson[site];
+            if(!isEmpty(slaveId)){
+                lastQuestionOfComingSlaveId = hgetS(T + slaveId, LAST_Q);
+                // console.log("lastQuestionOfComingSlaveId "+lastQuestionOfComingSlaveId);
 
-                 if(isEqual(question, lastQuestionOfComingSlaveId)){
-                     return;
-                 }
-                 slaveIdFlag = true;
-             }
-         }
+                if(isEqual(question, lastQuestionOfComingSlaveId)){
+                    return;
+                }
+                slaveIdFlag = true;
+            }
+        }
 
-         let curIdFlag = !isEmpty(curSlaveId);
-         // 从节点已进行过来者的uid对应的对话
-         if(slaveIdFlag){
-             // 当前页面有chatId
-             if(curIdFlag){
-                 // chatId相同则对话，不同则跳转
-                 if(curSlaveId === slaveId){
-                     console.log("h2 send", curDate());
-                     hsetS(T + curSlaveId, LAST_Q, getQuesOrHash(question));
-                     abstractSend(question, curSlaveId);
-                 }else{
-                     targetUrl = historySites[site] + slaveId;
-                 }
-                 // 当前页面是空白，需跳转
-             }else{
-                 targetUrl = historySites[site] + slaveId;
-             }
-             // 对从节点而言是新对话
-         }else{
-             // 当前页面有chatId，则跳转空白页
-             if(curIdFlag){
-                 // setS("gotoNewPage-"+curSlaveId, JSON.stringify(uidJson));
-                 targetUrl = newSites[site];
-                 // 当前页面已经是空白页
-             }else{
-                 console.log("h3 send", curDate());
-                 abstractSend(question, "");
-                 setUid(uid, question);
-             }
-         }
-         if(!isEmpty(targetUrl)){
-             let jumpArray = [question, uid, slaveId];
-             setS("questionBeforeJump", JSON.stringify(jumpArray));
-             window.location.href = targetUrl;
-         }
+        let curIdFlag = !isEmpty(curSlaveId);
+        // 从节点已进行过来者的uid对应的对话
+        if(slaveIdFlag){
+            // 当前页面有chatId
+            if(curIdFlag){
+                // chatId相同则对话，不同则跳转
+                if(curSlaveId === slaveId){
+                    console.log("h2 send", curDate());
+                    hsetS(T + curSlaveId, LAST_Q, getQuesOrHash(question));
+                    abstractSend(question, curSlaveId);
+                }else{
+                    targetUrl = historySites[site] + slaveId;
+                }
+                // 当前页面是空白，需跳转
+            }else{
+                targetUrl = historySites[site] + slaveId;
+            }
+            // 对从节点而言是新对话
+        }else{
+            // 当前页面有chatId，则跳转空白页
+            if(curIdFlag){
+                // setS("gotoNewPage-"+curSlaveId, JSON.stringify(uidJson));
+                targetUrl = newSites[site];
+                // 当前页面已经是空白页
+            }else{
+                console.log("h3 send", curDate());
+                abstractSend(question, "");
+                setUid(uid, question);
+            }
+        }
+        if(!isEmpty(targetUrl)){
+            let jumpArray = [question, uid, slaveId];
+            setS("questionBeforeJump", JSON.stringify(jumpArray));
+            window.location.href = targetUrl;
+        }
     }
 
 
     /**
-    * 异步轮询检查环节
-    */
+     * 异步轮询检查环节
+     */
 
     // 设置uid
     function setUid(uid, question){
@@ -623,7 +636,7 @@
         const checkBtnInterval = setInterval(() => {
             let quesFlag = false;
             if(isEmpty(chatId)){
-               quesFlag = true;
+                quesFlag = true;
             }else{
                 let len = getQuestionList().length;
                 if(len > 0){
@@ -714,13 +727,13 @@
                 questions = document.getElementsByClassName("user-content");
                 break;
             case DEEPSEEK:
-                {
-                    let list = document.getElementsByClassName("ds-message");
-                    if (!isEmpty(list)) {
-                        let elementsArray = Array.from(list);
-                        questions = elementsArray.filter((item, index) => index % 2 === 0);
-                    }
+            {
+                let list = document.getElementsByClassName("ds-message");
+                if (!isEmpty(list)) {
+                    let elementsArray = Array.from(list);
+                    questions = elementsArray.filter((item, index) => index % 2 === 0);
                 }
+            }
                 break;
             case TONGYI:
                 questions = document.querySelectorAll('[class^="bubble-"]');
@@ -730,17 +743,20 @@
                 questions = document.querySelectorAll('[data-message-author-role="user"]');
                 break;
             case DOUBAO:
-                {
-                    let list = document.querySelectorAll('[data-testid="message_text_content"]');
-                    let elementsArray = Array.from(list);
-                    questions = elementsArray.filter((item, index) => index % 2 === 0);
-                }
+            {
+                let list = document.querySelectorAll('[data-testid="message_text_content"]');
+                let elementsArray = Array.from(list);
+                questions = elementsArray.filter((item, index) => index % 2 === 0);
+            }
                 break;
             case GEMINI:
                 questions = document.getElementsByTagName('user-query');
                 break;
             case QWEN:
                 questions = document.getElementsByClassName("user-message-content");;
+                break;
+            case CLAUDE:
+                questions = document.querySelectorAll('[data-testid="user-message"]');;
                 break;
             default:
                 break;
@@ -762,12 +778,14 @@
                 return document.getElementById('prompt-textarea');
             case GEMINI:
                 return document.getElementsByClassName('textarea')[0];
+            case CLAUDE:
+                return document.getElementsByClassName('is-editor-empty')[0];
             default:
                 return null;
         }
     }
 
-	function getBtn(site){
+    function getBtn(site){
         switch(site){
             case KIMI:
                 return document.getElementsByClassName('send-button')[0];
@@ -785,12 +803,14 @@
                 return document.querySelector('button.send-button');
             case QWEN:
                 return document.getElementById('send-message-button');
+            case CLAUDE:
+                return document.querySelector('[aria-label^="Send"]');
         }
-	}
+    }
 
     /**
-    * 多选面板
-    */
+     * 多选面板
+     */
 
     // 创建面板容器
     panel.style.cssText = panelStyle;
@@ -889,8 +909,8 @@
         changeDisable(false);
 
         const selectedSites = words
-          .filter(word => document.getElementById(`word-${word}`)?.checked)
-          .map(word => wordToSite[word]);
+            .filter(word => document.getElementById(`word-${word}`)?.checked)
+            .map(word => wordToSite[word]);
 
         setGV(CHOSEN_SITE, selectedSites);
         console.log('Current selected sites:', selectedSites);
@@ -956,7 +976,7 @@
 
     // zchat特殊处理
     if(site === ZCHAT){
-    // if(site === ZCHAT && getGV(DEFAULT_DISPLAY_KEY) === true){
+        // if(site === ZCHAT && getGV(DEFAULT_DISPLAY_KEY) === true){
         let lastVisibleState = false; // 记录上一次的可见状态
         const observer = new IntersectionObserver((entries, instance) => {
             entries.forEach(entry => {
@@ -1133,8 +1153,8 @@
 
 
     /**
-    * 存储管理
-    */
+     * 存储管理
+     */
 
     // 队列头部添加元素
     function enqueue(element) {
@@ -1270,12 +1290,12 @@
         return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 
- /**
- * 绑定快捷键
- * @param {string} combo 组合键格式，如 "ctrl+q"
- * @param {Function} callback 触发回调
- * @param {boolean} preventDefault 是否阻止默认行为
- */
+    /**
+     * 绑定快捷键
+     * @param {string} combo 组合键格式，如 "ctrl+q"
+     * @param {Function} callback 触发回调
+     * @param {boolean} preventDefault 是否阻止默认行为
+     */
     function bindShortcut(combo, callback, preventDefault = true) {
         const keys = combo.toLowerCase().split('+');
         const requiredKeys = {
@@ -1321,4 +1341,376 @@
         return `【${hour}:${minute}:${second}】`;
     }
 
+    function showAppreciatePopup() {
+        // 检查是否选择了不再提醒
+        let neverRemind = getGV('never_remind_appreciate');
+        if (neverRemind === true) {
+            return;
+        }
+
+        // 直接使用图片URL创建弹窗
+        createPopupModal(DOMAIN + "/appreciate.jpg");
+    }
+
+    function createPopupModal(imageUrl) {
+        // 创建遮罩层
+        const overlay = document.createElement('div');
+        overlay.style.cssText = styles.overlay;
+
+        // 创建弹窗容器
+        const modal = document.createElement('div');
+        modal.style.cssText = styles.modal;
+
+        // 创建顶部文字
+        const titleText = document.createElement('div');
+        titleText.innerHTML = '如果有帮到你一些，可以请作者喝杯咖啡吗<br>（微信扫码）';
+        titleText.style.cssText = styles.titleText;
+
+        // 创建关闭按钮
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '×';
+        closeBtn.style.cssText = styles.closeBtn;
+
+        closeBtn.addEventListener('mouseenter', () => {
+            closeBtn.style.backgroundColor = '#f0f0f0';
+        });
+
+        closeBtn.addEventListener('mouseleave', () => {
+            closeBtn.style.backgroundColor = 'transparent';
+        });
+
+        // 创建图片容器
+        const imgContainer = document.createElement('div');
+        imgContainer.style.cssText = styles.imgContainer;
+
+        // 创建图片元素
+        const img = document.createElement('img');
+        img.src = imageUrl;
+        img.style.cssText = styles.img;
+
+        // 创建底部按钮容器
+        const buttonContainer = document.createElement('div');
+        buttonContainer.style.cssText = styles.buttonContainer;
+
+        // 创建三个选项按钮
+        const buttons = [
+            { text: '不再提醒', value: 'never_remind', style: 'secondary' },
+            { text: '已打赏', value: 'donated', style: 'primary' },
+            { text: '下次一定', value: 'next_time', style: 'secondary' },
+        ];
+
+        buttons.forEach(buttonData => {
+            const button = document.createElement('button');
+            button.textContent = buttonData.text;
+
+            // 根据按钮类型应用不同样式
+            if (buttonData.style === 'primary') {
+                button.style.cssText = styles.primaryButton;
+            } else {
+                button.style.cssText = styles.secondaryButton;
+            }
+
+            button.dataset.value = buttonData.value;
+
+            // 添加点击事件
+            button.addEventListener('click', function() {
+                handleOptionClick(buttonData.value);
+            });
+
+            // 添加鼠标悬停效果
+            button.addEventListener('mouseenter', function() {
+                if (buttonData.style === 'primary') {
+                    this.style.backgroundColor = '#d65137';
+                    this.style.transform = 'translateY(-1px)';
+                    this.style.boxShadow = '0 4px 8px rgba(236,114,88,0.4)';
+                } else {
+                    this.style.backgroundColor = '#e9ecef';
+                    this.style.borderColor = '#adb5bd';
+                }
+            });
+
+            button.addEventListener('mouseleave', function() {
+                if (buttonData.style === 'primary') {
+                    this.style.backgroundColor = '#ec7258';
+                    this.style.transform = 'translateY(0)';
+                    this.style.boxShadow = '0 2px 4px rgba(236,114,88,0.3)';
+                } else {
+                    this.style.backgroundColor = '#f8f9fa';
+                    this.style.borderColor = '#dee2e6';
+                }
+            });
+
+            buttonContainer.appendChild(button);
+        });
+
+        // 图片加载失败处理
+        img.onerror = function() {
+            const errorMsg = document.createElement('p');
+            errorMsg.textContent = '图片加载失败';
+            errorMsg.style.cssText = styles.errorText;
+
+            modal.innerHTML = '';
+            modal.appendChild(errorMsg);
+            modal.appendChild(closeBtn);
+        };
+
+        // 组装弹窗
+        modal.appendChild(closeBtn);
+        modal.appendChild(titleText);
+        imgContainer.appendChild(img);
+        modal.appendChild(imgContainer);
+        modal.appendChild(buttonContainer);
+        overlay.appendChild(modal);
+
+        // 处理选项按钮点击事件
+        function handleOptionClick(value) {
+            console.log('用户选择:', value);
+
+            // 根据不同的选择处理逻辑和显示提示
+            let message = '';
+            switch(value) {
+                case 'donated':
+                    console.log('用户已打赏');
+                    message = '感谢资瓷！';
+                    break;
+                case 'next_time':
+                    console.log('用户选择下次一定');
+                    message = '有缘再见哦~';
+                    break;
+                case 'never_remind':
+                    console.log('用户选择不再提醒');
+                    message = '收到嘞';
+                    // 设置不再提醒标记
+                    setGV('never_remind_appreciate', true);
+                    break;
+            }
+
+            // 显示提示弹窗
+            showToast(message);
+
+            // 关闭主弹窗
+            closePopup();
+        }
+
+        // 显示提示消息
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.textContent = message;
+            toast.style.cssText = `
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px 25px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: bold;
+            z-index: 999999999;
+            animation: toastFadeIn 0.3s ease-out;
+        `;
+
+            // 添加CSS动画
+            if (!document.getElementById('toast-animation')) {
+                const style = document.createElement('style');
+                style.id = 'toast-animation';
+                style.textContent = `
+                @keyframes toastFadeIn {
+                    from {
+                        opacity: 0;
+                        transform: translate(-50%, -50%) scale(0.8);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translate(-50%, -50%) scale(1);
+                    }
+                }
+                @keyframes toastFadeOut {
+                    from {
+                        opacity: 1;
+                        transform: translate(-50%, -50%) scale(1);
+                    }
+                    to {
+                        opacity: 0;
+                        transform: translate(-50%, -50%) scale(0.8);
+                    }
+                }
+            `;
+                document.head.appendChild(style);
+            }
+
+            document.body.appendChild(toast);
+
+            // 2秒后自动消失
+            setTimeout(() => {
+                toast.style.animation = 'toastFadeOut 0.3s ease-in';
+                setTimeout(() => {
+                    if (document.body.contains(toast)) {
+                        document.body.removeChild(toast);
+                    }
+                }, 300);
+            }, 1500);
+        }
+
+        // 关闭弹窗的函数
+        function closePopup() {
+            document.body.removeChild(overlay);
+        }
+
+        // 绑定关闭事件
+        closeBtn.addEventListener('click', closePopup);
+
+        // 点击遮罩层也可以关闭
+        overlay.addEventListener('click', function(e) {
+            if (e.target === overlay) {
+                closePopup();
+            }
+        });
+
+        // ESC键关闭
+        const escHandler = function(e) {
+            if (e.key === 'Escape') {
+                closePopup();
+                document.removeEventListener('keydown', escHandler);
+            }
+        };
+        document.addEventListener('keydown', escHandler);
+
+        // 添加到页面
+        document.body.appendChild(overlay);
+    }
+
+// CSS样式集中定义
+    const styles = {
+        overlay: `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 999999999;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        padding: 20px;
+        box-sizing: border-box;
+    `,
+        modal: `
+        position: relative;
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        max-width: 30vw;
+        max-height: 50vh;
+        width: auto;
+        height: auto;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        overflow: hidden;
+        box-sizing: border-box;
+    `,
+        closeBtn: `
+        position: absolute;
+        top: 10px;
+        right: 15px;
+        background: none;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        color: #666;
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        transition: background-color 0.2s;
+        z-index: 1;
+    `,
+        imgContainer: `
+        width: 100%;
+        height: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        overflow: hidden;
+    `,
+        img: `
+        max-width: calc(30vw - 60px);
+        max-height: calc(50vh - 200px);
+        width: auto;
+        height: auto;
+        object-fit: contain;
+        border-radius: 8px;
+        display: block;
+    `,
+        errorText: `
+        color: #666;
+        text-align: center;
+    `,
+        titleText: `
+        font-size: 20px;
+        font-weight: bold;
+        color: #333;
+        text-align: center;
+        margin-bottom: 15px;
+        padding: 10px 15px;
+        border-bottom: 1px solid #eee;
+        line-height: 1.4;
+        word-wrap: break-word;
+        white-space: normal;
+        max-width: 100%;
+    `,
+        buttonContainer: `
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid #eee;
+        width: 100%;
+    `,
+        optionButton: `
+        background: #fff;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-size: 14px;
+        color: #333;
+        cursor: pointer;
+        transition: all 0.2s;
+        min-width: 80px;
+        text-align: center;
+    `,
+        primaryButton: `
+        background: #ec7258;
+        border: 1px solid #ec7258;
+        border-radius: 6px;
+        padding: 10px 20px;
+        font-size: 14px;
+        color: #fff;
+        cursor: pointer;
+        transition: all 0.2s;
+        min-width: 90px;
+        text-align: center;
+        font-weight: bold;
+        box-shadow: 0 2px 4px rgba(0,123,255,0.3);
+    `,
+        secondaryButton: `
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 6px;
+        padding: 8px 16px;
+        font-size: 13px;
+        color: #6c757d;
+        cursor: pointer;
+        transition: all 0.2s;
+        min-width: 80px;
+        text-align: center;
+    `
+    };
 })();
