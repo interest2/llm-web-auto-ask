@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.6.6
+// @version      1.6.7
 // @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了各处粘贴提问并等待的麻烦。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini……Claude 的启用及其他更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -31,7 +31,7 @@
 
     const ENABLE_CLAUDE = 0; // 是否启用Claude：0 关闭，1 启用
     let MAX_QUEUE = 10; // 历史对话的记忆数量
-    const version = "1.6.6";
+    const version = "1.6.7";
 
     const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
     const HASH_LEN = 16; // 问题的哈希长度
@@ -299,8 +299,8 @@
      * 主从节点的逻辑
      */
 
-    // 发送端
-    let isHistoryChat = false; // 用于标记历史对话 
+        // 发送端
+    let isHistoryChat = false; // 用于标记历史对话
     function masterCheckNew(){
         setGV(HEART_KEY_PREFIX + site, Date.now());
         reloadCompactMode();
@@ -627,12 +627,33 @@
         }, checkGap);
     }
 
-    function sendContent(textarea, content, chatId){
+    function sendContent(editor, content, chatId){
         // 当豆包是新对话，元素不可见会异常，故适当延迟
         let sendGap = (site === DOUBAO && isEmpty(chatId)) ? 1500 : 100;
         setTimeout(function(){
-            textarea.focus();
-            document.execCommand('insertText', false, content);
+            // 输入框粘贴文字：富文本编辑器 Lexical 和 React的不同处理
+            if([KIMI].includes(site)){
+                editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: content }));
+            }else if([CLAUDE, GEMINI, CHATGPT, ZCHAT].includes(site)){
+                const paragraph = editor.querySelector('p');
+                editor.focus();
+                paragraph.textContent = '';
+
+                const span = document.createElement('span');
+                span.setAttribute('data-lexical-text', 'true');
+                span.textContent = content;
+                paragraph.appendChild(span);
+
+                editor.dispatchEvent(new Event('input', { bubbles: true }));
+            }else{
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                    window.HTMLTextAreaElement.prototype,
+                    'value'
+                ).set;
+                nativeInputValueSetter.call(editor, content);
+                // 触发 input 事件
+                editor.dispatchEvent(new Event('input', { bubbles: true }));
+            }
             clickAndCheckLen(chatId);
         }, sendGap);
     }
