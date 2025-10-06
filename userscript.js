@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.6.5
+// @version      1.6.6
 // @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了各处粘贴提问并等待的麻烦。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini……Claude 的启用及其他更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -31,7 +31,7 @@
 
     const ENABLE_CLAUDE = 0; // 是否启用Claude：0 关闭，1 启用
     let MAX_QUEUE = 10; // 历史对话的记忆数量
-    const version = "1.6.5";
+    const version = "1.6.6";
 
     const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
     const HASH_LEN = 16; // 问题的哈希长度
@@ -300,6 +300,7 @@
      */
 
     // 发送端
+    let isHistoryChat = false; // 用于标记历史对话 
     function masterCheckNew(){
         setGV(HEART_KEY_PREFIX + site, Date.now());
         reloadCompactMode();
@@ -309,6 +310,7 @@
         }
         let masterId = getChatId();
         if(isEmpty(masterId)){
+            isHistoryChat = false;
             return;
         }
 
@@ -316,6 +318,11 @@
         let lenNext = questions.length;
         if(lenNext > 0){
             let len = hgetS(T + masterId, LEN) || 0;
+            // 历史对话且无需映射同步问答的，终止流程
+            if(len === 0 && isHistoryChat === true){
+                return;
+            }
+            isHistoryChat = true;
             if(lenNext > len){
                 let lastestQ = questions[lenNext - 1].textContent;
                 let lastQuestion = hgetS(T + masterId, LAST_Q);
@@ -323,8 +330,8 @@
                 if(!isEmpty(lastQuestion) && isEqual(lastestQ, lastQuestion)){
                     return;
                 }
-                masterReq(masterId, lastestQ);
                 hsetS(T + masterId, LEN, lenNext);
+                masterReq(masterId, lastestQ);
             }
         }
     };
