@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.6.7
-// @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了各处粘贴提问并等待的麻烦。支持范围：DeepSeek，Kimi，通义千问，豆包，ChatGPT，Gemini……Claude 的启用及其他更多介绍见本页面下方。
+// @version      1.7.0
+// @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了各处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，其他更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -29,51 +29,9 @@
     'use strict';
     console.log("ai script, start");
 
-    const ENABLE_CLAUDE = 0; // 是否启用Claude：0 关闭，1 启用
-    let MAX_QUEUE = 10; // 历史对话的记忆数量
-    const version = "1.6.7";
-
-    const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
-    const HASH_LEN = 16; // 问题的哈希长度
-    const checkGap = 100;
-    const maxRetries = 150;
-    const OPEN_GAP = 300; // 打开网页的间隔
-
+    let MAX_QUEUE = 15; // 历史对话的记忆数量
+    const version = "1.7.0";
     let testLocalFlag = 0;
-    const HIBERNATE_GAP = 600; // 单位：秒
-
-    // 存储时的特征词
-    const T = "tool-";
-    const QUEUE = "tool-queue";
-    const LEN = "len";
-    const LAST_Q = "lastQ";
-    const UID_KEY = "uid";
-    const DEFAULT_DISPLAY_KEY = "defaultDisplay";
-
-    let DOMAIN = "https://www.ratetend.com:5001";
-    // let testDOMAIN = "https://www.ratetend.com:5002";
-    let testDOMAIN = "http://localhost:8002";
-    const DEVELOPER_USERID = "7bca846c-be51-4c49-ba2b6"
-    const TEST_KIMI_WIDTH = "90%";
-
-    let userid = getGV("userid");
-    if(isEmpty(userid)){
-        userid = guid();
-        setGV("userid", userid);
-
-        // 本地调试用，连接本地服务器
-    }else{
-        if(userid === DEVELOPER_USERID){
-            MAX_QUEUE = 3;
-            if(testLocalFlag === 1){
-                DOMAIN = testDOMAIN;
-            }
-        }
-    }
-
-    let site = 0;
-    let url = window.location.href;
-    const HEART_KEY_PREFIX ="lastHeartbeat-";
 
     // 定义站点常量
     const KIMI = 0;
@@ -86,6 +44,51 @@
     const QWEN = 7;
     const CLAUDE = 8;
 
+    // 选择器配置（问题列表、输入框、发送按钮）
+    const selectors = {
+        questionList: {
+            [KIMI]: () => document.getElementsByClassName("user-content"),
+            [DEEPSEEK]: () => filterQuestions(document.getElementsByClassName("ds-message")),
+            [TONGYI]: () => document.querySelectorAll('[class^="bubble-"]'),
+            [CHATGPT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
+            [ZCHAT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
+            [DOUBAO]: () => filterQuestions(document.querySelectorAll('[data-testid="message_text_content"]')),
+            [GEMINI]: () => document.getElementsByTagName('user-query'),
+            [QWEN]: () => document.getElementsByClassName("user-message-content"),
+            [CLAUDE]: () => document.querySelectorAll('[data-testid="user-message"]')
+        },
+        inputArea: {
+            [KIMI]: () => document.getElementsByClassName('chat-input-editor')[0],
+            [DEEPSEEK]: () => document.getElementsByTagName('textarea')[0],
+            [TONGYI]: () => document.getElementsByTagName('textarea')[0],
+            [CHATGPT]: () => document.getElementById('prompt-textarea'),
+            [ZCHAT]: () => document.getElementById('prompt-textarea'),
+            [DOUBAO]: () => document.getElementsByTagName('textarea')[0],
+            [GEMINI]: () => document.getElementsByClassName('textarea')[0],
+            [QWEN]: () => document.getElementsByTagName('textarea')[0],
+            [CLAUDE]: () => document.querySelector('[role="textbox"]')
+        },
+        sendBtn: {
+            [KIMI]: () => document.getElementsByClassName('send-button')[0],
+            [DEEPSEEK]: () => {
+                var btns = document.querySelectorAll('[role="button"]');
+                return btns[btns.length - 1];
+            },
+            [TONGYI]: () => document.querySelectorAll('[class^="operateBtn-"], [class*=" operateBtn-"]')[0],
+            [CHATGPT]: () => document.getElementById('composer-submit-button'),
+            [ZCHAT]: () => document.getElementById('composer-submit-button'),
+            [DOUBAO]: () => document.getElementById('flow-end-msg-send'),
+            [GEMINI]: () => document.querySelector('button.send-button'),
+            [QWEN]: () => document.getElementById('send-message-button'),
+            [CLAUDE]: () => document.querySelector('[aria-label^="Send"]')
+        }
+    };
+
+    // 表示当前站点的变量
+    let site = 0;
+    let url = window.location.href;
+
+    // url里关键词与各站点的对应关系
     const keywords = {
         "kimi": KIMI,
         "deepseek": DEEPSEEK,
@@ -97,20 +100,12 @@
         "qwen": QWEN,
         "claude": CLAUDE
     };
+
     // 根据当前网址关键词，设置site值
     for (const keyword in keywords) {
         if (url.indexOf(keyword) > -1) {
             site = keywords[keyword];
             break;
-        }
-    }
-
-    setTimeout(developTest, 2000);
-    function developTest(){
-        // kimi表格太窄，脚本作者自测调大用
-        if(DEVELOPER_USERID === userid && site === KIMI){
-            // let kimiPage = document.getElementsByClassName("chat-content-list")[0];
-            // kimiPage.style.maxWidth = TEST_KIMI_WIDTH;
         }
     }
 
@@ -133,23 +128,109 @@
         Object.entries(webSites).map(([key, [baseUrl, suffix]]) => [key, baseUrl + suffix])
     );
 
-
-    // 各大模型对话ID的正则表达式模式
+    // 各大模型url里对话ID的正则表达式模式
     const PATTERN_KIMI = "[0-9a-z]{20}";
     const PATTERN_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
     const PATTERN_MD5 = "[0-9a-f]{32}";
     const PATTERN_HEX16 = "[0-9a-f]{16}";
+    const PATTERN_HEX17 = "[0-9a-f]{17}";
 
     const pattern ={
         [KIMI]: PATTERN_KIMI,
         [DEEPSEEK]: PATTERN_UUID,
         [TONGYI]: PATTERN_MD5,
         [CHATGPT]: PATTERN_UUID,
-        [DOUBAO]: PATTERN_HEX16,
+        [DOUBAO]: PATTERN_HEX17,
         [ZCHAT]: PATTERN_UUID,
         [GEMINI]: PATTERN_HEX16,
         [QWEN]: PATTERN_UUID,
         [CLAUDE]: PATTERN_UUID
+    }
+
+    // 多选面板配置（各站点的全称、简称）
+    let wordConfig = [
+        { site: DEEPSEEK, word: 'DeepSeek', alias: 'D'},
+        { site: KIMI, word: 'Kimi', alias: 'K' },
+        { site: ZCHAT, word: 'ChatGPT (zchat)', alias: 'Z' },
+        { site: CHATGPT, word: 'ChatGPT (官网)', alias: 'C' },
+        { site: TONGYI, word: '通义千问', alias: '通' },
+        { site: DOUBAO, word: '豆包', alias: '豆' },
+        { site: GEMINI, word: 'Gemini', alias: 'G' },
+        { site: QWEN, word: 'Qwen', alias: 'Q' },
+        { site: CLAUDE, word: 'Claude', alias: 'Cl' }
+    ];
+
+    // 过滤出问题列表（偶数索引元素）
+    const filterQuestions = (elements) => {
+        if (!isEmpty(elements)) {
+            let elementsArray = Array.from(elements);
+            return elementsArray.filter((item, index) => index % 2 === 0);
+        }
+        return [];
+    };
+
+
+    // 获取元素的抽象方法
+    function getQuestionList() {
+        const selector = selectors.questionList[site];
+        return selector ? selector() : [];
+    }
+
+    function getInputArea(site) {
+        const selector = selectors.inputArea[site];
+        return selector ? selector() : null;
+    }
+
+    function getSendButton(site) {
+        const selector = selectors.sendBtn[site];
+        return selector ? selector() : null;
+    }
+
+    // 系统功能配置
+    const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
+    const HASH_LEN = 16; // 问题的哈希长度
+    const checkGap = 100;
+    const maxRetries = 150;
+    const OPEN_GAP = 300; // 打开网页的间隔
+    const HIBERNATE_GAP = 600; // 单位：秒
+
+    // 存储时的特征词
+    const T = "tool-";
+    const QUEUE = "tool-queue";
+    const LEN = "len";
+    const LAST_Q = "lastQ";
+    const UID_KEY = "uid";
+    const DEFAULT_DISPLAY_KEY = "defaultDisplay";
+    const HEART_KEY_PREFIX ="lastHeartbeat-";
+
+    let DOMAIN = "https://www.ratetend.com:5001";
+    // let testDOMAIN = "https://www.ratetend.com:5002";
+    let testDOMAIN = "http://localhost:8002";
+    const DEVELOPER_USERID = "7bca846c-be51-4c49-ba2b6"
+    const TEST_KIMI_WIDTH = "90%";
+
+    let userid = getGV("userid");
+    if(isEmpty(userid)){
+        userid = guid();
+        setGV("userid", userid);
+
+        // 本地调试用，连接本地服务器
+    }else{
+        if(userid === DEVELOPER_USERID){
+            MAX_QUEUE = 3;
+            if(testLocalFlag === 1){
+                DOMAIN = testDOMAIN;
+            }
+        }
+    }
+
+    setTimeout(developTest, 2000);
+    function developTest(){
+        // kimi表格太窄，脚本作者自测调大用
+        if(DEVELOPER_USERID === userid && site === KIMI){
+            // let kimiPage = document.getElementsByClassName("chat-content-list")[0];
+            // kimiPage.style.maxWidth = TEST_KIMI_WIDTH;
+        }
     }
 
     let startUrl = DOMAIN + "/start";
@@ -160,6 +241,7 @@
     };
     remoteHttp(startUrl, startData);
 
+
     // 面板数据
     const CHOSEN_SITE = "chosenSite";
     const panel = document.createElement('div');
@@ -169,21 +251,6 @@
     // 模式切换相关变量
     let isCompactMode = false;
     let originalHTML = contentContainer.innerHTML;
-
-    let wordConfig = [
-        { site: DEEPSEEK, word: 'DeepSeek', alias: 'D'},
-        { site: KIMI, word: 'Kimi', alias: 'K' },
-        { site: ZCHAT, word: 'ChatGPT (zchat)', alias: 'Z' },
-        { site: CHATGPT, word: 'ChatGPT (官网)', alias: 'C' },
-        { site: TONGYI, word: '通义千问', alias: '通' },
-        { site: DOUBAO, word: '豆包', alias: '豆' },
-        { site: GEMINI, word: 'Gemini', alias: 'G' },
-        { site: QWEN, word: 'qwen', alias: 'q' }
-
-    ];
-    if(ENABLE_CLAUDE){
-        wordConfig.push({ site: CLAUDE, word: 'Claude', alias: 'Cl' });
-    }
 
     // 生成映射
     const wordToSite = {};
@@ -619,10 +686,10 @@
             if(count > 5000 / checkGap){
                 clearInterval(intervalId);
             }
-            const textarea = getTextArea(site);
-            if (!isEmpty(textarea)) {
+            const inputArea = getInputArea(site);
+            if (!isEmpty(inputArea)) {
                 clearInterval(intervalId);
-                sendContent(textarea, content, chatId);
+                sendContent(inputArea, content, chatId);
             }
         }, checkGap);
     }
@@ -673,7 +740,7 @@
             }
 
             // ① 检查sendBtn存在 ② checkQuesList()检查问题列表长度是否增加
-            let sendBtn = getBtn(site);
+            let sendBtn = getSendButton(site);
             if (quesFlag && !isEmpty(sendBtn)) {
                 clearInterval(checkBtnInterval);
 
@@ -683,7 +750,7 @@
                     setTimeout(function(){
                         sendBtn.click();
                         setTimeout(function(){
-                            let areaCheck = getTextArea(site);
+                            let areaCheck = getInputArea(site);
                             if(!isEmpty(areaCheck) && !isEmpty(areaCheck.textContent)){
                                 sendBtn.click();
                             }
@@ -695,6 +762,7 @@
                 tryCount++;
                 if (tryCount > maxRetries) {
                     clearInterval(checkBtnInterval);
+                    sendLock = false;
                     console.log("tryCount "+tryCount + ", quesFlag "+quesFlag+", sendBtn "+isEmpty(sendBtn));
                     console.warn("sendBtn或问题列表未找到，超时");
                     return;
@@ -739,7 +807,7 @@
                 clearInterval(checkInterval);
                 console.warn("问题列表长度未符合判据，超时");
                 sendLock = false;
-                let areaContent = getTextArea(site).textContent;
+                let areaContent = getInputArea(site).textContent;
                 if(!isEmpty(areaContent)){
                     location.reload();
                 }
@@ -747,94 +815,6 @@
         }, checkGap);
     }
 
-    // 不同网站分别处理css元素
-    function getQuestionList() {
-        let questions = [];
-        switch (site) {
-            case KIMI:
-                questions = document.getElementsByClassName("user-content");
-                break;
-            case DEEPSEEK:
-            {
-                let list = document.getElementsByClassName("ds-message");
-                if (!isEmpty(list)) {
-                    let elementsArray = Array.from(list);
-                    questions = elementsArray.filter((item, index) => index % 2 === 0);
-                }
-            }
-                break;
-            case TONGYI:
-                questions = document.querySelectorAll('[class^="bubble-"]');
-                break;
-            case CHATGPT:
-            case ZCHAT:
-                questions = document.querySelectorAll('[data-message-author-role="user"]');
-                break;
-            case DOUBAO:
-            {
-                let list = document.querySelectorAll('[data-testid="message_text_content"]');
-                let elementsArray = Array.from(list);
-                questions = elementsArray.filter((item, index) => index % 2 === 0);
-            }
-                break;
-            case GEMINI:
-                questions = document.getElementsByTagName('user-query');
-                break;
-            case QWEN:
-                questions = document.getElementsByClassName("user-message-content");
-                break;
-            case CLAUDE:
-                questions = document.querySelectorAll('[data-testid="user-message"]');
-                break;
-            default:
-                break;
-        }
-        return questions;
-    }
-
-    function getTextArea(site) {
-        switch (site) {
-            case KIMI:
-                return document.getElementsByClassName('chat-input-editor')[0];
-            case DEEPSEEK:
-            case TONGYI:
-            case DOUBAO:
-            case QWEN:
-                return document.getElementsByTagName('textarea')[0];
-            case CHATGPT:
-            case ZCHAT:
-                return document.getElementById('prompt-textarea');
-            case GEMINI:
-                return document.getElementsByClassName('textarea')[0];
-            case CLAUDE:
-                return document.querySelector('[role="textbox"]');
-            default:
-                return null;
-        }
-    }
-
-    function getBtn(site){
-        switch(site){
-            case KIMI:
-                return document.getElementsByClassName('send-button')[0];
-            case DEEPSEEK:
-                var btns = document.querySelectorAll('[role="button"]');
-                return btns[btns.length - 1];
-            case TONGYI:
-                return document.querySelectorAll('[class^="operateBtn-"], [class*=" operateBtn-"]')[0];
-            case CHATGPT:
-            case ZCHAT:
-                return document.getElementById('composer-submit-button');
-            case DOUBAO:
-                return document.getElementById('flow-end-msg-send');
-            case GEMINI:
-                return document.querySelector('button.send-button');
-            case QWEN:
-                return document.getElementById('send-message-button');
-            case CLAUDE:
-                return document.querySelector('[aria-label^="Send"]');
-        }
-    }
 
     /**
      * 多选面板
