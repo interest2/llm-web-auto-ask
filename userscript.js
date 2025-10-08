@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.7.0
+// @version      1.7.1
 // @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了各处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，其他更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -13,6 +13,7 @@
 // @match        https://gemini.google.com/*
 // @match        https://chat.qwen.ai/*
 // @match        https://claude.ai/*
+// @match        https://grok.com/*
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -30,7 +31,7 @@
     console.log("ai script, start");
 
     let MAX_QUEUE = 15; // 历史对话的记忆数量
-    const version = "1.7.0";
+    const version = "1.7.1";
     let testLocalFlag = 0;
 
     // 定义站点常量
@@ -43,6 +44,11 @@
     const GEMINI = 6;
     const QWEN = 7;
     const CLAUDE = 8;
+    const GROK = 9;
+
+    // 通用输入框选择器
+    const getTextareaInput = () => document.getElementsByTagName('textarea')[0];
+    const getContenteditableInput = () => document.querySelector('[contenteditable="true"]');
 
     // 选择器配置（问题列表、输入框、发送按钮）
     const selectors = {
@@ -55,18 +61,23 @@
             [DOUBAO]: () => filterQuestions(document.querySelectorAll('[data-testid="message_text_content"]')),
             [GEMINI]: () => document.getElementsByTagName('user-query'),
             [QWEN]: () => document.getElementsByClassName("user-message-content"),
-            [CLAUDE]: () => document.querySelectorAll('[data-testid="user-message"]')
+            [CLAUDE]: () => document.querySelectorAll('[data-testid="user-message"]'),
+            [GROK]: () => document.querySelectorAll('div.items-end .message-bubble')
         },
         inputArea: {
-            [KIMI]: () => document.getElementsByClassName('chat-input-editor')[0],
-            [DEEPSEEK]: () => document.getElementsByTagName('textarea')[0],
-            [TONGYI]: () => document.getElementsByTagName('textarea')[0],
-            [CHATGPT]: () => document.getElementById('prompt-textarea'),
-            [ZCHAT]: () => document.getElementById('prompt-textarea'),
-            [DOUBAO]: () => document.getElementsByTagName('textarea')[0],
-            [GEMINI]: () => document.getElementsByClassName('textarea')[0],
-            [QWEN]: () => document.getElementsByTagName('textarea')[0],
-            [CLAUDE]: () => document.querySelector('[role="textbox"]')
+            // Textarea类型
+            [DEEPSEEK]: getTextareaInput,
+            [TONGYI]: getTextareaInput,
+            [DOUBAO]: getTextareaInput,
+            [QWEN]: getTextareaInput,
+            [GROK]: getTextareaInput,
+
+            // Contenteditable类型
+            [GEMINI]: getContenteditableInput,
+            [CHATGPT]: getContenteditableInput,
+            [ZCHAT]: getContenteditableInput,
+            [KIMI]: getContenteditableInput,
+            [CLAUDE]: getContenteditableInput
         },
         sendBtn: {
             [KIMI]: () => document.getElementsByClassName('send-button')[0],
@@ -80,7 +91,8 @@
             [DOUBAO]: () => document.getElementById('flow-end-msg-send'),
             [GEMINI]: () => document.querySelector('button.send-button'),
             [QWEN]: () => document.getElementById('send-message-button'),
-            [CLAUDE]: () => document.querySelector('[aria-label^="Send"]')
+            [CLAUDE]: () => document.querySelector('[aria-label^="Send"]'),
+            [GROK]: () => document.querySelector('button[type="submit"]')
         }
     };
 
@@ -98,7 +110,8 @@
         "zchat": ZCHAT,
         "gemini": GEMINI,
         "qwen": QWEN,
-        "claude": CLAUDE
+        "claude": CLAUDE,
+        "grok": GROK
     };
 
     // 根据当前网址关键词，设置site值
@@ -120,6 +133,7 @@
         [GEMINI]: ["https://gemini.google.com/app", "/"],
         [QWEN]: ["https://chat.qwen.ai/", "c/"],
         [CLAUDE]: ["https://claude.ai/chat", "/"],
+        [GROK]: ["https://grok.com/", "c/"]
     };
     const newSites = Object.fromEntries(
         Object.entries(webSites).map(([key, [baseUrl]]) => [key, baseUrl])
@@ -128,36 +142,18 @@
         Object.entries(webSites).map(([key, [baseUrl, suffix]]) => [key, baseUrl + suffix])
     );
 
-    // 各大模型url里对话ID的正则表达式模式
-    const PATTERN_KIMI = "[0-9a-z]{20}";
-    const PATTERN_UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
-    const PATTERN_MD5 = "[0-9a-f]{32}";
-    const PATTERN_HEX16 = "[0-9a-f]{16}";
-    const PATTERN_HEX17 = "[0-9a-f]{17}";
-
-    const pattern ={
-        [KIMI]: PATTERN_KIMI,
-        [DEEPSEEK]: PATTERN_UUID,
-        [TONGYI]: PATTERN_MD5,
-        [CHATGPT]: PATTERN_UUID,
-        [DOUBAO]: PATTERN_HEX17,
-        [ZCHAT]: PATTERN_UUID,
-        [GEMINI]: PATTERN_HEX16,
-        [QWEN]: PATTERN_UUID,
-        [CLAUDE]: PATTERN_UUID
-    }
-
     // 多选面板配置（各站点的全称、简称）
     let wordConfig = [
         { site: DEEPSEEK, word: 'DeepSeek', alias: 'D'},
         { site: KIMI, word: 'Kimi', alias: 'K' },
-        { site: ZCHAT, word: 'ChatGPT (zchat)', alias: 'Z' },
-        { site: CHATGPT, word: 'ChatGPT (官网)', alias: 'C' },
         { site: TONGYI, word: '通义千问', alias: '通' },
-        { site: DOUBAO, word: '豆包', alias: '豆' },
-        { site: GEMINI, word: 'Gemini', alias: 'G' },
         { site: QWEN, word: 'Qwen', alias: 'Q' },
-        { site: CLAUDE, word: 'Claude', alias: 'Cl' }
+        { site: DOUBAO, word: '豆包', alias: '豆' },
+        { site: CHATGPT, word: 'ChatGPT (官网)', alias: 'C' },
+        { site: ZCHAT, word: 'ChatGPT (zchat)', alias: 'Z' },
+        { site: GEMINI, word: 'Gemini', alias: 'G' },
+        { site: CLAUDE, word: 'Claude', alias: 'Cl' },
+        { site: GROK, word: 'Grok', alias: 'Gr' }
     ];
 
     // 过滤出问题列表（偶数索引元素）
@@ -277,7 +273,9 @@
         if(site === DOUBAO && url.indexOf("local") > -1){
             return "";
         }
-        const regex = new RegExp(pattern[site]);
+        // 各站点 url 里对话ID的正则表达式模式(统一共用版)，16~37位的数字、字母、短横杠
+        const GENERAL_PATTERN = /[a-zA-Z0-9-]{16,37}/;
+        const regex = new RegExp(GENERAL_PATTERN);
         let ret = url.match(regex);
         if(isEmpty(ret)){
             return "";
@@ -303,17 +301,23 @@
         box-shadow: 0 4px 12px rgba(0,0,0,0.1);
         z-index: 99999999;
         overflow-y: auto;
-        padding: 5px;
+        padding: 2px;
         display: flex;
         flex-direction: column;
     `;
     const panelCompact = `
         min-width: 120px;
     `;
+    const disableStyle = `
+        background: #ec7258;
+        color: white;
+        border-radius: 6px;
+        padding: 2px 0;
+    `;
     const itemStyle = `
             display: flex;
             align-items: center;
-            padding: 3px 0;
+            padding: 3px 0 3px 3px;
             border-bottom: 1px solid #eee;
     `;
     const wordSpanStyle = `
@@ -339,6 +343,7 @@
             color: #275fe6;
             width: 0;
             height: 0;
+            padding-left: 3px;
             margin-top: 5px;
             margin-bottom: 5px;
             border-top: 8px solid transparent;
@@ -617,6 +622,7 @@
             count ++;
             if(count > waitTime / checkGap){
                 console.log("setUid超时");
+                sendLock = false;
                 clearInterval(intervalId);
                 return;
             }
@@ -829,9 +835,7 @@
     let disable = document.createElement('div');
     disable.id = "tool-disable";
     disable.textContent = DISABLE;
-    disable.style.background = "#ec7258";
-    disable.style.color = "white";
-    disable.style.borderRadius = "6px";
+    disable.style = disableStyle;
     panel.appendChild(disable);
 
     disable.addEventListener('click', (e) => disableEvent(e));
