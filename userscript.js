@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.7.1
-// @description  只需输入一次问题，就能自动去各家大模型官网提问，省却了各处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，其他更多介绍见本页面下方。
+// @version      1.7.2
+// @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok，其他更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -31,7 +31,7 @@
     console.log("ai script, start");
 
     let MAX_QUEUE = 15; // 历史对话的记忆数量
-    const version = "1.7.1";
+    const version = "1.7.2";
     let testLocalFlag = 0;
 
     // 定义站点常量
@@ -46,12 +46,19 @@
     const CLAUDE = 8;
     const GROK = 9;
 
-    // 通用输入框选择器
+    // 输入框类型分类
+    const inputAreaTypes = {
+        textarea: [DEEPSEEK, TONGYI, DOUBAO, QWEN, GROK],
+        lexical: [KIMI, CHATGPT, ZCHAT, GEMINI, CLAUDE]
+    };
+
+    // 通用输入框选择器，两类：textarea标签、lexical
     const getTextareaInput = () => document.getElementsByTagName('textarea')[0];
     const getContenteditableInput = () => document.querySelector('[contenteditable="true"]');
 
-    // 选择器配置（问题列表、输入框、发送按钮）
+    // 选择器配置
     const selectors = {
+        // 已提问的列表
         questionList: {
             [KIMI]: () => document.getElementsByClassName("user-content"),
             [DEEPSEEK]: () => filterQuestions(document.getElementsByClassName("ds-message")),
@@ -64,21 +71,12 @@
             [CLAUDE]: () => document.querySelectorAll('[data-testid="user-message"]'),
             [GROK]: () => document.querySelectorAll('div.items-end .message-bubble')
         },
+        // 输入框分两类处理
         inputArea: {
-            // Textarea类型
-            [DEEPSEEK]: getTextareaInput,
-            [TONGYI]: getTextareaInput,
-            [DOUBAO]: getTextareaInput,
-            [QWEN]: getTextareaInput,
-            [GROK]: getTextareaInput,
-
-            // Contenteditable类型
-            [GEMINI]: getContenteditableInput,
-            [CHATGPT]: getContenteditableInput,
-            [ZCHAT]: getContenteditableInput,
-            [KIMI]: getContenteditableInput,
-            [CLAUDE]: getContenteditableInput
+            ...Object.fromEntries(inputAreaTypes.textarea.map(site => [site, getTextareaInput])),
+            ...Object.fromEntries(inputAreaTypes.lexical.map(site => [site, getContenteditableInput]))
         },
+        // 输入框里的发送按钮
         sendBtn: {
             [KIMI]: () => document.getElementsByClassName('send-button')[0],
             [DEEPSEEK]: () => {
@@ -96,10 +94,6 @@
         }
     };
 
-    // 表示当前站点的变量
-    let site = 0;
-    let url = window.location.href;
-
     // url里关键词与各站点的对应关系
     const keywords = {
         "kimi": KIMI,
@@ -113,14 +107,6 @@
         "claude": CLAUDE,
         "grok": GROK
     };
-
-    // 根据当前网址关键词，设置site值
-    for (const keyword in keywords) {
-        if (url.indexOf(keyword) > -1) {
-            site = keywords[keyword];
-            break;
-        }
-    }
 
     // 各家大模型的网址（新对话，历史对话的前缀）
     const webSites = {
@@ -155,6 +141,18 @@
         { site: CLAUDE, word: 'Claude', alias: 'Cl' },
         { site: GROK, word: 'Grok', alias: 'Gr' }
     ];
+
+    // 表示当前站点的变量
+    let site = 0;
+    let url = window.location.href;
+
+    // 根据当前网址关键词，设置site值
+    for (const keyword in keywords) {
+        if (url.indexOf(keyword) > -1) {
+            site = keywords[keyword];
+            break;
+        }
+    }
 
     // 过滤出问题列表（偶数索引元素）
     const filterQuestions = (elements) => {
@@ -200,7 +198,6 @@
     const HEART_KEY_PREFIX ="lastHeartbeat-";
 
     let DOMAIN = "https://www.ratetend.com:5001";
-    // let testDOMAIN = "https://www.ratetend.com:5002";
     let testDOMAIN = "http://localhost:8002";
     const DEVELOPER_USERID = "7bca846c-be51-4c49-ba2b6"
     const TEST_KIMI_WIDTH = "90%";
@@ -610,7 +607,6 @@
     // 设置uid
     function setUid(uid, question){
         let intervalId;
-        let lastUrl = getUrl();
         let count = 0;
         let waitTime = 15000;
         if(site === CHATGPT){
@@ -704,21 +700,17 @@
         // 当豆包是新对话，元素不可见会异常，故适当延迟
         let sendGap = (site === DOUBAO && isEmpty(chatId)) ? 1500 : 100;
         setTimeout(function(){
-            // 输入框粘贴文字：富文本编辑器 Lexical 和 React的不同处理
-            if([KIMI].includes(site)){
-                editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: content }));
-            }else if([CLAUDE, GEMINI, CHATGPT, ZCHAT].includes(site)){
-                const paragraph = editor.querySelector('p');
-                editor.focus();
-                paragraph.textContent = '';
-
-                const span = document.createElement('span');
-                span.setAttribute('data-lexical-text', 'true');
-                span.textContent = content;
-                paragraph.appendChild(span);
-
-                editor.dispatchEvent(new Event('input', { bubbles: true }));
-            }else{
+            // 输入框粘贴文字，大致分两类处理。其中第一类里 kimi 特殊处理
+            //  第一类（lexical）
+            if(inputAreaTypes.lexical.includes(site)){
+                if([KIMI].includes(site)){
+                    editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: content }));
+                }else {
+                    const pTag = editor.querySelector('p');
+                    pTag.textContent = content;
+                }
+            //  第二类（textarea 标签）
+            }else if(inputAreaTypes.textarea.includes(site)){
                 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
                     window.HTMLTextAreaElement.prototype,
                     'value'
