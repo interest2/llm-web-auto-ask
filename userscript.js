@@ -1056,68 +1056,11 @@
         }
     });
 
-    // 检查事件是否带有修饰键
-    const hasModifierKey = (event) => event.shiftKey || event.ctrlKey || event.altKey || event.metaKey;
-
-    // 监听发送按钮点击事件和回车键
-    function addSendButtonListener() {
-        const sendBtn = getSendButton(site);
-        const inputArea = getInputArea(site);
-        
-        if (!isEmpty(sendBtn)) {
-            // 使用 mousedown 事件，在 click 事件之前触发，此时输入框还未被清空
-            sendBtn.addEventListener('mousedown', function() {
-                const inputArea = getInputArea(site);
-                if (!isEmpty(inputArea)) {
-                    const lastestQ = inputArea.textContent.trim();
-                    console.log("lastestQ: "+lastestQ);
-                    if (!isEmpty(lastestQ)) {
-                        setTimeout(function() {
-                            const masterId = getChatId();
-                            if (!isEmpty(masterId)) {
-                                masterReq(masterId, lastestQ);
-                            }
-                        }, 100);
-                    }
-                }
-            });
-            console.log("发送按钮监听器已添加");
-        }
-        
-        // 监听输入框的回车键
-        if (!isEmpty(inputArea)) {
-            inputArea.addEventListener('keydown', function(event) {
-                // 单纯的 Enter 键，不带任何修饰键
-                if (event.key === 'Enter' && !hasModifierKey(event)) {
-                    const lastestQ = inputArea.textContent.trim();
-                    console.log("lastestQ: "+lastestQ);
-                    if (!isEmpty(lastestQ)) {
-                        setTimeout(function() {
-                            const masterId = getChatId();
-                            if (!isEmpty(masterId)) {
-                                masterReq(masterId, lastestQ);
-                            }
-                        }, 100);
-                    }
-                }
-            });
-            console.log("输入框回车监听器已添加");
-        }
-        
-        // 如果按钮或输入框还没加载，稍后重试
-        if (isEmpty(sendBtn) || isEmpty(inputArea)) {
-            setTimeout(addSendButtonListener, 500);
-        }
-    }
-
     // 添加到页面
     setTimeout(function(){
         document.body.appendChild(panel);
         document.body.appendChild(toggleButton);
         reloadDisableStatus();
-        
-        // 添加发送按钮监听
-        setTimeout(addSendButtonListener, 1000);
 
         setTimeout(function(){
             if(isEmpty(getGV("notice4"))){
