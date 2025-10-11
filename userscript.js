@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.7.2
+// @version      1.7.3
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok，其他更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -31,7 +31,7 @@
     console.log("ai script, start");
 
     let MAX_QUEUE = 15; // 历史对话的记忆数量
-    const version = "1.7.2";
+    const version = "1.7.3";
     let testLocalFlag = 0;
 
     // 定义站点常量
@@ -142,6 +142,20 @@
         { site: GROK, word: 'Grok', alias: 'Gr' }
     ];
 
+    // 隐藏输入框及周边区域，所需隐藏的元素，是输入框本体的第几层父元素？以下数字即层数
+    const inputAreaHideParentLevel = {
+        [KIMI]: 4,
+        [DEEPSEEK]: 5,
+        [TONGYI]: 6,
+        [CHATGPT]: 10,
+        [DOUBAO]: 11,
+        [ZCHAT]: 10,
+        [GEMINI]: 9,
+        [QWEN]: 9,
+        [CLAUDE]: 6,
+        [GROK]: 7
+    };
+
     // 表示当前站点的变量
     let site = 0;
     let url = window.location.href;
@@ -179,6 +193,7 @@
         const selector = selectors.sendBtn[site];
         return selector ? selector() : null;
     }
+
 
     // 系统功能配置
     const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
@@ -709,7 +724,7 @@
                     const pTag = editor.querySelector('p');
                     pTag.textContent = content;
                 }
-            //  第二类（textarea 标签）
+                //  第二类（textarea 标签）
             }else if(inputAreaTypes.textarea.includes(site)){
                 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
                     window.HTMLTextAreaElement.prototype,
@@ -999,9 +1014,52 @@
     }
 
 
+    // 创建独立的显示/隐藏切换按钮
+    const toggleButton = document.createElement('div');
+    toggleButton.style.cssText = `
+        font-size: 14px;
+        padding: 3px;
+        position: fixed;
+        right: 10px;
+        bottom: 35px;
+
+        cursor: pointer;
+        background: #ec7258;
+        color: white;
+        border: 1px solid #ddd;
+        border-radius: 30%;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        z-index: 99999999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    `;
+    toggleButton.textContent = '隐藏';
+    toggleButton.title = '临时隐藏输入框获得更多视野';
+
+    const getNthParent = (el, n) => n > 0 ? getNthParent(el?.parentElement, n - 1) : el;
+
+    // 按钮点击事件 - 切换面板显示/隐藏
+    toggleButton.addEventListener('click', (e) => {
+        let inputArea = getInputArea(site);
+        let aroundInputArea = getNthParent(inputArea, inputAreaHideParentLevel[site]);
+
+        e.stopPropagation();
+        if (aroundInputArea.style.display === 'none') {
+            aroundInputArea.style.display = 'flex';
+            toggleButton.textContent = '隐藏';
+            toggleButton.style.background = '#ec7258';
+        } else {
+            aroundInputArea.style.display = 'none';
+            toggleButton.textContent = '显示';
+            toggleButton.style.background = '#999';
+        }
+    });
+
     // 添加到页面
     setTimeout(function(){
         document.body.appendChild(panel);
+        document.body.appendChild(toggleButton);
         reloadDisableStatus();
 
         setTimeout(function(){
