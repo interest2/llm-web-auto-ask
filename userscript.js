@@ -32,7 +32,6 @@
 
     let MAX_QUEUE = 15; // 历史对话的记忆数量
     const version = "1.7.3";
-    let testLocalFlag = 0;
 
     // 定义站点常量
     const KIMI = 0;
@@ -142,7 +141,7 @@
         { site: GROK, word: 'Grok', alias: 'Gr' }
     ];
 
-    // 隐藏输入框及周边区域，所需隐藏的元素，是输入框本体的第几层父元素？以下数字即层数
+    // 隐藏输入框及周边区域，所需隐藏的元素，是输入框本体的第几层父元素？以下数字即层数（后续应改为可视化配置）
     const inputAreaHideParentLevel = {
         [KIMI]: 4,
         [DEEPSEEK]: 5,
@@ -202,6 +201,7 @@
     const maxRetries = 150;
     const OPEN_GAP = 300; // 打开网页的间隔
     const HIBERNATE_GAP = 600; // 单位：秒
+    let testLocalFlag = 0;
 
     // 存储时的特征词
     const T = "tool-";
@@ -395,12 +395,16 @@
         let masterId = getChatId();
         if(isEmpty(masterId)){
             isHistoryChat = false;
+            updateNavQuestions();
             return;
         }
 
         let questions = getQuestionList();
+        updateNavQuestions(questions);
+
         let lenNext = questions.length;
         if(lenNext > 0){
+
             let len = hgetS(T + masterId, LEN) || 0;
             // 历史对话且无需映射同步问答的，终止流程
             if(len === 0 && isHistoryChat === true){
@@ -1013,8 +1017,9 @@
         observer.observe(panel);
     }
 
-
-    // 创建独立的显示/隐藏切换按钮
+    /**
+    * 输入框的显示/隐藏切换功能
+    */
     const toggleButton = document.createElement('div');
     toggleButton.style.cssText = `
         font-size: 14px;
@@ -1056,7 +1061,120 @@
         }
     });
 
-    // 添加到页面
+
+    /**
+     * 本网页多次提问形成的快速导航栏功能
+     */
+    const navBar = document.createElement('div');
+    const NAV_BAR_ID = "tool-nav-bar";
+    navBar.id = NAV_BAR_ID;
+    navBar.style.cssText = `
+        position: fixed;
+        visibility: hidden;
+        top: 30%;
+        right: 15px;
+        width: 240px;
+        background: rgba(255, 255, 255, 0.95);
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        padding: 5px;
+        z-index: 2147483647;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        max-height: 100vh;
+        overflow-y: auto;
+        box-sizing: border-box;
+      `;
+
+    let navQuestions;
+    function updateNavQuestions(quesList) {
+        // 新对话页面，目录清空
+        if(isEmpty(quesList)){
+            navBar.innerHTML = "";
+            navBar.style.visibility = "hidden";
+            return;
+        }
+        let thisQuestions = Array.from(quesList);
+        if(navQuestions !== undefined){
+            // 长度相同 且 头元素相同，则无需继续
+            if(thisQuestions.length === navQuestions.length && thisQuestions[0].textContent === navQuestions[0].textContent){
+                return;
+            }
+        }
+
+        navBar.innerHTML = "";
+
+        // 标题
+        const title = document.createElement('div');
+        title.textContent = '目录';
+        title.style.cssText = `
+              font-weight: bold;
+              color: #333;
+              padding: 4px 5px;
+              border-bottom: 1px solid #eaeaea;
+              margin-bottom: 4px;
+            `;
+        navBar.appendChild(title);
+
+        navQuestions = thisQuestions;
+        // 为每个目标元素创建导航链接
+        navQuestions.forEach((el, i) => {
+            if (!el || !el.tagName) return;
+
+            // 生成导航文字（带自增序号，序号黑色，其余保持颜色）
+            const link = document.createElement('div');
+            link.className = 'tool-nav-link';
+            const indexSpan = document.createElement('span');
+            indexSpan.textContent = (i + 1) + '. ';
+            indexSpan.style.color = '#000';
+            const textSpan = document.createElement('span');
+            textSpan.textContent = el.textContent;
+            link.title = (i + 1) + '. ' + el.textContent;
+            link.style.cssText = `
+                  width: 100%;
+                  padding: 1px 5px;
+                  cursor: pointer;
+                  color: #0066cc;
+                  font-size: 14px;
+                  line-height: 1.55;
+                  white-space: normal;
+                  overflow: hidden;
+                  text-overflow: ellipsis;
+                  display: -webkit-box;
+                  -webkit-line-clamp: 2; /* 最多显示两行 */
+                  -webkit-box-orient: vertical;
+                  word-break: break-word;
+                  max-height: calc(1.55em * 2);
+                  box-sizing: border-box;
+                `;
+            link.appendChild(indexSpan);
+            link.appendChild(textSpan);
+            link.addEventListener('mouseenter', () => link.style.backgroundColor = '#f0f0f0');
+            link.addEventListener('mouseleave', () => link.style.backgroundColor = '');
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                el.scrollIntoView({block: 'start'});
+            });
+
+            navBar.appendChild(link);
+        });
+
+        // 无链接则隐藏（忽略标题）
+        const linkCount = navBar.querySelectorAll('.tool-nav-link').length;
+        if(linkCount === 0){
+            navBar.style.visibility = "hidden";
+            return;
+        }
+        navBar.style.visibility = "visible";
+        const root = (document.body || document.documentElement);
+        if(!root.contains(navBar)){
+            root.appendChild(navBar);
+        }
+    }
+
+    /**
+     * 脚本首次使用的指引
+     */
     setTimeout(function(){
         document.body.appendChild(panel);
         document.body.appendChild(toggleButton);
@@ -1069,6 +1187,11 @@
             }
         }, 800);
     }, panelDelay);
+
+
+    /**
+     * 多选面板
+     */
 
     // 刷新简略模式
     function reloadCompactMode(){
