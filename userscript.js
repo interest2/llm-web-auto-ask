@@ -1107,6 +1107,11 @@
     `;
 
     let navQuestions;
+    let navLinks = [];
+    let navIO; // IntersectionObserver for scroll spy
+    let elToLink = new Map();
+    let clickedTarget = null;
+    let clickLockUntil = 0;
     let navMinimized = false;
 
     function ensureMiniButtonInDom(){
@@ -1142,6 +1147,63 @@
         // 直接刷新可见性，避免因内容未变化而提前返回
         refreshNavBarVisibility();
     }
+
+    function computeActiveIndex(){
+        if(!navQuestions || navQuestions.length === 0){
+            return -1;
+        }
+        let candidateIndex = -1;
+        let smallestPositiveTop = Number.POSITIVE_INFINITY;
+        let lastNegativeIndex = -1;
+        for(let i=0;i<navQuestions.length;i++){
+            const el = navQuestions[i];
+            if(!el || !el.getBoundingClientRect){
+                continue;
+            }
+            const rect = el.getBoundingClientRect();
+            if(rect.top >= 0){
+                if(rect.top < smallestPositiveTop){
+                    smallestPositiveTop = rect.top;
+                    candidateIndex = i;
+                }
+            }else{
+                lastNegativeIndex = i;
+            }
+        }
+        if(candidateIndex !== -1){
+            return candidateIndex;
+        }
+        return lastNegativeIndex;
+    }
+
+    function highlightActiveNav(){
+        const idx = computeActiveIndex();
+        for(let i=0;i<navLinks.length;i++){
+            const link = navLinks[i];
+            if(!link) continue;
+            if(i === idx){
+                link.style.backgroundColor = '#e6f0ff';
+                link.style.fontWeight = 'bold';
+            }else{
+                link.style.backgroundColor = '';
+                link.style.fontWeight = 'normal';
+            }
+        }
+    }
+
+    let scrollDebounceTimer;
+    function onScrollRefreshActive(){
+        if(scrollDebounceTimer){
+            return;
+        }
+        scrollDebounceTimer = setTimeout(function(){
+            scrollDebounceTimer = null;
+            highlightActiveNav();
+        }, 100);
+    }
+    window.addEventListener('scroll', onScrollRefreshActive, { passive: true });
+    // 采用 IntersectionObserver 替代滚动计算，高亮不再依赖滚动事件
+    window.removeEventListener('scroll', onScrollRefreshActive);
     function updateNavQuestions(quesList) {
         // 新对话页面，目录清空
         if(isEmpty(quesList)){
@@ -1161,6 +1223,11 @@
         }
 
         navBar.innerHTML = "";
+        navLinks = [];
+        elToLink.clear();
+        if(navIO){
+            try{ navIO.disconnect(); }catch(e){}
+        }
 
         // 标题
         const title = document.createElement('div');
@@ -1239,13 +1306,68 @@
             link.addEventListener('click', (e) => {
                 e.preventDefault();
                 el.scrollIntoView({block: 'start'});
+                // 点击后短暂“锁定”该目标，避免顶部边界判定偏差
+                clickedTarget = el;
+                clickLockUntil = Date.now() + 1200;
+                const linkSelf = elToLink.get(el);
+                if(linkSelf){
+                    // 立即反馈高亮
+                    navLinks.forEach(l => { if(l){ l.style.backgroundColor=''; l.style.fontWeight='normal'; }});
+                    linkSelf.style.backgroundColor = '#e6f0ff';
+                    linkSelf.style.fontWeight = 'bold';
+                }
             });
 
             navBar.appendChild(link);
+            navLinks.push(link);
+            elToLink.set(el, link);
         });
 
         // 刷新可见性
         refreshNavBarVisibility();
+        // 初始化 IntersectionObserver 高亮
+        try{
+            navIO = new IntersectionObserver((entries) => {
+                // 选择可见比例最大的项作为当前项
+                const now = Date.now();
+                const visible = entries.filter(en => en.isIntersecting);
+                let nextEl = null;
+                if(now < clickLockUntil && clickedTarget){
+                    // 点击锁定期内，若被点目标在视窗内或贴近顶部，则优先它
+                    const rect = clickedTarget.getBoundingClientRect ? clickedTarget.getBoundingClientRect() : null;
+                    const nearTop = rect ? Math.abs(rect.top) < 24 : false; // 贴近顶部阈值
+                    const inView = rect ? (rect.bottom > 0 && rect.top < (window.innerHeight || document.documentElement.clientHeight) * 0.9) : false;
+                    if(inView || nearTop){
+                        nextEl = clickedTarget;
+                    }
+                }
+                if(!nextEl){
+                    if(visible.length === 0){ return; }
+                    visible.sort((a,b) => b.intersectionRatio - a.intersectionRatio);
+                    nextEl = visible[0].target;
+                }
+                // 切换高亮
+                for(let i=0;i<navQuestions.length;i++){
+                    const link = navLinks[i];
+                    if(!link) continue;
+                    if(navQuestions[i] === nextEl){
+                        link.style.backgroundColor = '#e6f0ff';
+                        link.style.fontWeight = 'bold';
+                    }else{
+                        link.style.backgroundColor = '';
+                        link.style.fontWeight = 'normal';
+                    }
+                }
+            }, { root: null, rootMargin: '-45% 0px -45% 0px', threshold: [0, 0.5, 1] });
+
+            navQuestions.forEach(el => {
+                if(el && el.tagName){
+                    try{ navIO.observe(el); }catch(e){}
+                }
+            });
+        }catch(e){
+            // 兼容性问题时不阻断
+        }
     }
 
     // 点击迷你按钮恢复
