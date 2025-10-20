@@ -1063,319 +1063,316 @@
 
 
     /**
-     * 本网页多次提问形成的快速导航栏功能
+     * 目录导航功能
      */
-    const navBar = document.createElement('div');
-    const NAV_BAR_ID = "tool-nav-bar";
-    navBar.id = NAV_BAR_ID;
-    navBar.style.cssText = `
-        position: fixed;
-        visibility: hidden;
-        top: 10%;
-        right: 15px;
-        width: 240px;
-        background: rgba(255, 255, 255, 0.95);
-        border: 1px solid #ccc;
-        border-radius: 6px;
-        padding: 5px;
-        z-index: 2147483647;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-        max-height: 100vh;
-        overflow-y: auto;
-        box-sizing: border-box;
-      `;
+    // 样式常量
+    const NAV_STYLES = {
+        navBar: `position:fixed;visibility:hidden;top:15%;right:15px;max-width:230px;min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:100vh;overflow-y:auto;box-sizing:border-box;`,
+        miniButton: `position:fixed;top:15%;right:15px;background:#ec7258;color:#fff;border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;cursor:pointer;z-index:2147483647;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
+        link: `width:100%;padding:4px 5px;cursor:pointer;color:#333;font-size:14px;line-height:1.5;white-space:normal;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;max-height:calc(1.9em * 2);box-sizing:border-box;`,
+        title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;`,
+        hideBtn: `font-weight:normal;color:#666;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`
+    };
 
-    // 目录最小化按钮（悬浮小按钮）
+    // 创建导航元素
+    const navBar = document.createElement('div');
+    navBar.id = "tool-nav-bar";
+    navBar.style.cssText = NAV_STYLES.navBar;
+
     const navMiniButton = document.createElement('div');
     navMiniButton.textContent = '目录';
-    navMiniButton.style.cssText = `
-        position: fixed;
-        top: 10%;
-        right: 15px;
-        background: #ec7258;
-        color: #fff;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 2px 8px;
-        font-size: 12px;
-        cursor: pointer;
-        z-index: 2147483647;
-        visibility: hidden;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.15);
-        user-select: none;
-    `;
+    navMiniButton.style.cssText = NAV_STYLES.miniButton;
 
-    let navQuestions;
-    let navLinks = [];
-    let navIO; // IntersectionObserver for scroll spy
-    let elToLink = new Map();
-    let clickedTarget = null;
-    let clickLockUntil = 0;
-    let navMinimized = false;
+    // 状态变量
+    let navQuestions, navLinks = [], navIO, elToLink = new Map();
+    let clickedTarget = null, clickLockUntil = 0, navMinimized = false, scrollDebounceTimer;
 
-    function ensureMiniButtonInDom(){
-        const root = (document.body || document.documentElement);
-        if(!root.contains(navMiniButton)){
-            root.appendChild(navMiniButton);
+    // 工具函数
+    const setLinkStyle = (link, isActive) => {
+        if(!link) return;
+        if(isActive) {
+            link.style.cssText = NAV_STYLES.link + 'background-color:;color:#0066cc;';
+        } else {
+            link.style.cssText = NAV_STYLES.link + 'background-color:;color:#333;';
         }
-    }
+    };
 
-    function refreshNavBarVisibility(){
-        ensureMiniButtonInDom();
+    const clearAllHighlights = () => navLinks.forEach(link => setLinkStyle(link, false));
+
+    const getCurrentHighlightIndex = () => navLinks.findIndex(link => link && link.style.color === '#0066cc');
+
+    // 核心功能函数
+    const refreshNavBarVisibility = () => {
+        const root = document.body || document.documentElement;
+        if(!root.contains(navMiniButton)) root.appendChild(navMiniButton);
+        
         const linkCount = navBar.querySelectorAll('.tool-nav-link').length;
-        if(linkCount === 0){
-            navBar.style.visibility = "hidden";
-            navMiniButton.style.visibility = "hidden";
+        if(linkCount === 0) {
+            navBar.style.visibility = navMiniButton.style.visibility = "hidden";
             return;
         }
-        if(navMinimized){
+        
+        if(navMinimized) {
             navBar.style.visibility = "hidden";
             navMiniButton.style.visibility = "visible";
-        }else{
+        } else {
             navBar.style.visibility = "visible";
             navMiniButton.style.visibility = "hidden";
-            const root = (document.body || document.documentElement);
-            if(!root.contains(navBar)){
-                root.appendChild(navBar);
-            }
+            if(!root.contains(navBar)) root.appendChild(navBar);
         }
-    }
+    };
 
-    function setNavMinimized(min){
+    const setNavMinimized = (min) => {
         navMinimized = min === true;
-        // 直接刷新可见性，避免因内容未变化而提前返回
         refreshNavBarVisibility();
-    }
+    };
 
-    function computeActiveIndex(){
-        if(!navQuestions || navQuestions.length === 0){
-            return -1;
-        }
-        let candidateIndex = -1;
-        let smallestPositiveTop = Number.POSITIVE_INFINITY;
-        let lastNegativeIndex = -1;
-        for(let i=0;i<navQuestions.length;i++){
-            const el = navQuestions[i];
-            if(!el || !el.getBoundingClientRect){
-                continue;
-            }
+    const computeActiveIndex = () => {
+        if(!navQuestions?.length) return -1;
+        let candidateIndex = -1, smallestPositiveTop = Infinity, lastNegativeIndex = -1;
+        
+        navQuestions.forEach((el, i) => {
+            if(!el?.getBoundingClientRect) return;
             const rect = el.getBoundingClientRect();
-            if(rect.top >= 0){
-                if(rect.top < smallestPositiveTop){
+            if(rect.top >= 0) {
+                if(rect.top < smallestPositiveTop) {
                     smallestPositiveTop = rect.top;
                     candidateIndex = i;
                 }
-            }else{
+            } else {
                 lastNegativeIndex = i;
             }
-        }
-        if(candidateIndex !== -1){
-            return candidateIndex;
-        }
-        return lastNegativeIndex;
-    }
+        });
+        return candidateIndex !== -1 ? candidateIndex : lastNegativeIndex;
+    };
 
-    function highlightActiveNav(){
+    const highlightActiveNav = () => {
         const idx = computeActiveIndex();
-        for(let i=0;i<navLinks.length;i++){
-            const link = navLinks[i];
-            if(!link) continue;
-            if(i === idx){
-                link.style.backgroundColor = '#e6f0ff';
-                link.style.color = '#0066cc';
-                link.style.fontWeight = 'normal';
-            }else{
-                link.style.backgroundColor = '';
-                link.style.color = '#000';
-                link.style.fontWeight = 'normal';
-            }
-        }
-    }
+        navLinks.forEach((link, i) => setLinkStyle(link, i === idx));
+    };
 
-    let scrollDebounceTimer;
-    function onScrollRefreshActive(){
-        if(scrollDebounceTimer){
+    const checkAndSwitchHighlight = () => {
+        if(!navQuestions?.length) return;
+        
+        // 找到所有可见的目录项
+        const visibleElements = navQuestions.filter(el => {
+            const rect = el?.getBoundingClientRect();
+            return rect && rect.bottom > 0 && rect.top < (window.innerHeight || document.documentElement.clientHeight);
+        });
+        
+        if(visibleElements.length === 0) {
+            // 视野无任何目录，保持上次高亮项（不做任何操作）
             return;
         }
-        scrollDebounceTimer = setTimeout(function(){
+        
+        // 按距离顶部的位置排序，找到最接近顶部的目录项
+        visibleElements.sort((a, b) => {
+            const rectA = a.getBoundingClientRect();
+            const rectB = b.getBoundingClientRect();
+            return rectA.top - rectB.top;
+        });
+        
+        const firstVisibleEl = visibleElements[0];
+        const rect = firstVisibleEl.getBoundingClientRect();
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+        const positionPercent = rect.top / viewportHeight;
+        
+        let targetIndex = -1;
+        if(positionPercent >= 0 && positionPercent <= 0.2) {
+            // 0~20%：高亮当前项
+            targetIndex = navQuestions.indexOf(firstVisibleEl);
+        } else if(positionPercent > 0.2 && positionPercent <= 1.0) {
+            // 20%~100%：高亮前一项
+            const currentIndex = navQuestions.indexOf(firstVisibleEl);
+            targetIndex = currentIndex > 0 ? currentIndex - 1 : currentIndex;
+        }
+        
+        if(targetIndex >= 0) {
+            clearAllHighlights();
+            setLinkStyle(navLinks[targetIndex], true);
+        }
+    };
+
+    const onScrollRefreshActive = () => {
+        if(scrollDebounceTimer) return;
+        scrollDebounceTimer = setTimeout(() => {
             scrollDebounceTimer = null;
             highlightActiveNav();
+            checkAndSwitchHighlight();
         }, 100);
-    }
+    };
+
     window.addEventListener('scroll', onScrollRefreshActive, { passive: true });
-    // 采用 IntersectionObserver 替代滚动计算，高亮不再依赖滚动事件
-    window.removeEventListener('scroll', onScrollRefreshActive);
-    function updateNavQuestions(quesList) {
-        // 新对话页面，目录清空
-        if(isEmpty(quesList)){
-            navBar.innerHTML = "";
-            navBar.style.visibility = "hidden";
-            navMiniButton.style.visibility = "hidden";
-            return;
-        }
-        let thisQuestions = Array.from(quesList);
-        if(navQuestions !== undefined){
-            // 长度相同 且 头元素相同，则无需继续
-            if(thisQuestions.length === navQuestions.length && thisQuestions[0].textContent === navQuestions[0].textContent){
-                // 内容未变化也需要刷新可见性（响应最小化/还原）
-                refreshNavBarVisibility();
-                return;
-            }
-        }
+    // 创建导航链接
+    const createNavLink = (el, i) => {
+        const link = document.createElement('div');
+        link.className = 'tool-nav-link';
+        link.style.cssText = NAV_STYLES.link;
+        
+        const indexSpan = document.createElement('span');
+        indexSpan.textContent = (i + 1) + '. ';
+        indexSpan.style.color = '#999';
+        
+        const textSpan = document.createElement('span');
+        textSpan.textContent = el.textContent;
+        
+        link.title = (i + 1) + '. ' + el.textContent;
+        link.appendChild(indexSpan);
+        link.appendChild(textSpan);
+        
+        // 事件监听
+        link.addEventListener('mouseenter', () => link.style.backgroundColor = '#f0f0f0');
+        link.addEventListener('mouseleave', () => link.style.backgroundColor = '');
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            el.scrollIntoView({block: 'start'});
+            clickedTarget = el;
+            clickLockUntil = Date.now() + 1200;
+            clearAllHighlights();
+            setLinkStyle(link, true);
+        });
+        
+        return link;
+    };
 
-        navBar.innerHTML = "";
-        navLinks = [];
-        elToLink.clear();
-        if(navIO){
-            try{ navIO.disconnect(); }catch(e){}
-        }
-
-        // 标题
+    // 创建标题
+    const createTitle = () => {
         const title = document.createElement('div');
-        title.textContent = '目录';
-        title.style.cssText = `
-              display: flex;
-              align-items: center;
-              justify-content: flex-start;
-              gap: 6px;
-              font-weight: bold;
-              color: #333;
-              padding: 4px 5px;
-              border-bottom: 1px solid #eaeaea;
-              margin-bottom: 4px;
-            `;
+        title.style.cssText = NAV_STYLES.title;
+        
+        const titleText = document.createElement('span');
+        titleText.textContent = '目录';
+        
         const hideBtn = document.createElement('span');
         hideBtn.textContent = '隐藏';
-        hideBtn.style.cssText = `
-              font-weight: normal;
-              color: #666;
-              font-size: 12px;
-              padding: 2px 6px;
-              border: 1px solid #ddd;
-              border-radius: 10px;
-              cursor: pointer;
-              user-select: none;
-            `;
+        hideBtn.style.cssText = NAV_STYLES.hideBtn;
         hideBtn.addEventListener('mouseenter', () => hideBtn.style.backgroundColor = '#f5f5f5');
         hideBtn.addEventListener('mouseleave', () => hideBtn.style.backgroundColor = '');
         hideBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             setNavMinimized(true);
         });
-        const titleText = document.createElement('span');
-        titleText.textContent = '目录';
-        title.innerHTML = '';
+        
         title.appendChild(titleText);
         title.appendChild(hideBtn);
-        navBar.appendChild(title);
+        return title;
+    };
 
-        navQuestions = thisQuestions;
-        // 为每个目标元素创建导航链接
-        navQuestions.forEach((el, i) => {
-            if (!el || !el.tagName) return;
-
-            // 生成导航文字（带自增序号，序号黑色，其余保持颜色）
-            const link = document.createElement('div');
-            link.className = 'tool-nav-link';
-            const indexSpan = document.createElement('span');
-            indexSpan.textContent = (i + 1) + '. ';
-            indexSpan.style.color = '#999';
-            const textSpan = document.createElement('span');
-            textSpan.textContent = el.textContent;
-            link.title = (i + 1) + '. ' + el.textContent;
-            link.style.cssText = `
-                  width: 100%;
-                  padding: 4px 5px;
-                  cursor: pointer;
-                  color: #333;
-                  font-size: 14px;
-                  line-height: 1.5;
-                  white-space: normal;
-                  overflow: hidden;
-                  text-overflow: ellipsis;
-                  display: -webkit-box;
-                  -webkit-line-clamp: 2; /* 最多显示两行 */
-                  -webkit-box-orient: vertical;
-                  word-break: break-word;
-                  max-height: calc(1.9em * 2);
-                  box-sizing: border-box;
-                `;
-            link.appendChild(indexSpan);
-            link.appendChild(textSpan);
-            link.addEventListener('mouseenter', () => link.style.backgroundColor = '#f0f0f0');
-            link.addEventListener('mouseleave', () => link.style.backgroundColor = '');
-            link.addEventListener('click', (e) => {
-                e.preventDefault();
-                el.scrollIntoView({block: 'start'});
-                // 点击后短暂“锁定”该目标，避免顶部边界判定偏差
-                clickedTarget = el;
-                clickLockUntil = Date.now() + 1200;
-                const linkSelf = elToLink.get(el);
-                if(linkSelf){
-                    // 立即反馈高亮
-                    navLinks.forEach(l => { if(l){ l.style.backgroundColor=''; l.style.color='#000'; l.style.fontWeight='normal'; }});
-                    linkSelf.style.backgroundColor = '#e6f0ff';
-                    linkSelf.style.color = '#0066cc';
-                    linkSelf.style.fontWeight = 'normal';
+    // 初始化IntersectionObserver
+    const initIntersectionObserver = () => {
+        try {
+            navIO = new IntersectionObserver((entries) => {
+                const now = Date.now();
+                let nextEl = null;
+                
+                // 点击锁定期内，优先使用点击的目标
+                if(now < clickLockUntil && clickedTarget) {
+                    const rect = clickedTarget.getBoundingClientRect?.();
+                    const nearTop = rect ? Math.abs(rect.top) < 24 : false;
+                    const inView = rect ? (rect.bottom > 0 && rect.top < (window.innerHeight || document.documentElement.clientHeight) * 0.9) : false;
+                    if(inView || nearTop) nextEl = clickedTarget;
                 }
-            });
+                
+                // 新的高亮逻辑
+                if(!nextEl) {
+                    // 找到所有可见的目录项，按位置排序
+                    const visibleElements = navQuestions.filter(el => {
+                        const rect = el?.getBoundingClientRect();
+                        return rect && rect.bottom > 0 && rect.top < (window.innerHeight || document.documentElement.clientHeight);
+                    });
+                    
+                    if(visibleElements.length > 0) {
+                        // 按距离顶部的位置排序
+                        visibleElements.sort((a, b) => {
+                            const rectA = a.getBoundingClientRect();
+                            const rectB = b.getBoundingClientRect();
+                            return rectA.top - rectB.top;
+                        });
+                        
+                        // 检查第一个可见元素的位置
+                        const firstVisibleEl = visibleElements[0];
+                        const rect = firstVisibleEl.getBoundingClientRect();
+                        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+                        const positionPercent = rect.top / viewportHeight;
+                        
+                        // 根据位置决定高亮项
+                        if(positionPercent >= 0 && positionPercent <= 0.3) {
+                            // 0~30%：高亮当前项
+                            nextEl = firstVisibleEl;
+                        } else if(positionPercent > 0.3 && positionPercent <= 1.0) {
+                            // 30%~100%：高亮前一项
+                            const currentIndex = navQuestions.indexOf(firstVisibleEl);
+                            if(currentIndex > 0) {
+                                nextEl = navQuestions[currentIndex - 1];
+                            } else {
+                                nextEl = firstVisibleEl; // 如果是第一项，仍然高亮自己
+                            }
+                        }
+                    } else {
+                        // 视野无任何目录，保持上次高亮项（不改变nextEl）
+                        // 这样navLinks会保持之前的状态
+                        return;
+                    }
+                }
+                
+                // 应用高亮
+                navLinks.forEach((link, i) => setLinkStyle(link, navQuestions[i] === nextEl));
+            }, { root: null, rootMargin: '0px 0px -70% 0px', threshold: [0, 0.1, 0.5, 1] });
 
+            navQuestions.forEach(el => {
+                if(el?.tagName) try { navIO.observe(el); } catch(e) {}
+            });
+        } catch(e) {}
+    };
+
+    const updateNavQuestions = (quesList) => {
+        if(isEmpty(quesList)) {
+            navBar.innerHTML = "";
+            navBar.style.visibility = navMiniButton.style.visibility = "hidden";
+            return;
+        }
+        
+        const thisQuestions = Array.from(quesList);
+        if(navQuestions && thisQuestions.length === navQuestions.length && thisQuestions[0].textContent === navQuestions[0].textContent) {
+            refreshNavBarVisibility();
+            return;
+        }
+
+        navBar.innerHTML = "";
+        navLinks = [];
+        elToLink.clear();
+        if(navIO) try { navIO.disconnect(); } catch(e) {}
+
+        navBar.appendChild(createTitle());
+        navQuestions = thisQuestions;
+        
+        navQuestions.forEach((el, i) => {
+            if(!el?.tagName) return;
+            const link = createNavLink(el, i);
             navBar.appendChild(link);
             navLinks.push(link);
             elToLink.set(el, link);
         });
 
-        // 刷新可见性
         refreshNavBarVisibility();
-        // 初始化 IntersectionObserver 高亮
-        try{
-            navIO = new IntersectionObserver((entries) => {
-                // 选择可见比例最大的项作为当前项
-                const now = Date.now();
-                const visible = entries.filter(en => en.isIntersecting);
-                let nextEl = null;
-                if(now < clickLockUntil && clickedTarget){
-                    // 点击锁定期内，若被点目标在视窗内或贴近顶部，则优先它
-                    const rect = clickedTarget.getBoundingClientRect ? clickedTarget.getBoundingClientRect() : null;
-                    const nearTop = rect ? Math.abs(rect.top) < 24 : false; // 贴近顶部阈值
-                    const inView = rect ? (rect.bottom > 0 && rect.top < (window.innerHeight || document.documentElement.clientHeight) * 0.9) : false;
-                    if(inView || nearTop){
-                        nextEl = clickedTarget;
-                    }
-                }
-                if(!nextEl){
-                    if(visible.length === 0){ return; }
-                    visible.sort((a,b) => b.intersectionRatio - a.intersectionRatio);
-                    nextEl = visible[0].target;
-                }
-                // 切换高亮
-                for(let i=0;i<navQuestions.length;i++){
-                    const link = navLinks[i];
-                    if(!link) continue;
-                    if(navQuestions[i] === nextEl){
-                        link.style.backgroundColor = '#e6f0ff';
-                        link.style.color = '#0066cc';
-                        link.style.fontWeight = 'normal';
-                    }else{
-                        link.style.backgroundColor = '';
-                        link.style.color = '#333';
-                        link.style.fontWeight = 'normal';
-                    }
-                }
-            }, { root: null, rootMargin: '0px 0px -90% 0px', threshold: [0, 0.1, 0.5, 1] });
-
-            navQuestions.forEach(el => {
-                if(el && el.tagName){
-                    try{ navIO.observe(el); }catch(e){}
-                }
+        initIntersectionObserver();
+        
+        // 页面刚加载时，如果视野里没有任何目录项，则自动高亮最后一项
+        setTimeout(() => {
+            const visibleElements = navQuestions.filter(el => {
+                const rect = el?.getBoundingClientRect();
+                return rect && rect.bottom > 0 && rect.top < (window.innerHeight || document.documentElement.clientHeight);
             });
-        }catch(e){
-            // 兼容性问题时不阻断
-        }
-    }
+            
+            if(visibleElements.length === 0 && navLinks.length > 0) {
+                // 视野无任何目录项，高亮最后一项
+                clearAllHighlights();
+                setLinkStyle(navLinks[navLinks.length - 1], true);
+            }
+        }, 100);
+    };
 
-    // 点击迷你按钮恢复
+    // 迷你按钮事件
     navMiniButton.addEventListener('click', (e) => {
         e.stopPropagation();
         setNavMinimized(false);
