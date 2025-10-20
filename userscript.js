@@ -1018,8 +1018,8 @@
     }
 
     /**
-    * 输入框的显示/隐藏切换功能
-    */
+     * 输入框的显示/隐藏切换功能
+     */
     const toggleButton = document.createElement('div');
     toggleButton.style.cssText = `
         font-size: 14px;
@@ -1086,18 +1086,76 @@
         box-sizing: border-box;
       `;
 
+    // 目录最小化按钮（悬浮小按钮）
+    const navMiniButton = document.createElement('div');
+    navMiniButton.textContent = '目录';
+    navMiniButton.style.cssText = `
+        position: fixed;
+        top: 30%;
+        right: 15px;
+        background: #ec7258;
+        color: #fff;
+        border: 1px solid #ddd;
+        border-radius: 12px;
+        padding: 2px 8px;
+        font-size: 12px;
+        cursor: pointer;
+        z-index: 2147483647;
+        visibility: hidden;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+        user-select: none;
+    `;
+
     let navQuestions;
+    let navMinimized = false;
+
+    function ensureMiniButtonInDom(){
+        const root = (document.body || document.documentElement);
+        if(!root.contains(navMiniButton)){
+            root.appendChild(navMiniButton);
+        }
+    }
+
+    function refreshNavBarVisibility(){
+        ensureMiniButtonInDom();
+        const linkCount = navBar.querySelectorAll('.tool-nav-link').length;
+        if(linkCount === 0){
+            navBar.style.visibility = "hidden";
+            navMiniButton.style.visibility = "hidden";
+            return;
+        }
+        if(navMinimized){
+            navBar.style.visibility = "hidden";
+            navMiniButton.style.visibility = "visible";
+        }else{
+            navBar.style.visibility = "visible";
+            navMiniButton.style.visibility = "hidden";
+            const root = (document.body || document.documentElement);
+            if(!root.contains(navBar)){
+                root.appendChild(navBar);
+            }
+        }
+    }
+
+    function setNavMinimized(min){
+        navMinimized = min === true;
+        // 直接刷新可见性，避免因内容未变化而提前返回
+        refreshNavBarVisibility();
+    }
     function updateNavQuestions(quesList) {
         // 新对话页面，目录清空
         if(isEmpty(quesList)){
             navBar.innerHTML = "";
             navBar.style.visibility = "hidden";
+            navMiniButton.style.visibility = "hidden";
             return;
         }
         let thisQuestions = Array.from(quesList);
         if(navQuestions !== undefined){
             // 长度相同 且 头元素相同，则无需继续
             if(thisQuestions.length === navQuestions.length && thisQuestions[0].textContent === navQuestions[0].textContent){
+                // 内容未变化也需要刷新可见性（响应最小化/还原）
+                refreshNavBarVisibility();
                 return;
             }
         }
@@ -1108,12 +1166,39 @@
         const title = document.createElement('div');
         title.textContent = '目录';
         title.style.cssText = `
+              display: flex;
+              align-items: center;
+              justify-content: flex-start;
+              gap: 6px;
               font-weight: bold;
               color: #333;
               padding: 4px 5px;
               border-bottom: 1px solid #eaeaea;
               margin-bottom: 4px;
             `;
+        const hideBtn = document.createElement('span');
+        hideBtn.textContent = '隐藏';
+        hideBtn.style.cssText = `
+              font-weight: normal;
+              color: #666;
+              font-size: 12px;
+              padding: 2px 6px;
+              border: 1px solid #ddd;
+              border-radius: 10px;
+              cursor: pointer;
+              user-select: none;
+            `;
+        hideBtn.addEventListener('mouseenter', () => hideBtn.style.backgroundColor = '#f5f5f5');
+        hideBtn.addEventListener('mouseleave', () => hideBtn.style.backgroundColor = '');
+        hideBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setNavMinimized(true);
+        });
+        const titleText = document.createElement('span');
+        titleText.textContent = '目录';
+        title.innerHTML = '';
+        title.appendChild(titleText);
+        title.appendChild(hideBtn);
         navBar.appendChild(title);
 
         navQuestions = thisQuestions;
@@ -1132,11 +1217,11 @@
             link.title = (i + 1) + '. ' + el.textContent;
             link.style.cssText = `
                   width: 100%;
-                  padding: 1px 5px;
+                  padding: 4px 5px;
                   cursor: pointer;
                   color: #0066cc;
                   font-size: 14px;
-                  line-height: 1.55;
+                  line-height: 1.5;
                   white-space: normal;
                   overflow: hidden;
                   text-overflow: ellipsis;
@@ -1144,7 +1229,7 @@
                   -webkit-line-clamp: 2; /* 最多显示两行 */
                   -webkit-box-orient: vertical;
                   word-break: break-word;
-                  max-height: calc(1.55em * 2);
+                  max-height: calc(1.9em * 2);
                   box-sizing: border-box;
                 `;
             link.appendChild(indexSpan);
@@ -1159,18 +1244,15 @@
             navBar.appendChild(link);
         });
 
-        // 无链接则隐藏（忽略标题）
-        const linkCount = navBar.querySelectorAll('.tool-nav-link').length;
-        if(linkCount === 0){
-            navBar.style.visibility = "hidden";
-            return;
-        }
-        navBar.style.visibility = "visible";
-        const root = (document.body || document.documentElement);
-        if(!root.contains(navBar)){
-            root.appendChild(navBar);
-        }
+        // 刷新可见性
+        refreshNavBarVisibility();
     }
+
+    // 点击迷你按钮恢复
+    navMiniButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setNavMinimized(false);
+    });
 
     /**
      * 脚本首次使用的指引
