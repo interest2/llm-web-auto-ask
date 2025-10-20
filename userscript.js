@@ -1071,7 +1071,7 @@
     navBar.style.cssText = `
         position: fixed;
         visibility: hidden;
-        top: 30%;
+        top: 10%;
         right: 15px;
         width: 240px;
         background: rgba(255, 255, 255, 0.95);
@@ -1091,12 +1091,12 @@
     navMiniButton.textContent = '目录';
     navMiniButton.style.cssText = `
         position: fixed;
-        top: 30%;
+        top: 10%;
         right: 15px;
         background: #ec7258;
         color: #fff;
         border: 1px solid #ddd;
-        border-radius: 12px;
+        border-radius: 8px;
         padding: 2px 8px;
         font-size: 12px;
         cursor: pointer;
@@ -1183,9 +1183,11 @@
             if(!link) continue;
             if(i === idx){
                 link.style.backgroundColor = '#e6f0ff';
-                link.style.fontWeight = 'bold';
+                link.style.color = '#0066cc';
+                link.style.fontWeight = 'normal';
             }else{
                 link.style.backgroundColor = '';
+                link.style.color = '#000';
                 link.style.fontWeight = 'normal';
             }
         }
@@ -1278,7 +1280,7 @@
             link.className = 'tool-nav-link';
             const indexSpan = document.createElement('span');
             indexSpan.textContent = (i + 1) + '. ';
-            indexSpan.style.color = '#000';
+            indexSpan.style.color = '#999';
             const textSpan = document.createElement('span');
             textSpan.textContent = el.textContent;
             link.title = (i + 1) + '. ' + el.textContent;
@@ -1286,7 +1288,7 @@
                   width: 100%;
                   padding: 4px 5px;
                   cursor: pointer;
-                  color: #0066cc;
+                  color: #333;
                   font-size: 14px;
                   line-height: 1.5;
                   white-space: normal;
@@ -1312,9 +1314,10 @@
                 const linkSelf = elToLink.get(el);
                 if(linkSelf){
                     // 立即反馈高亮
-                    navLinks.forEach(l => { if(l){ l.style.backgroundColor=''; l.style.fontWeight='normal'; }});
+                    navLinks.forEach(l => { if(l){ l.style.backgroundColor=''; l.style.color='#000'; l.style.fontWeight='normal'; }});
                     linkSelf.style.backgroundColor = '#e6f0ff';
-                    linkSelf.style.fontWeight = 'bold';
+                    linkSelf.style.color = '#0066cc';
+                    linkSelf.style.fontWeight = 'normal';
                 }
             });
 
@@ -1352,13 +1355,15 @@
                     if(!link) continue;
                     if(navQuestions[i] === nextEl){
                         link.style.backgroundColor = '#e6f0ff';
-                        link.style.fontWeight = 'bold';
+                        link.style.color = '#0066cc';
+                        link.style.fontWeight = 'normal';
                     }else{
                         link.style.backgroundColor = '';
+                        link.style.color = '#333';
                         link.style.fontWeight = 'normal';
                     }
                 }
-            }, { root: null, rootMargin: '-45% 0px -45% 0px', threshold: [0, 0.5, 1] });
+            }, { root: null, rootMargin: '0px 0px -90% 0px', threshold: [0, 0.1, 0.5, 1] });
 
             navQuestions.forEach(el => {
                 if(el && el.tagName){
