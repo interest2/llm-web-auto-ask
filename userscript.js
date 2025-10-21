@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.7.3
-// @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok，其他更多介绍见本页面下方。
+// @version      1.8.0
+// @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok，其他更多功能介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -30,9 +30,18 @@
     'use strict';
     console.log("ai script, start");
 
+    /**
+     * 可自行修改的简单变量
+     * */
+    const NAV_MAX_WIDTH = "230px"; // 目录栏最大宽度
+    const NAV_TOP = "20%"; // 目录栏竖向位置（上边缘距网页顶部占整体的距离）
     let MAX_QUEUE = 15; // 历史对话的记忆数量
-    const version = "1.7.3";
 
+    const version = "1.8.0";
+
+    /**
+     * 适配各站点所需代码
+     * */
     // 定义站点常量
     const KIMI = 0;
     const DEEPSEEK = 1;
@@ -241,6 +250,7 @@
         }
     }
 
+
     let startUrl = DOMAIN + "/start";
     let startData = {
         "userid": userid,
@@ -248,7 +258,6 @@
         "version": version
     };
     remoteHttp(startUrl, startData);
-
 
     // 面板数据
     const CHOSEN_SITE = "chosenSite";
@@ -1065,10 +1074,11 @@
     /**
      * 目录导航功能
      */
+
     // 样式常量
     const NAV_STYLES = {
-        navBar: `position:fixed;visibility:hidden;top:15%;right:15px;max-width:230px;min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:100vh;overflow-y:auto;box-sizing:border-box;`,
-        miniButton: `position:fixed;top:15%;right:15px;background:#ec7258;color:#fff;border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;cursor:pointer;z-index:2147483647;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
+        navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:100vh;overflow-y:auto;box-sizing:border-box;`,
+        miniButton: `position:fixed;top:${NAV_TOP};right:15px;color:#333;border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:2147483647;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
         link: `width:100%;padding:4px 5px;cursor:pointer;color:#333;font-size:14px;line-height:1.5;white-space:normal;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;max-height:calc(1.9em * 2);box-sizing:border-box;`,
         title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;`,
         hideBtn: `font-weight:normal;color:#666;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`
@@ -1085,7 +1095,10 @@
 
     // 状态变量
     let navQuestions, navLinks = [], navIO, elToLink = new Map();
-    let clickedTarget = null, clickLockUntil = 0, navMinimized = false, scrollDebounceTimer;
+    let clickedTarget = null, clickLockUntil = 0, scrollDebounceTimer;
+    
+    // 从localStorage读取最小化状态，默认为false
+    let navMinimized = localStorage.getItem(T + 'navMinimized') === 'true';
 
     // 工具函数
     const setLinkStyle = (link, isActive) => {
@@ -1124,6 +1137,7 @@
 
     const setNavMinimized = (min) => {
         navMinimized = min === true;
+        localStorage.setItem(T + 'navMinimized', navMinimized.toString());
         refreshNavBarVisibility();
     };
 
@@ -1150,6 +1164,8 @@
         const idx = computeActiveIndex();
         navLinks.forEach((link, i) => setLinkStyle(link, i === idx));
     };
+
+    const NAV_HIGHLIGHT_THRESHOLD = 0.3; // 目录高亮阈值（0~30%高亮当前项，30%~100%高亮前一项）
 
     const checkAndSwitchHighlight = () => {
         if(!navQuestions?.length) return;
@@ -1178,11 +1194,11 @@
         const positionPercent = rect.top / viewportHeight;
         
         let targetIndex = -1;
-        if(positionPercent >= 0 && positionPercent <= 0.2) {
-            // 0~20%：高亮当前项
+        if(positionPercent >= 0 && positionPercent <= NAV_HIGHLIGHT_THRESHOLD) {
+            // 0~30%：高亮当前项
             targetIndex = navQuestions.indexOf(firstVisibleEl);
-        } else if(positionPercent > 0.2 && positionPercent <= 1.0) {
-            // 20%~100%：高亮前一项
+        } else if(positionPercent > NAV_HIGHLIGHT_THRESHOLD && positionPercent <= 1.0) {
+            // 30%~100%：高亮前一项
             const currentIndex = navQuestions.indexOf(firstVisibleEl);
             targetIndex = currentIndex > 0 ? currentIndex - 1 : currentIndex;
         }
@@ -1296,10 +1312,10 @@
                         const positionPercent = rect.top / viewportHeight;
                         
                         // 根据位置决定高亮项
-                        if(positionPercent >= 0 && positionPercent <= 0.3) {
+                        if(positionPercent >= 0 && positionPercent <= NAV_HIGHLIGHT_THRESHOLD) {
                             // 0~30%：高亮当前项
                             nextEl = firstVisibleEl;
-                        } else if(positionPercent > 0.3 && positionPercent <= 1.0) {
+                        } else if(positionPercent > NAV_HIGHLIGHT_THRESHOLD && positionPercent <= 1.0) {
                             // 30%~100%：高亮前一项
                             const currentIndex = navQuestions.indexOf(firstVisibleEl);
                             if(currentIndex > 0) {
@@ -1787,7 +1803,7 @@
         const buttons = [
             { text: '不再提醒', value: 'never_remind', style: 'secondary' },
             { text: '已打赏', value: 'donated', style: 'primary' },
-            { text: '下次一定', value: 'next_time', style: 'secondary' },
+            { text: '以后再说', value: 'next_time', style: 'secondary' },
         ];
 
         buttons.forEach(buttonData => {
