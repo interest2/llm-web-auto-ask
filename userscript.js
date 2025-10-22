@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.8.0
-// @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok，其他更多功能介绍见本页面下方。
+// @version      1.8.2
+// @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -28,6 +28,13 @@
 
 (function () {
     'use strict';
+    const FLAG = '__MY_SCRIPT_ALREADY_RUN__';
+    if (window[FLAG]) {
+        console.log('Already running. Skipped.');
+        return;
+    }
+    window[FLAG] = true;
+
     console.log("ai script, start");
 
     /**
@@ -37,7 +44,7 @@
     const NAV_TOP = "20%"; // 目录栏竖向位置（上边缘距网页顶部占整体的距离）
     let MAX_QUEUE = 15; // 历史对话的记忆数量
 
-    const version = "1.8.0";
+    const version = "1.8.2";
 
     /**
      * 适配各站点所需代码
@@ -1075,10 +1082,11 @@
      * 目录导航功能
      */
 
+    const NAV_ITEM_COLOR = "#333";
     // 样式常量
     const NAV_STYLES = {
         navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:100vh;overflow-y:auto;box-sizing:border-box;`,
-        miniButton: `position:fixed;top:${NAV_TOP};right:15px;color:#333;border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:2147483647;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
+        miniButton: `position:fixed;top:${NAV_TOP};right:15px;color:${NAV_ITEM_COLOR};border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:2147483647;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
         link: `width:100%;padding:4px 5px;cursor:pointer;color:#333;font-size:14px;line-height:1.5;white-space:normal;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;max-height:calc(1.9em * 2);box-sizing:border-box;`,
         title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;`,
         hideBtn: `font-weight:normal;color:#666;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`
@@ -1227,7 +1235,7 @@
         
         const indexSpan = document.createElement('span');
         indexSpan.textContent = (i + 1) + '. ';
-        indexSpan.style.color = '#999';
+        indexSpan.style.color = NAV_ITEM_COLOR;
         
         const textSpan = document.createElement('span');
         textSpan.textContent = el.textContent;
@@ -1343,7 +1351,7 @@
 
     const updateNavQuestions = (quesList) => {
         if(isEmpty(quesList)) {
-            navBar.innerHTML = "";
+            navBar.innerHTML = makeHTML("");
             navBar.style.visibility = navMiniButton.style.visibility = "hidden";
             return;
         }
@@ -1354,7 +1362,7 @@
             return;
         }
 
-        navBar.innerHTML = "";
+        navBar.innerHTML = makeHTML("");
         navLinks = [];
         elToLink.clear();
         if(navIO) try { navIO.disconnect(); } catch(e) {}
@@ -1770,12 +1778,12 @@
 
         // 创建顶部文字
         const titleText = document.createElement('div');
-        titleText.innerHTML = '如果有帮到你一些，可以请作者喝杯咖啡吗<br>（微信扫码）';
+        titleText.innerHTML = makeHTML('如果有帮到你一些，可以请作者喝杯咖啡吗<br>（微信扫码）');
         titleText.style.cssText = styles.titleText;
 
         // 创建关闭按钮
         const closeBtn = document.createElement('button');
-        closeBtn.innerHTML = '×';
+        closeBtn.innerHTML = makeHTML('×');
         closeBtn.style.cssText = styles.closeBtn;
 
         closeBtn.addEventListener('mouseenter', () => {
@@ -1856,7 +1864,7 @@
             errorMsg.textContent = '图片加载失败';
             errorMsg.style.cssText = styles.errorText;
 
-            modal.innerHTML = '';
+            modal.innerHTML = makeHTML('');
             modal.appendChild(errorMsg);
             modal.appendChild(closeBtn);
         };
