@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.8.2
+// @version      1.8.3
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -44,7 +44,7 @@
     const NAV_TOP = "20%"; // 目录栏竖向位置（上边缘距网页顶部占整体的距离）
     let MAX_QUEUE = 15; // 历史对话的记忆数量
 
-    const version = "1.8.2";
+    const version = "1.8.3";
 
     /**
      * 适配各站点所需代码
@@ -241,7 +241,7 @@
         // 本地调试用，连接本地服务器
     }else{
         if(userid === DEVELOPER_USERID){
-            MAX_QUEUE = 3;
+            MAX_QUEUE = 15;
             if(testLocalFlag === 1){
                 DOMAIN = testDOMAIN;
             }
@@ -316,68 +316,18 @@
     }
 
 
-    // 面板样式
-    const panelStyle = `
-        cursor: pointer;
-        position: fixed;
-        right: 10px;
-        bottom: 80px;
-        max-height: 400px;
-        background: white;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-        z-index: 99999999;
-        overflow-y: auto;
-        padding: 2px;
-        display: flex;
-        flex-direction: column;
-    `;
-    const panelCompact = `
-        min-width: 120px;
-    `;
-    const disableStyle = `
-        background: #ec7258;
-        color: white;
-        border-radius: 6px;
-        padding: 2px 0;
-    `;
-    const itemStyle = `
-            display: flex;
-            align-items: center;
-            padding: 3px 0 3px 3px;
-            border-bottom: 1px solid #eee;
-    `;
-    const wordSpanStyle = `
-            flex: 1;
-            margin-right: 5px;
-            font-size: 14px;
-    `;
-    const checkboxStyle = `
-            margin-right: 1px;
-            font-size: 20px;
-    `;
-    const emptyMessage = `
-            padding: 1px;
-            text-align: center;
-            color: #888;
-            font-size: 14px;
-        `;
-    const headlineStyle =`
-            font-weight: bold;
-
-    `;
-    const hintStyle =`
-            color: #275fe6;
-            width: 0;
-            height: 0;
-            padding-left: 3px;
-            margin-top: 5px;
-            margin-bottom: 5px;
-            border-top: 8px solid transparent;
-            border-right: 8px solid #3498db; /* 箭头颜色 */
-            border-bottom: 8px solid transparent;
-    `;
+    // 面板样式集中定义
+    const PANEL_STYLES = {
+        panel: `cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:400px;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:99999999;overflow-y:auto;padding:2px;display:flex;flex-direction:column;`,
+        panelCompact: `min-width:120px;`,
+        disable: `background:#ec7258;color:white;border-radius:6px;padding:2px 0;`,
+        item: `display:flex;align-items:center;padding:3px 0 3px 3px;border-bottom:1px solid #eee;`,
+        wordSpan: `flex:1;margin-right:5px;font-size:14px;`,
+        checkbox: `margin-right:1px;font-size:20px;`,
+        emptyMessage: `padding:1px;text-align:center;color:#888;font-size:14px;`,
+        headline: `font-weight:bold;`,
+        hint: `color:#275fe6;width:0;height:0;padding-left:3px;margin-top:5px;margin-bottom:5px;border-top:8px solid transparent;border-right:8px solid #3498db;border-bottom:8px solid transparent;`
+    };
 
 
     // 给发送环节加锁。能否不要这个锁？不能，因为send环节是异步轮询，新问题来时send未必轮询结束
@@ -399,8 +349,8 @@
      * 主从节点的逻辑
      */
 
-        // 发送端
-    let isHistoryChat = false; // 用于标记历史对话
+    // 发送端
+    let hasQuestions = false; // 用于标记页面是否已有对话
     function masterCheckNew(){
         setGV(HEART_KEY_PREFIX + site, Date.now());
         reloadCompactMode();
@@ -410,7 +360,8 @@
         }
         let masterId = getChatId();
         if(isEmpty(masterId)){
-            isHistoryChat = false;
+            // 如果当前页面新开了对话，则 chatId 为空，hasQuestions 标记为 false
+            hasQuestions = false;
             updateNavQuestions();
             return;
         }
@@ -422,11 +373,12 @@
         if(lenNext > 0){
 
             let len = hgetS(T + masterId, LEN) || 0;
-            // 历史对话且无需映射同步问答的，终止流程
-            if(len === 0 && isHistoryChat === true){
+            // 页面已有对话，且无需映射同步问答的（即 localStorage 里无该 chatId 的信息（含超过队列被清理的情况）），终止流程
+            if(hasQuestions === true && len === 0){
                 return;
             }
-            isHistoryChat = true;
+            // 此标记状态包含两种情况：① 新对话但已经提问一次 ② 早期对话
+            hasQuestions = true;
             if(lenNext > len){
                 let lastestQ = questions[lenNext - 1].textContent;
                 let lastQuestion = hgetS(T + masterId, LAST_Q);
@@ -854,7 +806,7 @@
      */
 
     // 创建面板容器
-    panel.style.cssText = panelStyle;
+    panel.style.cssText = PANEL_STYLES.panel;
     let hint = document.createElement('div');
 
     const DISABLE = "禁用";
@@ -862,7 +814,7 @@
     let disable = document.createElement('div');
     disable.id = "tool-disable";
     disable.textContent = DISABLE;
-    disable.style = disableStyle;
+    disable.style = PANEL_STYLES.disable;
     panel.appendChild(disable);
 
     disable.addEventListener('click', (e) => disableEvent(e));
@@ -985,23 +937,23 @@
     // 生成单词和选择框
     let headline = document.createElement('div');
     headline.textContent = "全部模型";
-    headline.style.cssText = headlineStyle;
+    headline.style.cssText = PANEL_STYLES.headline;
     contentContainer.appendChild(headline);
 
     let sitesAndCurrent = getSitesAndCurrent();
 
     words.forEach(word => {
         const item = document.createElement('div');
-        item.style.cssText = itemStyle;
+        item.style.cssText = PANEL_STYLES.item;
 
         const wordSpan = document.createElement('span');
         wordSpan.textContent = word;
-        wordSpan.style.cssText = wordSpanStyle;
+        wordSpan.style.cssText = PANEL_STYLES.wordSpan;
 
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.id = `word-${word}`;
-        checkbox.style.cssText = checkboxStyle;
+        checkbox.style.cssText = PANEL_STYLES.checkbox;
 
         checkbox.checked = sitesAndCurrent.includes(wordToSite[word]);
 
@@ -1036,25 +988,13 @@
     /**
      * 输入框的显示/隐藏切换功能
      */
-    const toggleButton = document.createElement('div');
-    toggleButton.style.cssText = `
-        font-size: 14px;
-        padding: 3px;
-        position: fixed;
-        right: 10px;
-        bottom: 35px;
+    // 切换按钮样式集中定义
+    const TOGGLE_STYLES = {
+        button: `font-size:14px;padding:3px;position:fixed;right:10px;bottom:35px;cursor:pointer;background:#ec7258;color:white;border:1px solid #ddd;border-radius:30%;box-shadow:0 4px 12px rgba(0,0,0,0.2);z-index:99999999;display:flex;align-items:center;justify-content:center;`
+    };
 
-        cursor: pointer;
-        background: #ec7258;
-        color: white;
-        border: 1px solid #ddd;
-        border-radius: 30%;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-        z-index: 99999999;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-    `;
+    const toggleButton = document.createElement('div');
+    toggleButton.style.cssText = TOGGLE_STYLES.button;
     toggleButton.textContent = '隐藏';
     toggleButton.title = '临时隐藏输入框获得更大的视野高度';
 
@@ -1472,7 +1412,7 @@
         if (selectedWords.length === 0) {
             const emptyMsg = document.createElement('div');
             emptyMsg.textContent = '未选模型';
-            emptyMsg.style.cssText = emptyMessage;
+            emptyMsg.style.cssText = PANEL_STYLES.emptyMessage;
             contentContainer.innerHTML = makeHTML('');
             contentContainer.appendChild(emptyMsg);
         } else {
@@ -1480,23 +1420,23 @@
         }
 
         isCompactMode = true;
-        panel.style.cssText = panelStyle;
+        panel.style.cssText = PANEL_STYLES.panel;
     };
 
     function drawCompactPanel(selectedWords){
         contentContainer.innerHTML = makeHTML('');
-        hint.style.cssText = hintStyle;
+        hint.style.cssText = PANEL_STYLES.hint;
         contentContainer.appendChild(hint);
 
         selectedWords.forEach(word => {
             const item = document.createElement('div');
-            item.style.cssText = itemStyle;
+            item.style.cssText = PANEL_STYLES.item;
             item.dataset.word = word;
 
             const wordSpan = document.createElement('span');
             let alias = wordToAlias[word];
             wordSpan.textContent = alias;
-            wordSpan.style.cssText = wordSpanStyle;
+            wordSpan.style.cssText = PANEL_STYLES.wordSpan;
 
             // const checkbox = document.createElement('input');
             // checkbox.type = 'checkbox';
@@ -1532,7 +1472,7 @@
         updateBoxFromStorage();
 
         isCompactMode = false;
-        panel.style.cssText = panelStyle;
+        panel.style.cssText = PANEL_STYLES.panel;
     };
 
     // 点击面板切换模式
@@ -1770,21 +1710,21 @@
     function createPopupModal(imageUrl) {
         // 创建遮罩层
         const overlay = document.createElement('div');
-        overlay.style.cssText = styles.overlay;
+        overlay.style.cssText = POPUP_STYLES.overlay;
 
         // 创建弹窗容器
         const modal = document.createElement('div');
-        modal.style.cssText = styles.modal;
+        modal.style.cssText = POPUP_STYLES.modal;
 
         // 创建顶部文字
         const titleText = document.createElement('div');
         titleText.innerHTML = makeHTML('如果有帮到你一些，可以请作者喝杯咖啡吗<br>（微信扫码）');
-        titleText.style.cssText = styles.titleText;
+        titleText.style.cssText = POPUP_STYLES.titleText;
 
         // 创建关闭按钮
         const closeBtn = document.createElement('button');
         closeBtn.innerHTML = makeHTML('×');
-        closeBtn.style.cssText = styles.closeBtn;
+        closeBtn.style.cssText = POPUP_STYLES.closeBtn;
 
         closeBtn.addEventListener('mouseenter', () => {
             closeBtn.style.backgroundColor = '#f0f0f0';
@@ -1796,16 +1736,16 @@
 
         // 创建图片容器
         const imgContainer = document.createElement('div');
-        imgContainer.style.cssText = styles.imgContainer;
+        imgContainer.style.cssText = POPUP_STYLES.imgContainer;
 
         // 创建图片元素
         const img = document.createElement('img');
         img.src = imageUrl;
-        img.style.cssText = styles.img;
+        img.style.cssText = POPUP_STYLES.img;
 
         // 创建底部按钮容器
         const buttonContainer = document.createElement('div');
-        buttonContainer.style.cssText = styles.buttonContainer;
+        buttonContainer.style.cssText = POPUP_STYLES.buttonContainer;
 
         // 创建三个选项按钮
         const buttons = [
@@ -1820,9 +1760,9 @@
 
             // 根据按钮类型应用不同样式
             if (buttonData.style === 'primary') {
-                button.style.cssText = styles.primaryButton;
+                button.style.cssText = POPUP_STYLES.primaryButton;
             } else {
-                button.style.cssText = styles.secondaryButton;
+                button.style.cssText = POPUP_STYLES.secondaryButton;
             }
 
             button.dataset.value = buttonData.value;
@@ -1862,7 +1802,7 @@
         img.onerror = function() {
             const errorMsg = document.createElement('p');
             errorMsg.textContent = '图片加载失败';
-            errorMsg.style.cssText = styles.errorText;
+            errorMsg.style.cssText = POPUP_STYLES.errorText;
 
             modal.innerHTML = makeHTML('');
             modal.appendChild(errorMsg);
@@ -1912,20 +1852,7 @@
         function showToast(message) {
             const toast = document.createElement('div');
             toast.textContent = message;
-            toast.style.cssText = `
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(0, 0, 0, 0.8);
-            color: white;
-            padding: 15px 25px;
-            border-radius: 8px;
-            font-size: 16px;
-            font-weight: bold;
-            z-index: 999999999;
-            animation: toastFadeIn 0.3s ease-out;
-        `;
+            toast.style.cssText = POPUP_STYLES.toast;
 
             // 添加CSS动画
             if (!document.getElementById('toast-animation')) {
@@ -1998,135 +1925,18 @@
     }
 
 // CSS样式集中定义
-    const styles = {
-        overlay: `
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.7);
-        z-index: 999999999;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        padding: 20px;
-        box-sizing: border-box;
-    `,
-        modal: `
-        position: relative;
-        background: white;
-        border-radius: 12px;
-        padding: 20px;
-        max-width: 30vw;
-        max-height: 50vh;
-        width: auto;
-        height: auto;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        overflow: hidden;
-        box-sizing: border-box;
-    `,
-        closeBtn: `
-        position: absolute;
-        top: 10px;
-        right: 15px;
-        background: none;
-        border: none;
-        font-size: 24px;
-        cursor: pointer;
-        color: #666;
-        width: 30px;
-        height: 30px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 50%;
-        transition: background-color 0.2s;
-        z-index: 1;
-    `,
-        imgContainer: `
-        width: 100%;
-        height: 100%;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        overflow: hidden;
-    `,
-        img: `
-        max-width: calc(30vw - 60px);
-        max-height: calc(50vh - 200px);
-        width: auto;
-        height: auto;
-        object-fit: contain;
-        border-radius: 8px;
-        display: block;
-    `,
-        errorText: `
-        color: #666;
-        text-align: center;
-    `,
-        titleText: `
-        font-size: 20px;
-        font-weight: bold;
-        color: #333;
-        text-align: center;
-        margin-bottom: 15px;
-        padding: 10px 15px;
-        border-bottom: 1px solid #eee;
-        line-height: 1.4;
-        word-wrap: break-word;
-        white-space: normal;
-        max-width: 100%;
-    `,
-        buttonContainer: `
-        display: flex;
-        justify-content: center;
-        gap: 10px;
-        margin-top: 15px;
-        padding-top: 15px;
-        border-top: 1px solid #eee;
-        width: 100%;
-    `,
-        optionButton: `
-        background: #fff;
-        border: 1px solid #ddd;
-        border-radius: 6px;
-        padding: 8px 16px;
-        font-size: 14px;
-        color: #333;
-        cursor: pointer;
-        transition: all 0.2s;
-        min-width: 80px;
-        text-align: center;
-    `,
-        primaryButton: `
-        background: #ec7258;
-        border: 1px solid #ec7258;
-        border-radius: 6px;
-        padding: 10px 20px;
-        font-size: 14px;
-        color: #fff;
-        cursor: pointer;
-        transition: all 0.2s;
-        min-width: 90px;
-        text-align: center;
-        font-weight: bold;
-        box-shadow: 0 2px 4px rgba(0,123,255,0.3);
-    `,
-        secondaryButton: `
-        background: #f8f9fa;
-        border: 1px solid #dee2e6;
-        border-radius: 6px;
-        padding: 8px 16px;
-        font-size: 13px;
-        color: #6c757d;
-        cursor: pointer;
-        transition: all 0.2s;
-        min-width: 80px;
-        text-align: center;
-    `
+    const POPUP_STYLES = {
+        overlay: `position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:999999999;display:flex;justify-content:center;align-items:center;padding:20px;box-sizing:border-box;`,
+        modal: `position:relative;background:white;border-radius:12px;padding:20px;max-width:30vw;max-height:50vh;width:auto;height:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3);display:flex;flex-direction:column;align-items:center;overflow:hidden;box-sizing:border-box;`,
+        closeBtn: `position:absolute;top:10px;right:15px;background:none;border:none;font-size:24px;cursor:pointer;color:#666;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:background-color 0.2s;z-index:1;`,
+        imgContainer: `width:100%;height:100%;display:flex;justify-content:center;align-items:center;overflow:hidden;`,
+        img: `max-width:calc(30vw - 60px);max-height:calc(50vh - 200px);width:auto;height:auto;object-fit:contain;border-radius:8px;display:block;`,
+        errorText: `color:#666;text-align:center;`,
+        titleText: `font-size:20px;font-weight:bold;color:#333;text-align:center;margin-bottom:15px;padding:10px 15px;border-bottom:1px solid #eee;line-height:1.4;word-wrap:break-word;white-space:normal;max-width:100%;`,
+        buttonContainer: `display:flex;justify-content:center;gap:10px;margin-top:15px;padding-top:15px;border-top:1px solid #eee;width:100%;`,
+        optionButton: `background:#fff;border:1px solid #ddd;border-radius:6px;padding:8px 16px;font-size:14px;color:#333;cursor:pointer;transition:all 0.2s;min-width:80px;text-align:center;`,
+        primaryButton: `background:#ec7258;border:1px solid #ec7258;border-radius:6px;padding:10px 20px;font-size:14px;color:#fff;cursor:pointer;transition:all 0.2s;min-width:90px;text-align:center;font-weight:bold;box-shadow:0 2px 4px rgba(0,123,255,0.3);`,
+        secondaryButton: `background:#f8f9fa;border:1px solid #dee2e6;border-radius:6px;padding:8px 16px;font-size:13px;color:#6c757d;cursor:pointer;transition:all 0.2s;min-width:80px;text-align:center;`,
+        toast: `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.8);color:white;padding:15px 25px;border-radius:8px;font-size:16px;font-weight:bold;z-index:999999999;animation:toastFadeIn 0.3s ease-out;`
     };
 })();
