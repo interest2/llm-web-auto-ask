@@ -1023,6 +1023,12 @@
      */
 
     const NAV_ITEM_COLOR = "#333";
+    // 目录导航相关常量
+    const NAV_HIGHLIGHT_THRESHOLD = 0.3; // 目录高亮阈值（0~30%高亮当前项，30%~100%高亮前一项）
+    const NAV_VIEWPORT_THRESHOLD = 0.9; // 可视区域阈值（90%）
+    const NAV_NEAR_TOP_THRESHOLD = 24; // 接近顶部阈值（像素）
+    const NAV_CLICK_LOCK_DURATION = 1200; // 点击锁定持续时间（毫秒）
+
     // 样式常量
     const NAV_STYLES = {
         navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:100vh;overflow-y:auto;box-sizing:border-box;`,
@@ -1030,6 +1036,22 @@
         link: `width:100%;padding:4px 5px;cursor:pointer;color:#333;font-size:14px;line-height:1.5;white-space:normal;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;max-height:calc(1.9em * 2);box-sizing:border-box;`,
         title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;`,
         hideBtn: `font-weight:normal;color:#666;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`
+    };
+
+    // 弹窗样式常量
+    const POPUP_STYLES = {
+        overlay: `position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:999999999;display:flex;justify-content:center;align-items:center;padding:20px;box-sizing:border-box;`,
+        modal: `position:relative;background:white;border-radius:12px;padding:20px;max-width:30vw;max-height:50vh;width:auto;height:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3);display:flex;flex-direction:column;align-items:center;overflow:hidden;box-sizing:border-box;`,
+        closeBtn: `position:absolute;top:10px;right:15px;background:none;border:none;font-size:24px;cursor:pointer;color:#666;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:background-color 0.2s;z-index:1;`,
+        imgContainer: `width:100%;height:100%;display:flex;justify-content:center;align-items:center;overflow:hidden;`,
+        img: `max-width:calc(30vw - 60px);max-height:calc(50vh - 200px);width:auto;height:auto;object-fit:contain;border-radius:8px;display:block;`,
+        errorText: `color:#666;text-align:center;`,
+        titleText: `font-size:20px;font-weight:bold;color:#333;text-align:center;margin-bottom:15px;padding:10px 15px;border-bottom:1px solid #eee;line-height:1.4;word-wrap:break-word;white-space:normal;max-width:100%;`,
+        buttonContainer: `display:flex;justify-content:center;gap:10px;margin-top:15px;padding-top:15px;border-top:1px solid #eee;width:100%;`,
+        optionButton: `background:#fff;border:1px solid #ddd;border-radius:6px;padding:8px 16px;font-size:14px;color:#333;cursor:pointer;transition:all 0.2s;min-width:80px;text-align:center;`,
+        primaryButton: `background:#ec7258;border:1px solid #ec7258;border-radius:6px;padding:10px 20px;font-size:14px;color:#fff;cursor:pointer;transition:all 0.2s;min-width:90px;text-align:center;font-weight:bold;box-shadow:0 2px 4px rgba(0,123,255,0.3);`,
+        secondaryButton: `background:#f8f9fa;border:1px solid #dee2e6;border-radius:6px;padding:8px 16px;font-size:13px;color:#6c757d;cursor:pointer;transition:all 0.2s;min-width:80px;text-align:center;`,
+        toast: `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.8);color:white;padding:15px 25px;border-radius:8px;font-size:16px;font-weight:bold;z-index:999999999;animation:toastFadeIn 0.3s ease-out;`
     };
 
     // 创建导航元素
@@ -1044,11 +1066,11 @@
     // 状态变量
     let navQuestions, navLinks = [], navIO, elToLink = new Map();
     let clickedTarget = null, clickLockUntil = 0, scrollDebounceTimer;
-    
+
     // 从localStorage读取最小化状态，默认为false
     let navMinimized = localStorage.getItem(T + 'navMinimized') === 'true';
 
-    // 工具函数
+    // 设置导航链接的样式（高亮或普通状态）
     const setLinkStyle = (link, isActive) => {
         if(!link) return;
         if(isActive) {
@@ -1058,21 +1080,62 @@
         }
     };
 
+    // 清除所有导航链接的高亮状态
     const clearAllHighlights = () => navLinks.forEach(link => setLinkStyle(link, false));
 
-    const getCurrentHighlightIndex = () => navLinks.findIndex(link => link && link.style.color === '#0066cc');
+    // 统一的元素可见性判断函数
+    const isElementVisible = (rect, viewportThreshold = NAV_VIEWPORT_THRESHOLD) => {
+        if (!rect) return false;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+        return rect.bottom > 0 && rect.top < viewportHeight * viewportThreshold;
+    };
 
-    // 核心功能函数
+    // 判断元素是否接近顶部
+    const isElementNearTop = (rect, threshold = NAV_NEAR_TOP_THRESHOLD) => {
+        return rect ? Math.abs(rect.top) < threshold : false;
+    };
+
+    // 获取视口高度
+    const getViewportHeight = () => window.innerHeight || document.documentElement.clientHeight;
+
+    // 计算元素在视口中的位置百分比
+    const getElementPositionPercent = (rect) => {
+        const viewportHeight = getViewportHeight();
+        return rect.top / viewportHeight;
+    };
+
+    // 获取所有可见的元素
+    const getVisibleElements = (elements, viewportThreshold = NAV_VIEWPORT_THRESHOLD) => {
+        return elements.filter(el => {
+            const rect = el?.getBoundingClientRect();
+            return isElementVisible(rect, viewportThreshold);
+        });
+    };
+
+    // 按位置排序元素（优化性能，减少DOM查询）
+    const sortElementsByPosition = (elements) => {
+        // 先获取所有rect，避免在排序过程中重复查询
+        const elementsWithRect = elements.map(el => ({
+            el,
+            rect: el.getBoundingClientRect()
+        }));
+
+        return elementsWithRect
+            .sort((a, b) => a.rect.top - b.rect.top)
+            .map(item => item.el);
+    };
+
+    // 刷新导航栏的显示状态（显示/隐藏/最小化）
     const refreshNavBarVisibility = () => {
         const root = document.body || document.documentElement;
         if(!root.contains(navMiniButton)) root.appendChild(navMiniButton);
-        
+
         const linkCount = navBar.querySelectorAll('.tool-nav-link').length;
         if(linkCount === 0) {
             navBar.style.visibility = navMiniButton.style.visibility = "hidden";
             return;
         }
-        
+
         if(navMinimized) {
             navBar.style.visibility = "hidden";
             navMiniButton.style.visibility = "visible";
@@ -1083,16 +1146,18 @@
         }
     };
 
+    // 设置导航栏的最小化状态
     const setNavMinimized = (min) => {
         navMinimized = min === true;
         localStorage.setItem(T + 'navMinimized', navMinimized.toString());
         refreshNavBarVisibility();
     };
 
+    // 计算当前应该高亮的导航项索引
     const computeActiveIndex = () => {
         if(!navQuestions?.length) return -1;
         let candidateIndex = -1, smallestPositiveTop = Infinity, lastNegativeIndex = -1;
-        
+
         navQuestions.forEach((el, i) => {
             if(!el?.getBoundingClientRect) return;
             const rect = el.getBoundingClientRect();
@@ -1108,39 +1173,28 @@
         return candidateIndex !== -1 ? candidateIndex : lastNegativeIndex;
     };
 
+    // 高亮当前活跃的导航项
     const highlightActiveNav = () => {
         const idx = computeActiveIndex();
         navLinks.forEach((link, i) => setLinkStyle(link, i === idx));
     };
 
-    const NAV_HIGHLIGHT_THRESHOLD = 0.3; // 目录高亮阈值（0~30%高亮当前项，30%~100%高亮前一项）
-
+    // 检查并切换高亮状态（根据滚动位置智能高亮）
     const checkAndSwitchHighlight = () => {
         if(!navQuestions?.length) return;
-        
+
         // 找到所有可见的目录项
-        const visibleElements = navQuestions.filter(el => {
-            const rect = el?.getBoundingClientRect();
-            return rect && rect.bottom > 0 && rect.top < (window.innerHeight || document.documentElement.clientHeight);
-        });
-        
+        const visibleElements = getVisibleElements(navQuestions, 1.0); // 使用100%视口高度进行初步筛选
+
         if(visibleElements.length === 0) {
             // 视野无任何目录，保持上次高亮项（不做任何操作）
             return;
         }
-        
-        // 按距离顶部的位置排序，找到最接近顶部的目录项
-        visibleElements.sort((a, b) => {
-            const rectA = a.getBoundingClientRect();
-            const rectB = b.getBoundingClientRect();
-            return rectA.top - rectB.top;
-        });
-        
+
         const firstVisibleEl = visibleElements[0];
         const rect = firstVisibleEl.getBoundingClientRect();
-        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-        const positionPercent = rect.top / viewportHeight;
-        
+        const positionPercent = getElementPositionPercent(rect);
+
         let targetIndex = -1;
         if(positionPercent >= 0 && positionPercent <= NAV_HIGHLIGHT_THRESHOLD) {
             // 0~30%：高亮当前项
@@ -1150,40 +1204,53 @@
             const currentIndex = navQuestions.indexOf(firstVisibleEl);
             targetIndex = currentIndex > 0 ? currentIndex - 1 : currentIndex;
         }
-        
+
         if(targetIndex >= 0) {
             clearAllHighlights();
             setLinkStyle(navLinks[targetIndex], true);
         }
     };
 
+    // 滚动事件处理函数（优化的节流处理）
+    let lastScrollTime = 0;
     const onScrollRefreshActive = () => {
-        if(scrollDebounceTimer) return;
+        const now = Date.now();
+        if(now - lastScrollTime < 32) return; // 约30fps的节流，减少性能消耗
+        lastScrollTime = now;
+
+        // 清除之前的防抖计时器
+        if(scrollDebounceTimer) {
+            clearTimeout(scrollDebounceTimer);
+            scrollDebounceTimer = null;
+        }
+
+        // 设置防抖，避免重复执行
         scrollDebounceTimer = setTimeout(() => {
             scrollDebounceTimer = null;
             highlightActiveNav();
             checkAndSwitchHighlight();
-        }, 100);
+        }, 30); // 减少延迟到30ms，提高响应性
     };
 
     window.addEventListener('scroll', onScrollRefreshActive, { passive: true });
-    // 创建导航链接
+
+    // 创建导航链接元素
     const createNavLink = (el, i) => {
         const link = document.createElement('div');
         link.className = 'tool-nav-link';
         link.style.cssText = NAV_STYLES.link;
-        
+
         const indexSpan = document.createElement('span');
         indexSpan.textContent = (i + 1) + '. ';
         indexSpan.style.color = NAV_ITEM_COLOR;
-        
+
         const textSpan = document.createElement('span');
         textSpan.textContent = el.textContent;
-        
+
         link.title = (i + 1) + '. ' + el.textContent;
         link.appendChild(indexSpan);
         link.appendChild(textSpan);
-        
+
         // 事件监听
         link.addEventListener('mouseenter', () => link.style.backgroundColor = '#f0f0f0');
         link.addEventListener('mouseleave', () => link.style.backgroundColor = '');
@@ -1191,22 +1258,22 @@
             e.preventDefault();
             el.scrollIntoView({block: 'start'});
             clickedTarget = el;
-            clickLockUntil = Date.now() + 1200;
+            clickLockUntil = Date.now() + NAV_CLICK_LOCK_DURATION;
             clearAllHighlights();
             setLinkStyle(link, true);
         });
-        
+
         return link;
     };
 
-    // 创建标题
+    // 创建导航栏标题元素（包含隐藏按钮）
     const createTitle = () => {
         const title = document.createElement('div');
         title.style.cssText = NAV_STYLES.title;
-        
+
         const titleText = document.createElement('span');
         titleText.textContent = '目录';
-        
+
         const hideBtn = document.createElement('span');
         hideBtn.textContent = '隐藏';
         hideBtn.style.cssText = NAV_STYLES.hideBtn;
@@ -1216,7 +1283,7 @@
             e.stopPropagation();
             setNavMinimized(true);
         });
-        
+
         title.appendChild(titleText);
         title.appendChild(hideBtn);
         return title;
@@ -1228,37 +1295,26 @@
             navIO = new IntersectionObserver((entries) => {
                 const now = Date.now();
                 let nextEl = null;
-                
+
                 // 点击锁定期内，优先使用点击的目标
                 if(now < clickLockUntil && clickedTarget) {
                     const rect = clickedTarget.getBoundingClientRect?.();
-                    const nearTop = rect ? Math.abs(rect.top) < 24 : false;
-                    const inView = rect ? (rect.bottom > 0 && rect.top < (window.innerHeight || document.documentElement.clientHeight) * 0.9) : false;
+                    const nearTop = isElementNearTop(rect);
+                    const inView = isElementVisible(rect, NAV_VIEWPORT_THRESHOLD);
                     if(inView || nearTop) nextEl = clickedTarget;
                 }
-                
+
                 // 新的高亮逻辑
                 if(!nextEl) {
                     // 找到所有可见的目录项，按位置排序
-                    const visibleElements = navQuestions.filter(el => {
-                        const rect = el?.getBoundingClientRect();
-                        return rect && rect.bottom > 0 && rect.top < (window.innerHeight || document.documentElement.clientHeight);
-                    });
-                    
+                    const visibleElements = getVisibleElements(navQuestions, 1.0); // 使用100%视口高度
+
                     if(visibleElements.length > 0) {
-                        // 按距离顶部的位置排序
-                        visibleElements.sort((a, b) => {
-                            const rectA = a.getBoundingClientRect();
-                            const rectB = b.getBoundingClientRect();
-                            return rectA.top - rectB.top;
-                        });
-                        
                         // 检查第一个可见元素的位置
                         const firstVisibleEl = visibleElements[0];
                         const rect = firstVisibleEl.getBoundingClientRect();
-                        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
-                        const positionPercent = rect.top / viewportHeight;
-                        
+                        const positionPercent = getElementPositionPercent(rect);
+
                         // 根据位置决定高亮项
                         if(positionPercent >= 0 && positionPercent <= NAV_HIGHLIGHT_THRESHOLD) {
                             // 0~30%：高亮当前项
@@ -1278,7 +1334,7 @@
                         return;
                     }
                 }
-                
+
                 // 应用高亮
                 navLinks.forEach((link, i) => setLinkStyle(link, navQuestions[i] === nextEl));
             }, { root: null, rootMargin: '0px 0px -70% 0px', threshold: [0, 0.1, 0.5, 1] });
@@ -1289,13 +1345,14 @@
         } catch(e) {}
     };
 
+    // 更新导航问题列表（重新构建导航栏）
     const updateNavQuestions = (quesList) => {
         if(isEmpty(quesList)) {
             navBar.innerHTML = makeHTML("");
             navBar.style.visibility = navMiniButton.style.visibility = "hidden";
             return;
         }
-        
+
         const thisQuestions = Array.from(quesList);
         if(navQuestions && thisQuestions.length === navQuestions.length && thisQuestions[0].textContent === navQuestions[0].textContent) {
             refreshNavBarVisibility();
@@ -1309,7 +1366,7 @@
 
         navBar.appendChild(createTitle());
         navQuestions = thisQuestions;
-        
+
         navQuestions.forEach((el, i) => {
             if(!el?.tagName) return;
             const link = createNavLink(el, i);
@@ -1320,14 +1377,11 @@
 
         refreshNavBarVisibility();
         initIntersectionObserver();
-        
+
         // 页面刚加载时，如果视野里没有任何目录项，则自动高亮最后一项
         setTimeout(() => {
-            const visibleElements = navQuestions.filter(el => {
-                const rect = el?.getBoundingClientRect();
-                return rect && rect.bottom > 0 && rect.top < (window.innerHeight || document.documentElement.clientHeight);
-            });
-            
+            const visibleElements = getVisibleElements(navQuestions, 1.0);
+
             if(visibleElements.length === 0 && navLinks.length > 0) {
                 // 视野无任何目录项，高亮最后一项
                 clearAllHighlights();
@@ -1924,19 +1978,4 @@
         document.body.appendChild(overlay);
     }
 
-// CSS样式集中定义
-    const POPUP_STYLES = {
-        overlay: `position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:999999999;display:flex;justify-content:center;align-items:center;padding:20px;box-sizing:border-box;`,
-        modal: `position:relative;background:white;border-radius:12px;padding:20px;max-width:30vw;max-height:50vh;width:auto;height:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3);display:flex;flex-direction:column;align-items:center;overflow:hidden;box-sizing:border-box;`,
-        closeBtn: `position:absolute;top:10px;right:15px;background:none;border:none;font-size:24px;cursor:pointer;color:#666;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:background-color 0.2s;z-index:1;`,
-        imgContainer: `width:100%;height:100%;display:flex;justify-content:center;align-items:center;overflow:hidden;`,
-        img: `max-width:calc(30vw - 60px);max-height:calc(50vh - 200px);width:auto;height:auto;object-fit:contain;border-radius:8px;display:block;`,
-        errorText: `color:#666;text-align:center;`,
-        titleText: `font-size:20px;font-weight:bold;color:#333;text-align:center;margin-bottom:15px;padding:10px 15px;border-bottom:1px solid #eee;line-height:1.4;word-wrap:break-word;white-space:normal;max-width:100%;`,
-        buttonContainer: `display:flex;justify-content:center;gap:10px;margin-top:15px;padding-top:15px;border-top:1px solid #eee;width:100%;`,
-        optionButton: `background:#fff;border:1px solid #ddd;border-radius:6px;padding:8px 16px;font-size:14px;color:#333;cursor:pointer;transition:all 0.2s;min-width:80px;text-align:center;`,
-        primaryButton: `background:#ec7258;border:1px solid #ec7258;border-radius:6px;padding:10px 20px;font-size:14px;color:#fff;cursor:pointer;transition:all 0.2s;min-width:90px;text-align:center;font-weight:bold;box-shadow:0 2px 4px rgba(0,123,255,0.3);`,
-        secondaryButton: `background:#f8f9fa;border:1px solid #dee2e6;border-radius:6px;padding:8px 16px;font-size:13px;color:#6c757d;cursor:pointer;transition:all 0.2s;min-width:80px;text-align:center;`,
-        toast: `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.8);color:white;padding:15px 25px;border-radius:8px;font-size:16px;font-weight:bold;z-index:999999999;animation:toastFadeIn 0.3s ease-out;`
-    };
 })();
