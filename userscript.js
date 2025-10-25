@@ -643,13 +643,18 @@
 
         intervalId = setInterval(function() {
             count ++;
-            if(count > 5000 / checkGap){
+            if(count > 10000 / checkGap){
                 clearInterval(intervalId);
             }
             const inputArea = getInputArea(site);
+            // 输入框元素存在
             if (!isEmpty(inputArea)) {
-                clearInterval(intervalId);
-                sendContent(inputArea, content, chatId);
+                let noChatId = isEmpty(chatId);
+                // 要求是新空白对话，或者非新但问题列表非空
+                if(noChatId || (!noChatId && !isEmpty(getQuestionList())) ){
+                    clearInterval(intervalId);
+                    sendContent(inputArea, content, chatId);
+                }
             }
         }, checkGap);
     }
