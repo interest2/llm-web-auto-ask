@@ -1264,19 +1264,6 @@
         });
     };
 
-    // 按位置排序元素（优化性能，减少DOM查询）
-    const sortElementsByPosition = (elements) => {
-        // 先获取所有rect，避免在排序过程中重复查询
-        const elementsWithRect = elements.map(el => ({
-            el,
-            rect: el.getBoundingClientRect()
-        }));
-
-        return elementsWithRect
-            .sort((a, b) => a.rect.top - b.rect.top)
-            .map(item => item.el);
-    };
-
     // 刷新导航栏的显示状态（显示/隐藏/最小化）
     const refreshNavBarVisibility = () => {
         const root = document.body || document.documentElement;
@@ -1286,6 +1273,15 @@
         if(linkCount === 0) {
             navBar.style.visibility = navMiniButton.style.visibility = "hidden";
             return;
+        }
+
+        // 如果条目数量超过7条，则将navBar的top改为5%
+        if(linkCount > 7) {
+            navBar.style.top = "5%";
+            navMiniButton.style.top = "5%";
+        } else {
+            navBar.style.top = NAV_TOP;
+            navMiniButton.style.top = NAV_TOP;
         }
 
         if(navMinimized) {
