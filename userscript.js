@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.8.3
+// @version      1.9.0
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -44,7 +44,7 @@
     const NAV_TOP = "20%"; // 目录栏竖向位置（上边缘距网页顶部占整体的距离）
     let MAX_QUEUE = 15; // 历史对话的记忆数量
 
-    const version = "1.8.3";
+    const version = "1.9.0";
 
     /**
      * 适配各站点所需代码
@@ -341,55 +341,27 @@
         receiveNew();
     }
 
-    setInterval(function(){
-        masterCheckNew();
-    }, 1000);
-
     /**
      * 主从节点的逻辑
      */
 
     // 发送端
-    let hasQuestions = false; // 用于标记页面是否已有对话
-    function masterCheckNew(){
-        setGV(HEART_KEY_PREFIX + site, Date.now());
+    function masterCheckNew(lastestQ){
         reloadCompactMode();
 
         if(sendLock){
             return;
         }
-        let masterId = getChatId();
-        if(isEmpty(masterId)){
-            // 如果当前页面新开了对话，则 chatId 为空，hasQuestions 标记为 false
-            hasQuestions = false;
-            updateNavQuestions();
+        if(isEmpty(lastestQ)){
             return;
         }
+        let masterId = getChatId();
+        let lastQuestion = hgetS(T + masterId, LAST_Q);
 
-        let questions = getQuestionList();
-        updateNavQuestions(questions);
-
-        let lenNext = questions.length;
-        if(lenNext > 0){
-
-            let len = hgetS(T + masterId, LEN) || 0;
-            // 页面已有对话，且无需映射同步问答的（即 localStorage 里无该 chatId 的信息（含超过队列被清理的情况）），终止流程
-            if(hasQuestions === true && len === 0){
-                return;
-            }
-            // 此标记状态包含两种情况：① 新对话但已经提问一次 ② 早期对话
-            hasQuestions = true;
-            if(lenNext > len){
-                let lastestQ = questions[lenNext - 1].textContent;
-                let lastQuestion = hgetS(T + masterId, LAST_Q);
-
-                if(!isEmpty(lastQuestion) && isEqual(lastestQ, lastQuestion)){
-                    return;
-                }
-                hsetS(T + masterId, LEN, lenNext);
-                masterReq(masterId, lastestQ);
-            }
+        if(!isEmpty(lastQuestion) && isEqual(lastestQ, lastQuestion)){
+            return;
         }
+        masterReq(masterId, lastestQ);
     };
 
     function masterReq(masterId, lastestQ){
@@ -647,7 +619,6 @@
 
                 // 照理说下面的逻辑应在上面的setGV成功后再执行，但这样得写两遍，且理论上一定成功，故放这。
                 hsetS(T + chatId, LAST_Q, getQuesOrHash(question));
-                hsetS(T + chatId, LEN, 1);
                 hsetS(T + chatId, UID_KEY, uid);
 
                 sendLock = false;
@@ -706,99 +677,275 @@
                 // 触发 input 事件
                 editor.dispatchEvent(new Event('input', { bubbles: true }));
             }
-            clickAndCheckLen(chatId);
+            clickAndCheck(chatId);
         }, sendGap);
     }
 
-    function clickAndCheckLen(chatId) {
+    function clickAndCheck(chatId) {
         let tryCount = 0;
+        console.log(curDate() + "h1 click");
 
         const checkBtnInterval = setInterval(() => {
-            let quesFlag = false;
-            if(isEmpty(chatId)){
-                quesFlag = true;
-            }else{
-                let len = getQuestionList().length;
-                if(len > 0){
-                    quesFlag = true;
-                }
-            }
-
-            // ① 检查sendBtn存在 ② checkQuesList()检查问题列表长度是否增加
+            // 检查sendBtn存在
             let sendBtn = getSendButton(site);
-            if (quesFlag && !isEmpty(sendBtn)) {
+            if (!isEmpty(sendBtn)) {
                 clearInterval(checkBtnInterval);
 
                 // 如果输入有候选词列表，需要先点击页面空白处、再点击发送
                 setTimeout(function(){
                     document.body.click();
                     setTimeout(function(){
+                        console.log(curDate() + "h2 click");
                         sendBtn.click();
                         setTimeout(function(){
                             let areaCheck = getInputArea(site);
-                            if(!isEmpty(areaCheck) && !isEmpty(areaCheck.textContent)){
+                            let areaCheckContent = getInputContent(areaCheck);
+                            if(!isEmpty(areaCheckContent)){
+                                console.log(curDate() + "h3 click");
                                 sendBtn.click();
                             }
                         }, 1000);
                     }, 300);
                 }, 200);
-                checkQuesList(chatId);
+                checkSendStatus();
             } else {
                 tryCount++;
                 if (tryCount > maxRetries) {
                     clearInterval(checkBtnInterval);
                     sendLock = false;
-                    console.log("tryCount "+tryCount + ", quesFlag "+quesFlag+", sendBtn "+isEmpty(sendBtn));
-                    console.warn("sendBtn或问题列表未找到，超时");
+                    console.log("tryCount "+tryCount + " sendBtn "+isEmpty(sendBtn));
+                    console.warn("sendBtn未找到或未发送成功，超时");
                     return;
                 }
             }
         }, checkGap);
     }
 
-    function checkQuesList(chatId) {
-        console.log("check ques list", curDate());
+    function checkSendStatus() {
         let tryCount = 0;
-        let cachedLen = hgetS(T + chatId, LEN);
-        let newChatFlag = isEmpty(chatId) || isEmpty(cachedLen) || cachedLen === 0;
 
         const checkInterval = setInterval(() => {
             tryCount++;
 
-            // 定时器：检查问题列表长度大于上次，则停止，并设置sendLock
-            // 注意，若是chat首个问题，则只要求len=1
-            let len = getQuestionList().length;
-
-            let questionDisplayFlag = false;
-            if(newChatFlag){
-                if(len === 1){
-                    questionDisplayFlag = true;
-                }
-            }else{
-                if(len > cachedLen){
-                    questionDisplayFlag = true;
-                }
-            }
-
-            if (questionDisplayFlag) {
-                console.log("question has displayed", curDate());
+            let inputArea = getInputArea(site);
+            let areaContent = getInputContent(inputArea);
+            // 如果输入框内容为空，表明发送成功；否则继续轮询；轮询结束仍未成功则清空
+            if(isEmpty(areaContent)){
                 clearInterval(checkInterval);
-                if(!isEmpty(chatId)){
-                    hsetS(T + chatId, LEN, len);
-                    sendLock = false; // 解锁(如果chatId空，有setUid方法负责解锁)
-                }
-            } else if (tryCount > maxRetries) {
-                console.log("tryCount "+tryCount + ", len "+len+", cachedLen "+cachedLen+", newChatFlag "+newChatFlag);
-                clearInterval(checkInterval);
-                console.warn("问题列表长度未符合判据，超时");
                 sendLock = false;
-                let areaContent = getInputArea(site).textContent;
-                if(!isEmpty(areaContent)){
-                    location.reload();
-                }
+
+            } else if (tryCount > maxRetries) {
+                console.log("tryCount "+tryCount);
+                clearInterval(checkInterval);
+                console.warn("未符合判据，超时");
+                sendLock = false;
+                location.reload()
+            }
+        }, checkGap);
+
+
+    }
+
+    /**
+     * 监听新的提问：监听输入框回车事件、发送按钮点击事件
+     */
+
+    // 检查事件是否带有修饰键
+    const hasModifierKey = (event) => event.shiftKey || event.ctrlKey || event.altKey || event.metaKey;
+
+    // 根据输入框类型获取内容
+    function getInputContent(inputArea) {
+        if (isEmpty(inputArea)) return '';
+
+        // textarea 类型使用 .value
+        if (inputAreaTypes.textarea.includes(site)) {
+            return inputArea.value ? inputArea.value.trim() : '';
+        }
+        // lexical 类型使用 .textContent
+        else if (inputAreaTypes.lexical.includes(site)) {
+            return inputArea.textContent ? inputArea.textContent.trim() : '';
+        }
+
+        return '';
+    }
+
+    // 轮询等待masterId非空，最多等待15秒
+    function waitForMasterIdAndCall(question) {
+        let tryCount = 0;
+        const maxTries = 15000 / checkGap; // 15秒 / 轮询间隔
+
+        const intervalId = setInterval(function() {
+            tryCount++;
+            const masterId = getChatId();
+
+            if (!isEmpty(masterId)) {
+                clearInterval(intervalId);
+                console.log("masterId已获取: " + masterId);
+                masterCheckNew(question);
+            } else if (tryCount > maxTries) {
+                clearInterval(intervalId);
+                console.warn("等待masterId超时，15秒内未获取到");
             }
         }, checkGap);
     }
+
+    // 监听发送按钮点击事件和回车键
+    let sendBtnListenerAdded = false;
+    let inputAreaListenerAdded = false;
+    let pendingQuestion = null; // 临时存储按下时的问题
+    let lastUrl = window.location.href; // 记录上次的URL
+    let lastChatId = getChatId(); // 记录上次的chatId
+    let cachedInputContent = ""; // 缓存的输入框内容
+
+    function addSendButtonListener() {
+        const sendBtn = getSendButton(site);
+        const inputArea = getInputArea(site);
+
+        if (!isEmpty(sendBtn) && !sendBtnListenerAdded) {
+            // 给元素添加标记，用于检测元素是否被替换
+            sendBtn.setAttribute('data-listener-added', 'true');
+
+            // 鼠标按下（记录输入框内容）
+            sendBtn.addEventListener('mousedown', function() {
+                const inputArea = getInputArea(site);
+                if (!isEmpty(inputArea)) {
+                    const lastestQ = getInputContent(inputArea);
+                    console.log("mousedown - lastestQ: "+lastestQ);
+                    console.log("mousedown - cachedInputContent: "+cachedInputContent);
+                    // 如果lastestQ为空，则使用缓存的内容
+                    const questionToUse = isEmpty(lastestQ) ? cachedInputContent : lastestQ;
+                    if (!isEmpty(questionToUse)) {
+                        pendingQuestion = questionToUse;
+                        console.log("mousedown - pendingQuestion: "+pendingQuestion);
+                    }
+                }
+            });
+
+            // 鼠标移出（取消）
+            sendBtn.addEventListener('mouseleave', function() {
+                if (!isEmpty(pendingQuestion)) {
+                    console.log("鼠标移出按钮，取消发送");
+                    pendingQuestion = null;
+                }
+            });
+
+            // 鼠标释放（发送提问）
+            sendBtn.addEventListener('mouseup', function() {
+                if (!isEmpty(pendingQuestion)) {
+                    const questionToSend = pendingQuestion;
+                    pendingQuestion = null; // 清空临时变量
+
+                    setTimeout(function() {
+                        waitForMasterIdAndCall(questionToSend);
+                    }, 100);
+                }
+            });
+
+            sendBtnListenerAdded = true;
+            console.log("✓ 发送按钮监听器已添加");
+        }
+
+        // 监听输入框的回车键和输入内容
+        if (!isEmpty(inputArea) && !inputAreaListenerAdded) {
+            // 给元素添加标记，用于检测元素是否被替换
+            inputArea.setAttribute('data-listener-added', 'true');
+
+            // 监听输入框内容变化
+            inputArea.addEventListener('input', function() {
+                cachedInputContent = getInputContent(inputArea);
+            });
+
+            inputArea.addEventListener('keydown', function(event) {
+                // 单纯的 Enter 键，不带任何修饰键
+                if (event.key === 'Enter' && !hasModifierKey(event)) {
+                    const lastestQ = getInputContent(inputArea);
+                    console.log("lastestQ: "+lastestQ);
+                    const questionToUse = isEmpty(lastestQ) ? cachedInputContent : lastestQ;
+                    if (!isEmpty(questionToUse)) {
+                        setTimeout(function() {
+                            waitForMasterIdAndCall(questionToUse);
+                        }, 100);
+                    }
+                }
+            });
+            inputAreaListenerAdded = true;
+            console.log("✓ 输入框回车监听器已添加");
+        }
+
+        // 如果按钮或输入框还没加载，稍后重试
+        if (!sendBtnListenerAdded || !inputAreaListenerAdded) {
+            setTimeout(addSendButtonListener, 500);
+        }
+    }
+
+    // 检查监听器是否丢失（元素被替换）
+    function checkListenerIntegrity() {
+        const sendBtn = getSendButton(site);
+        const inputArea = getInputArea(site);
+
+        // 检查发送按钮
+        if (!isEmpty(sendBtn) && sendBtnListenerAdded) {
+            const hasMarker = sendBtn.getAttribute('data-listener-added') === 'true';
+            if (!hasMarker) {
+                console.warn("⚠ 发送按钮元素已被替换，监听器丢失！重新添加...");
+                sendBtnListenerAdded = false;
+            }
+        }
+
+        // 检查输入框
+        if (!isEmpty(inputArea) && inputAreaListenerAdded) {
+            const hasMarker = inputArea.getAttribute('data-listener-added') === 'true';
+            if (!hasMarker) {
+                console.warn("⚠ 输入框元素已被替换，监听器丢失！重新添加...");
+                inputAreaListenerAdded = false;
+            }
+        }
+
+        // 如果发现监听器丢失，重新添加
+        if (!sendBtnListenerAdded || !inputAreaListenerAdded) {
+            setTimeout(addSendButtonListener, 1000);
+        }
+    }
+
+    // 监听URL变化，重新添加监听器
+    function checkUrlChange() {
+        const currentUrl = window.location.href;
+        const currentChatId = getChatId();
+
+        if (currentUrl !== lastUrl) {
+            // 如果之前chatId为空，现在非空，说明是在同一页面生成了chatId，不需要重新添加
+            if (isEmpty(lastChatId) && !isEmpty(currentChatId)) {
+                console.log("chatId从空变为非空，无需重新添加监听器");
+                lastUrl = currentUrl;
+                lastChatId = currentChatId;
+                return;
+            }
+
+            console.log("URL已变化，重新添加监听器");
+            lastUrl = currentUrl;
+            lastChatId = currentChatId;
+            sendBtnListenerAdded = false;
+            inputAreaListenerAdded = false;
+            pendingQuestion = null;
+            setTimeout(addSendButtonListener, 500);
+        }
+    }
+
+    // 定期检查URL变化和监听器完整性
+    setInterval(function() {
+        checkUrlChange();
+        checkListenerIntegrity();
+        setGV(HEART_KEY_PREFIX + site, Date.now());
+
+        if(isEmpty(getChatId())){
+            updateNavQuestions();
+            return;
+        }
+
+        let questions = getQuestionList();
+        updateNavQuestions(questions);
+
+    }, 1500);
 
 
     /**
@@ -1403,6 +1550,9 @@
         document.body.appendChild(panel);
         document.body.appendChild(toggleButton);
         reloadDisableStatus();
+
+        // 添加发送按钮监听
+        setTimeout(addSendButtonListener, 1000);
 
         setTimeout(function(){
             if(isEmpty(getGV("notice4"))){
