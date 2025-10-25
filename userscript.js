@@ -347,8 +347,6 @@
 
     // 发送端
     function masterCheckNew(lastestQ){
-        reloadCompactMode();
-
         if(sendLock){
             return;
         }
@@ -938,6 +936,7 @@
 
     // 定期检查URL变化和监听器完整性
     setInterval(function() {
+        reloadCompactMode();
         checkUrlChange();
         checkListenerIntegrity();
         setGV(HEART_KEY_PREFIX + site, Date.now());
