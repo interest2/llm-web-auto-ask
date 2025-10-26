@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.9.0
+// @version      1.9.2
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -41,10 +41,10 @@
      * 可自行修改的简单变量
      * */
     const NAV_MAX_WIDTH = "230px"; // 目录栏最大宽度
-    const NAV_TOP = "20%"; // 目录栏竖向位置（上边缘距网页顶部占整体的距离）
+    const NAV_TOP = "20%"; // 目录栏top位置（相对网页整体）
     let MAX_QUEUE = 15; // 历史对话的记忆数量
 
-    const version = "1.9.0";
+    const version = "1.9.2";
 
     /**
      * 适配各站点所需代码
@@ -1096,6 +1096,8 @@
     words.forEach(word => {
         const item = document.createElement('div');
         item.style.cssText = PANEL_STYLES.item;
+        item.className = 'panel-item'; // 添加类名用于识别
+        item.dataset.word = word; // 添加data-word属性
 
         const wordSpan = document.createElement('span');
         wordSpan.textContent = word;
@@ -1110,6 +1112,17 @@
 
         // 添加点击事件
         checkbox.addEventListener('change', () => updateStorageSites(word));
+
+        // 点击整个item div也能切换checkbox状态
+        item.addEventListener('click', (e) => {
+            // 如果点击的是checkbox本身，不重复处理
+            if (e.target.tagName === 'INPUT') {
+                return;
+            }
+            e.stopPropagation(); // 阻止冒泡到panel
+            checkbox.checked = !checkbox.checked;
+            updateStorageSites(word);
+        });
 
         item.appendChild(wordSpan);
         item.appendChild(checkbox);
@@ -1669,6 +1682,19 @@
             const checkbox = document.getElementById(`word-${word}`);
             if (checkbox) {
                 checkbox.addEventListener('change', () => updateStorageSites(word));
+                
+                // 重新绑定item的点击事件
+                const item = checkbox.closest('.panel-item');
+                if (item) {
+                    item.addEventListener('click', (e) => {
+                        if (e.target.tagName === 'INPUT') {
+                            return;
+                        }
+                        e.stopPropagation();
+                        checkbox.checked = !checkbox.checked;
+                        updateStorageSites(word);
+                    });
+                }
             }
         });
 
@@ -1684,8 +1710,8 @@
         // 阻止事件冒泡到document
         e.stopPropagation();
 
-        // 如果点击的是复选框或按钮，不切换模式
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON') {
+        // 如果点击的是复选框、按钮或者panel-item，不切换模式
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.closest('.panel-item')) {
             return;
         }
 
