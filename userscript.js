@@ -346,7 +346,7 @@
      */
 
     // 发送端
-    function masterCheckNew(lastestQ){
+    function masterCheck(lastestQ){
         if(sendLock){
             return;
         }
@@ -359,10 +359,10 @@
         if(!isEmpty(lastQuestion) && isEqual(lastestQ, lastQuestion)){
             return;
         }
-        masterReq(masterId, lastestQ);
+        masterHandle(masterId, lastestQ);
     };
 
-    function masterReq(masterId, lastestQ){
+    function masterHandle(masterId, lastestQ){
         let uid = hgetS(T + masterId, UID_KEY);
         if(isEmpty(uid)){
             uid = guid();
@@ -784,7 +784,7 @@
             if (!isEmpty(masterId)) {
                 clearInterval(intervalId);
                 console.log("masterId已获取: " + masterId);
-                masterCheckNew(question);
+                masterCheck(question);
             } else if (tryCount > maxTries) {
                 clearInterval(intervalId);
                 console.warn("等待masterId超时，15秒内未获取到");
@@ -1569,7 +1569,7 @@
 
         setTimeout(function(){
             if(isEmpty(getGV("notice4"))){
-                alert("1、网页右下角提供了多选面板。\n点击网页空白处可缩略它；点击缩略后的面板可恢复原样；\n点击“禁用”可一键关闭同步提问。\n\n2、自动提问的前提，是先手动打开其他家大模型网页。\n\n本提示只会出现一次。");
+                alert("网页右下角的多选面板可勾选提问范围，\n点击“禁用”可一键关闭同步提问");
                 setGV("notice4", 1);
             }
         }, 800);
