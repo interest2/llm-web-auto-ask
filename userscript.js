@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.9.3
+// @version      1.9.4
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -44,7 +44,7 @@
     const NAV_TOP = "20%"; // 目录栏top位置（相对网页整体）
     let MAX_QUEUE = 15; // 历史对话的记忆数量
 
-    const version = "1.9.3";
+    const version = "1.9.4";
 
     /**
      * 适配各站点所需代码
@@ -80,7 +80,7 @@
             [TONGYI]: () => document.querySelectorAll('[class^="bubble-"]'),
             [CHATGPT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
             [ZCHAT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
-            [DOUBAO]: () => filterQuestions(document.querySelectorAll('[data-testid="message_text_content"]')),
+            [DOUBAO]: () => Array.from(document.querySelectorAll('[data-testid="message_text_content"]')).filter(el => !el.children || el.children.length === 0),
             [GEMINI]: () => document.getElementsByTagName('user-query'),
             [QWEN]: () => document.getElementsByClassName("user-message-content"),
             [CLAUDE]: () => document.querySelectorAll('[data-testid="user-message"]'),
