@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.9.2
+// @version      1.9.3
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -44,7 +44,7 @@
     const NAV_TOP = "20%"; // 目录栏top位置（相对网页整体）
     let MAX_QUEUE = 15; // 历史对话的记忆数量
 
-    const version = "1.9.2";
+    const version = "1.9.3";
 
     /**
      * 适配各站点所需代码
@@ -1416,11 +1416,53 @@
         link.addEventListener('mouseleave', () => link.style.backgroundColor = '');
         link.addEventListener('click', (e) => {
             e.preventDefault();
-            el.scrollIntoView({block: 'start'});
-            clickedTarget = el;
-            clickLockUntil = Date.now() + NAV_CLICK_LOCK_DURATION;
-            clearAllHighlights();
-            setLinkStyle(link, true);
+            // 验证元素是否存在，如果不存在则尝试重新获取
+            let targetEl = el;
+            if (!targetEl || !document.body.contains(targetEl)) {
+                // 元素可能已被移除或重新渲染，尝试重新获取
+                const questions = getQuestionList();
+                if (questions && questions.length > i) {
+                    targetEl = questions[i];
+                }
+            }
+            
+            // 如果元素存在，执行滚动
+            if (targetEl && document.body.contains(targetEl)) {
+                targetEl.scrollIntoView({block: 'start'});
+                clickedTarget = targetEl;
+                clickLockUntil = Date.now() + NAV_CLICK_LOCK_DURATION;
+                clearAllHighlights();
+                setLinkStyle(link, true);
+            } else {
+                // 元素不存在，等待一段时间后重试
+                let retryCount = 0;
+                const maxRetries = 10;
+                const retryInterval = 100;
+                const retryTimer = setInterval(() => {
+                    retryCount++;
+                    const questions = getQuestionList();
+                    if (questions && questions.length > i) {
+                        const newEl = questions[i];
+                        if (newEl && document.body.contains(newEl)) {
+                            clearInterval(retryTimer);
+                            newEl.scrollIntoView({block: 'start'});
+                            clickedTarget = newEl;
+                            clickLockUntil = Date.now() + NAV_CLICK_LOCK_DURATION;
+                            clearAllHighlights();
+                            setLinkStyle(link, true);
+                            // 更新navQuestions中的元素引用
+                            if (navQuestions && navQuestions[i] !== newEl) {
+                                navQuestions[i] = newEl;
+                                elToLink.set(newEl, link);
+                            }
+                        }
+                    }
+                    if (retryCount >= maxRetries) {
+                        clearInterval(retryTimer);
+                        console.warn('目录项跳转失败：元素未找到');
+                    }
+                }, retryInterval);
+            }
         });
 
         return link;
