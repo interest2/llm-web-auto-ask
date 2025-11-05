@@ -63,8 +63,8 @@
 
     // 输入框类型分类
     const inputAreaTypes = {
-        textarea: [DEEPSEEK, TONGYI, DOUBAO, QWEN, GROK],
-        lexical: [KIMI, CHATGPT, ZCHAT, GEMINI, CLAUDE]
+        textarea: [DEEPSEEK, TONGYI, DOUBAO, QWEN],
+        lexical: [KIMI, CHATGPT, ZCHAT, GEMINI, CLAUDE, GROK]
     };
 
     // 通用输入框选择器，两类：textarea标签、lexical
@@ -218,10 +218,10 @@
     const OPEN_GAP = 300; // 打开网页的间隔
     const HIBERNATE_GAP = 600; // 单位：秒
     let testLocalFlag = 0;
-    let hasImage = false;
 
     // 存储时的特征词
     const T = "tool-";
+    const JUMP_HAS_IMAGE = "jumpHasImage";
     const QUEUE = "tool-queue";
     const LEN = "len";
     const LAST_Q = "lastQ";
@@ -348,6 +348,7 @@
      */
 
     // 发送端
+    const currentAskHasImage = "currentAskHasImage";
     function masterCheck(lastestQ){
         if(sendLock){
             return;
@@ -579,8 +580,10 @@
         const inputArea = getInputArea(site);
         if (!inputArea) return;
         const activeElement = document.activeElement;
-        if (activeElement !== inputArea && !inputArea.contains(activeElement)) {
-            return;
+        if(![GEMINI, GROK].includes(site)){
+            if (activeElement !== inputArea && !inputArea.contains(activeElement)) {
+                return;
+            }
         }
 
         const items = e.clipboardData?.items;
@@ -600,6 +603,7 @@
                 GM_setValue(imageKey + "-chatId", thisChatId);
                 GM_setValue(imageKey + "-site", site);
                 GM_setValue(imageKey, base64);
+                setS(T + currentAskHasImage, "1");
 
                 break; // 手动粘贴图片后，脚本读取最后一张图，存入共享存储
             }
@@ -609,7 +613,7 @@
     // 其他站点粘贴图片
     async function pasteImage() {
         if(!canAcceptPastedImageForCurrentChat()){
-            setS(T + "hasImage", "1");
+            setS(T + JUMP_HAS_IMAGE, "1");
             return;
         }
 
@@ -639,45 +643,47 @@
         return bothEmpty || pairdChatId;
     }
 
-    // 模拟将 base64 图片粘贴到输入框
+    // 模拟将 base64 图片粘贴到输入框（返回在实际触发粘贴后才 resolve）
     function simulatePasteImage() {
         const base64 = GM_getValue(imageKey);
         if (!base64) {
             console.error('未找到指定的图片');
             return false;
         }
-        try {
-            const blob = base64ToBlob(base64);
-            const file = new File([blob], 'pasted-image.png', {
-                type: blob.type || 'image/png',
-                lastModified: Date.now()
-            });
+        return new Promise((resolve) => {
+            try {
+                const blob = base64ToBlob(base64);
+                const file = new File([blob], 'pasted-image.png', {
+                    type: blob.type || 'image/png',
+                    lastModified: Date.now()
+                });
 
-            const dataTransfer = new DataTransfer();
-            dataTransfer.items.add(file);
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
 
-            const pasteEvent = new ClipboardEvent('paste', {
-                clipboardData: dataTransfer,
-                bubbles: true,
-                cancelable: true
-            });
+                const pasteEvent = new ClipboardEvent('paste', {
+                    clipboardData: dataTransfer,
+                    bubbles: true,
+                    cancelable: true
+                });
 
-            let targetElement = getInputArea(site);
-            const interval = setInterval(() => {
-                if (targetElement && typeof targetElement.focus === 'function') {
-                    clearInterval(interval);
-                    targetElement.focus();
+                let targetElement = getInputArea(site);
+                const interval = setInterval(() => {
+                    if (targetElement && typeof targetElement.focus === 'function') {
+                        clearInterval(interval);
+                        targetElement.focus();
 
-                    // 粘贴
-                    targetElement.dispatchEvent(pasteEvent);
-                    console.log('模拟粘贴图片成功');
-                }
-            }, 100);
-            return true;
-        } catch (error) {
-            console.error('模拟粘贴失败:', error);
-            return false;
-        }
+                        // 粘贴
+                        const dispatched = targetElement.dispatchEvent(pasteEvent);
+                        console.log('模拟粘贴图片成功');
+                        resolve(!!dispatched);
+                    }
+                }, 100);
+            } catch (error) {
+                console.error('模拟粘贴失败:', error);
+                resolve(false);
+            }
+        });
     }
 
     /**
@@ -780,12 +786,12 @@
         }, checkGap);
     }
 
-    function sendContent(editor, content, chatId){
+    async function sendContent(editor, content, chatId){
 
-        if(!isEmpty(getS(T + "hasImage"))){
-        //     粘贴图片到输入框
-            simulatePasteImage();
-            setS(T + "hasImage", "");
+        if(!isEmpty(getS(T + JUMP_HAS_IMAGE))){
+            // 粘贴图片到输入框，并等待完成
+            await simulatePasteImage();
+            setS(T + JUMP_HAS_IMAGE, "");
         }
 
         // 当豆包是新对话，元素不可见会异常，故适当延迟
@@ -810,11 +816,11 @@
                 // 触发 input 事件
                 editor.dispatchEvent(new Event('input', { bubbles: true }));
             }
-            clickAndCheck(chatId);
+            clickAndCheck();
         }, sendGap);
     }
 
-    function clickAndCheck(chatId) {
+    function clickAndCheck() {
         let tryCount = 0;
         console.log(curDate() + "h1 click");
 
@@ -2013,6 +2019,13 @@
     }
 
     function isEqual(latestQ, lastQ){
+        // 提问内容相同，如果带图片则允许继续，不带图则终止。且注意清除缓存标记。
+        let currentHasImageflag = getS(T + currentAskHasImage);
+        if(!isEmpty(currentHasImageflag)){
+            setS(T + currentAskHasImage, "");
+            return false;
+        }
+
         if(latestQ.length > MAX_PLAIN){
             if(lastQ.length === HASH_LEN){
                 return dHash(latestQ) === lastQ;
