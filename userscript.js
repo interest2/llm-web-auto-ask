@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      1.9.4
+// @version      2.0.0
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -44,7 +44,7 @@
     const NAV_TOP = "20%"; // 目录栏top位置（相对网页整体）
     let MAX_QUEUE = 15; // 历史对话的记忆数量
 
-    const version = "1.9.4";
+    const version = "2.0.0";
 
     /**
      * 适配各站点所需代码
@@ -214,7 +214,7 @@
     const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
     const HASH_LEN = 16; // 问题的哈希长度
     const checkGap = 100;
-    const maxRetries = 150;
+    const maxRetries = 200;
     const OPEN_GAP = 300; // 打开网页的间隔
     const HIBERNATE_GAP = 600; // 单位：秒
     let testLocalFlag = 0;
@@ -442,7 +442,6 @@
         });
     }
 
-
     // 监听是否有新的提问
     GM_addValueChangeListener('msg', function(name, oldValue, msg, remote) {
         if(!remote){
@@ -556,6 +555,84 @@
         }
     }
 
+
+    // 监听是否有新的图片
+    GM_addValueChangeListener('image', function(name, oldValue, msg, remote) {
+        if(!remote){
+            return;
+        }
+        if(getGV("disable") === true){
+            return;
+        }
+
+        let sites = getSitesOfStorage();
+        if(sites.includes(site)){
+            pasteImage();
+        }
+    });
+
+    // 主节点监听粘贴事件
+    let imageKey = "image";
+    document.addEventListener('paste', async (e) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item.type.startsWith('image/')) {
+                const blob = item.getAsFile();
+                if (!blob) continue;
+
+                // 转为 Base64
+                const base64 = await blobToBase64(blob);
+                GM_setValue(imageKey, base64);
+
+                break; // 手动粘贴图片后，脚本读取最后一张图，存入共享存储
+            }
+        }
+    });
+
+    // 其他站点粘贴图片
+    async function pasteImage() {
+        let targetElement = getInputArea(site);
+
+        const base64 = GM_getValue(imageKey);
+        if (!base64) {
+            console.error('未找到指定的图片');
+            return false;
+        }
+        try {
+            const blob = await base64ToBlob(base64);
+            const file = new File([blob], 'pasted-image.png', {
+                type: blob.type || 'image/png',
+                lastModified: Date.now()
+            });
+
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(file);
+
+            const pasteEvent = new ClipboardEvent('paste', {
+                clipboardData: dataTransfer,
+                bubbles: true,
+                cancelable: true
+            });
+
+            const interval = setInterval(() => {
+                if (targetElement && typeof targetElement.focus === 'function') {
+                    clearInterval(interval);
+                    targetElement.focus();
+
+                    // 粘贴
+                    targetElement.dispatchEvent(pasteEvent);
+                    console.log('模拟粘贴图片成功');
+                }
+            }, 100);
+            return true;
+        } catch (error) {
+            console.error('模拟粘贴失败:', error);
+            return false;
+        }
+    }
 
     /**
      * 异步轮询检查环节
@@ -697,18 +774,31 @@
                 // 如果输入有候选词列表，需要先点击页面空白处、再点击发送
                 setTimeout(function(){
                     document.body.click();
+
                     setTimeout(function(){
                         console.log(curDate() + "h2 click");
                         sendBtn.click();
-                        setTimeout(function(){
+                        
+                        const maxPollTime = maxRetries * checkGap - 2000;
+                        const pollInterval = checkGap * 2;
+                        const startTime = Date.now();
+                        
+                        function pollAreaCheck() {
+                            let elapsed = Date.now() - startTime;
+                            if(elapsed >= maxPollTime){
+                                return;
+                            }
                             let areaCheck = getInputArea(site);
                             let areaCheckContent = getInputContent(areaCheck);
                             if(!isEmpty(areaCheckContent)){
                                 console.log(curDate() + "h3 click");
                                 sendBtn.click();
+                                setTimeout(pollAreaCheck, pollInterval);
                             }
-                        }, 1000);
+                        }
+                        setTimeout(pollAreaCheck, pollInterval);
                     }, 300);
+                    
                 }, 200);
                 checkSendStatus();
             } else {
@@ -1811,6 +1901,35 @@
             queue.pop();
             localStorage.setItem(QUEUE, JSON.stringify(queue));
         }
+    }
+
+    // Blob --> Base64
+    function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    }
+
+    // Base64 --> Blob
+    function base64ToBlob(base64) {
+        // 移除 data URL 前缀
+        const base64Data = base64.split(',')[1];
+        if (!base64Data) {
+            throw new Error('无效的 Base64 字符串');
+        }
+        const byteString = atob(base64Data);
+        const mimeType = base64.split(',')[0].split(':')[1].split(';')[0] || 'image/png';
+
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        // 填充字节数组
+        for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+        }
+        return new Blob([ab], { type: mimeType });
     }
 
     // localStorage读写json（hashMap）
