@@ -218,6 +218,7 @@
     const OPEN_GAP = 300; // 打开网页的间隔
     const HIBERNATE_GAP = 600; // 单位：秒
     let testLocalFlag = 0;
+    let hasImage = false;
 
     // 存储时的特征词
     const T = "tool-";
@@ -225,6 +226,7 @@
     const LEN = "len";
     const LAST_Q = "lastQ";
     const UID_KEY = "uid";
+    const UID_KEY_PREFIX = "uid-";
     const DEFAULT_DISPLAY_KEY = "defaultDisplay";
     const HEART_KEY_PREFIX ="lastHeartbeat-";
 
@@ -505,7 +507,6 @@
         let question = msg.question;
         // 来者消息的uid，是否关联了从节点的chatId？
         if(!isEmpty(uidJson)){
-            // console.log("uidJson " + JSON.stringify(uidJson));
             slaveId = uidJson[site];
             if(!isEmpty(slaveId)){
                 lastQuestionOfComingSlaveId = hgetS(T + slaveId, LAST_Q);
@@ -531,7 +532,7 @@
                 }else{
                     targetUrl = historySites[site] + slaveId;
                 }
-                // 当前页面是空白，需跳转
+            // 当前页面是空白，需跳转
             }else{
                 targetUrl = historySites[site] + slaveId;
             }
@@ -574,6 +575,14 @@
     // 主节点监听粘贴事件
     let imageKey = "image";
     document.addEventListener('paste', async (e) => {
+        // 仅当输入框处于聚焦状态时才继续处理
+        const inputArea = getInputArea(site);
+        if (!inputArea) return;
+        const activeElement = document.activeElement;
+        if (activeElement !== inputArea && !inputArea.contains(activeElement)) {
+            return;
+        }
+
         const items = e.clipboardData?.items;
         if (!items) return;
 
@@ -585,6 +594,11 @@
 
                 // 转为 Base64
                 const base64 = await blobToBase64(blob);
+
+                // 时序注意：先设置 chatId 和 site，最后设置 image 来触发监听器
+                let thisChatId = getChatId();
+                GM_setValue(imageKey + "-chatId", thisChatId);
+                GM_setValue(imageKey + "-site", site);
                 GM_setValue(imageKey, base64);
 
                 break; // 手动粘贴图片后，脚本读取最后一张图，存入共享存储
@@ -594,15 +608,46 @@
 
     // 其他站点粘贴图片
     async function pasteImage() {
-        let targetElement = getInputArea(site);
+        if(!canAcceptPastedImageForCurrentChat()){
+            setS(T + "hasImage", "1");
+            return;
+        }
 
+        return simulatePasteImage();
+    }
+
+    // 判断当前页面是否应当处理粘贴的图片（基于 chatId 绑定关系）
+    function canAcceptPastedImageForCurrentChat(){
+        const sourceSite = GM_getValue(imageKey + "-site");
+        const masterChatId = GM_getValue(imageKey + "-chatId");
+        const curChatId = getChatId();
+
+        const empty1 = isEmpty(masterChatId);
+        const empty2 = isEmpty(curChatId);
+        const bothEmpty = empty1 && empty2;
+
+        let pairdChatId = false;
+        const uid = hgetS(T + curChatId, UID_KEY);
+        const uidJson = getGV(uid);
+        if(!isEmpty(uidJson)){
+            const expectedChatId = uidJson[sourceSite];
+            if(!empty1 && !empty2 && expectedChatId === masterChatId){
+                pairdChatId = true;
+            }
+        }
+
+        return bothEmpty || pairdChatId;
+    }
+
+    // 模拟将 base64 图片粘贴到输入框
+    function simulatePasteImage() {
         const base64 = GM_getValue(imageKey);
         if (!base64) {
             console.error('未找到指定的图片');
             return false;
         }
         try {
-            const blob = await base64ToBlob(base64);
+            const blob = base64ToBlob(base64);
             const file = new File([blob], 'pasted-image.png', {
                 type: blob.type || 'image/png',
                 lastModified: Date.now()
@@ -617,6 +662,7 @@
                 cancelable: true
             });
 
+            let targetElement = getInputArea(site);
             const interval = setInterval(() => {
                 if (targetElement && typeof targetElement.focus === 'function') {
                     clearInterval(interval);
@@ -686,7 +732,7 @@
                         // 更新完uidJson才能解锁
                         setGV(uid, uidJson);
                         setGV("uidLock", false);
-                        setS("uid-" + uid, JSON.stringify(uidJson));
+                        setS(UID_KEY_PREFIX + uid, JSON.stringify(uidJson));
                     }else{
                         console.log("uidLock已存在，稍后重试");
                     }
@@ -708,7 +754,7 @@
         }, checkGap);
     }
 
-    // ① 检查textArea存在 ② 检查sendBtn存在 ③ 检查问题列表长度是否加一
+    // ① 检查textArea存在 ② 检查sendBtn存在
     function abstractSend(content, chatId){
         updateBoxFromStorage();
 
@@ -735,6 +781,13 @@
     }
 
     function sendContent(editor, content, chatId){
+
+        if(!isEmpty(getS(T + "hasImage"))){
+        //     粘贴图片到输入框
+            simulatePasteImage();
+            setS(T + "hasImage", "");
+        }
+
         // 当豆包是新对话，元素不可见会异常，故适当延迟
         let sendGap = (site === DOUBAO && isEmpty(chatId)) ? 1500 : 100;
         setTimeout(function(){
@@ -832,11 +885,8 @@
                 clearInterval(checkInterval);
                 console.warn("未符合判据，超时");
                 sendLock = false;
-                location.reload()
             }
         }, checkGap);
-
-
     }
 
     /**
@@ -1893,7 +1943,7 @@
             let valJson = JSON.parse(getS(chatIdKey));
             if(!isEmpty(valJson)){
                 let uid = valJson.uid;
-                localStorage.removeItem("uid-" + uid);
+                localStorage.removeItem(UID_KEY_PREFIX + uid);
                 GM_deleteValue(uid);
             }
 
