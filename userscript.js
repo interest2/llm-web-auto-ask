@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      2.0.1
+// @version      2.0.2
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -42,9 +42,9 @@
      * */
     const NAV_MAX_WIDTH = "230px"; // 目录栏最大宽度
     const NAV_TOP = "20%"; // 目录栏top位置（相对网页整体）
-    let MAX_QUEUE = 15; // 历史对话的记忆数量
+    let MAX_QUEUE = 20; // 历史对话的记忆数量
 
-    const version = "2.0.1";
+    const version = "2.0.2";
 
     /**
      * 适配各站点所需代码
@@ -150,8 +150,8 @@
         { site: TONGYI, word: '通义千问', alias: '通' },
         { site: QWEN, word: 'Qwen', alias: 'Q' },
         { site: DOUBAO, word: '豆包', alias: '豆' },
-        { site: CHATGPT, word: 'ChatGPT (官网)', alias: 'C' },
-        { site: ZCHAT, word: 'ChatGPT (zchat)', alias: 'Z' },
+        { site: ZCHAT, word: 'ZCHAT-GPT', alias: 'Z' },
+        { site: CHATGPT, word: 'ChatGPT', alias: 'C' },
         { site: GEMINI, word: 'Gemini', alias: 'G' },
         { site: CLAUDE, word: 'Claude', alias: 'Cl' },
         { site: GROK, word: 'Grok', alias: 'Gr' }
@@ -294,8 +294,27 @@
         wordToAlias[word] = alias;
     });
 
-    // 从url提取各大模型网站的对话唯一标识
-    function getChatId(){
+	// 通用chatId正则：16~37位的数字、字母、短横杠
+	const GENERAL_PATTERN = /[a-zA-Z0-9-]{16,37}/;
+
+    const MARKER_CHAT = "chat/";
+    const MARKER_C = "c/";
+
+	// 各站点的chatId提取所需特征词（由于正则匹配结果可能有多个，故需精准识别）
+    // Gemini和DS暂用默认兜底规则
+	const CHAT_ID_PREFIX = {
+		[KIMI]: { markers: [MARKER_CHAT] },
+		[TONGYI]: { markers: ["sessionId="] },
+		[QWEN]: { markers: [MARKER_C] },
+		[DOUBAO]: { markers: [MARKER_CHAT] },
+		[CHATGPT]: { markers: [MARKER_C] },
+		[ZCHAT]: { markers: [MARKER_C] },
+		[CLAUDE]: { markers: [MARKER_CHAT] },
+		[GROK]: { markers: ["chat=", MARKER_C] }
+	};
+
+	// 从url提取各大模型网站的对话唯一标识
+	function getChatId(){
         let url = getUrl();
         if(isEmpty(url)){
             return "";
@@ -303,22 +322,40 @@
         if(site === DOUBAO && url.indexOf("local") > -1){
             return "";
         }
-        // TONGYI站点优先提取sessionId=后面的id
-        if(site === TONGYI){
-            const sessionIdMatch = url.match(/sessionId=([a-zA-Z0-9-]{16,37})/);
-            if(!isEmpty(sessionIdMatch) && sessionIdMatch[1]){
-                return sessionIdMatch[1];
-            }
-        }
-        // 各站点 url 里对话ID的正则表达式模式(统一共用版)，16~37位的数字、字母、短横杠
-        const GENERAL_PATTERN = /[a-zA-Z0-9-]{16,37}/;
-        const regex = new RegExp(GENERAL_PATTERN);
-        let ret = url.match(regex);
-        if(isEmpty(ret)){
-            return "";
-        }
-        return ret[0];
+		// 特征词规则：若定义了站点规则且能提取出匹配GENERAL_PATTERN的内容，则直接返回；否则走通用匹配
+		const rule = CHAT_ID_PREFIX[site];
+		if(rule && Array.isArray(rule.markers)){
+			// 优先选择在 URL 中出现位置更靠前且能命中的 marker
+			const candidates = rule.markers
+				.map(m => ({ m, idx: url.indexOf(m) }))
+				.filter(x => x.idx !== -1)
+				.sort((a,b) => a.idx - b.idx);
+			for(const { m } of candidates){
+				const id = matchAfterMarker(url, m, GENERAL_PATTERN);
+				if(!isEmpty(id)){
+					return id;
+				}
+			}
+			return ""; // 指定站点但无特征词或无法匹配时视为空
+		}
+		// 其他站点：通用匹配（如有多个匹配，取最后一个，兼容性更好）
+		const globalRegex = new RegExp(GENERAL_PATTERN.source, 'g');
+		const all = url.match(globalRegex);
+		if(isEmpty(all)){
+			return "";
+		}
+		return all[all.length - 1];
     }
+    
+	// 工具：匹配 marker 后第一个符合 pattern 的内容（捕获分组法）
+	function escapeRegex(text){
+		return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	}
+	function matchAfterMarker(fullUrl, marker, pattern){
+		const regex = new RegExp(escapeRegex(marker) + '(' + pattern.source + ')');
+		const m = fullUrl.match(regex);
+		return (m && m[1]) ? m[1] : "";
+	}
 
     function getUrl(){
         return window.location.href;
@@ -331,7 +368,7 @@
         panelCompact: `min-width:120px;`,
         disable: `background:#ec7258;color:white;border-radius:6px;padding:2px 0;`,
         item: `display:flex;align-items:center;padding:3px 0 3px 3px;border-bottom:1px solid #eee;`,
-        wordSpan: `flex:1;margin-right:5px;font-size:14px;`,
+        wordSpan: `flex:1;margin-right:10px;font-size:14px;`,
         checkbox: `margin-right:1px;font-size:20px;`,
         emptyMessage: `padding:1px;text-align:center;color:#888;font-size:14px;`,
         headline: `font-weight:bold;`,
