@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
+// @version      2.0.1
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -44,7 +44,7 @@
     const NAV_TOP = "20%"; // 目录栏top位置（相对网页整体）
     let MAX_QUEUE = 15; // 历史对话的记忆数量
 
-    const version = "2.0.0";
+    const version = "2.0.1";
 
     /**
      * 适配各站点所需代码
@@ -302,6 +302,13 @@
         }
         if(site === DOUBAO && url.indexOf("local") > -1){
             return "";
+        }
+        // TONGYI站点优先提取sessionId=后面的id
+        if(site === TONGYI){
+            const sessionIdMatch = url.match(/sessionId=([a-zA-Z0-9-]{16,37})/);
+            if(!isEmpty(sessionIdMatch) && sessionIdMatch[1]){
+                return sessionIdMatch[1];
+            }
         }
         // 各站点 url 里对话ID的正则表达式模式(统一共用版)，16~37位的数字、字母、短横杠
         const GENERAL_PATTERN = /[a-zA-Z0-9-]{16,37}/;
@@ -580,6 +587,7 @@
         const inputArea = getInputArea(site);
         if (!inputArea) return;
         const activeElement = document.activeElement;
+        // gemini, grok检测的activeElement为空，不支持聚焦判断
         if(![GEMINI, GROK].includes(site)){
             if (activeElement !== inputArea && !inputArea.contains(activeElement)) {
                 return;
@@ -959,13 +967,10 @@
                 const inputArea = getInputArea(site);
                 if (!isEmpty(inputArea)) {
                     const lastestQ = getInputContent(inputArea);
-                    console.log("mousedown - lastestQ: "+lastestQ);
-                    console.log("mousedown - cachedInputContent: "+cachedInputContent);
                     // 如果lastestQ为空，则使用缓存的内容
                     const questionToUse = isEmpty(lastestQ) ? cachedInputContent : lastestQ;
                     if (!isEmpty(questionToUse)) {
                         pendingQuestion = questionToUse;
-                        console.log("mousedown - pendingQuestion: "+pendingQuestion);
                     }
                 }
             });
