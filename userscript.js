@@ -1164,6 +1164,7 @@
     /**
      * 脚本首次使用的指引
      */
+    let FIRST_RUN_KEY = "firstRun";
     setTimeout(function(){
         document.body.appendChild(panel);
         document.body.appendChild(toggleButton);
@@ -1173,9 +1174,9 @@
         setTimeout(addSendButtonListener, 1000);
 
         setTimeout(function(){
-            if(isEmpty(getGV("notice4"))){
+            if(isEmpty(getGV(FIRST_RUN_KEY)){
                 alert("网页右下角的多选面板可勾选提问范围，\n点击“禁用”可一键关闭同步提问");
-                setGV("notice4", 1);
+                setGV(FIRST_RUN_KEY, 1);
             }
         }, 800);
     }, panelDelay);
@@ -1718,20 +1719,17 @@
         items.push(item); // 收集item，稍后统一添加
     });
 
-    // 集中DOM操作：一次性添加所有元素到contentContainer
+    // 集中DOM操作：一次性添加所有元素到 contentContainer, panel
     contentContainer.appendChild(headline);
     items.forEach(item => contentContainer.appendChild(item));
-
-    // 集中DOM操作：一次性将所有子元素添加到panel
     panel.appendChild(disable);
     panel.appendChild(contentContainer);
 
     // 首次加载多选面板 是展开状态，后续刷新网页默认缩略状态
-    const panelNotFirstLoaded = "panelNotFirstLoaded";
-    if(getGV(panelNotFirstLoaded)){
+    if(getGV(FIRST_RUN_KEY)){
         switchToCompactMode();
     }else{
-        setGV(panelNotFirstLoaded, 1);
+        setGV(FIRST_RUN_KEY, 1);
     }
 
     // 面板相关函数
@@ -1749,12 +1747,10 @@
             setGV("disable", true);
             disable.textContent = ENABLE;
             contentContainer.style.color = "lightgray";
-            // hint.style.borderRight = "8px solid #ffffff";
         }else{
             setGV("disable", false);
             disable.textContent = DISABLE;
             contentContainer.style.color = "black";
-            // hint.style.borderRight = "8px solid #3498db";
         }
     }
 
@@ -2002,7 +1998,6 @@
         }
     });
 
-    
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -2102,7 +2097,7 @@
         return new Blob([ab], { type: mimeType });
     }
 
-    // localStorage读写json（hashMap）
+    // localStorage 读写json（hashMap）
     function hgetS(key, jsonKey){
         let json = localStorage.getItem(key);
         if(isEmpty(json)){
@@ -2155,12 +2150,20 @@
         return ques.length > MAX_PLAIN ? dHash(ques) : ques;
     }
 
+    // 通用判空函数
     function isEmpty(item){
-        if(item===null || item===undefined || item.length===0 || item === "null"){
+        if(item === null || item === undefined || item === "null"){
             return true;
-        }else{
-            return false;
         }
+        // 字符串、数组等有 length 属性的类型
+        if(typeof item === 'string' || Array.isArray(item)){
+            return item.length === 0;
+        }
+        // 对象类型：空对象判断
+        if(typeof item === 'object'){
+            return Object.keys(item).length === 0;
+        }
+        return false;
     }
 
     // 自定义哈希
