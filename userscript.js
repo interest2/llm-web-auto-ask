@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      2.0.3
+// @version      2.1.0
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -44,7 +44,7 @@
     const NAV_TOP = "20%"; // 目录栏top位置（相对网页整体）
     let MAX_QUEUE = 20; // 历史对话的记忆数量
 
-    const version = "2.0.3";
+    const version = "2.1.0";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -78,7 +78,7 @@
 
     // 选择器配置
     const selectors = {
-        // 已提问的列表
+        // 已提问的列表（与同步提问功能无关，与目录功能有关）
         questionList: {
             [KIMI]: () => document.getElementsByClassName("user-content"),
             [DEEPSEEK]: () => filterQuestions(document.getElementsByClassName("ds-message")),
@@ -142,7 +142,7 @@
         [GROK]: ["https://grok.com/", "c/"]
     };
 
-    // 多选面板配置（各站点的全称、简称）
+    // 多选面板里，各站点的全称、简称
     let wordConfig = [
         { site: DEEPSEEK, word: 'DeepSeek', alias: 'D'},
         { site: KIMI, word: 'Kimi', alias: 'K' },
@@ -156,7 +156,7 @@
         { site: GROK, word: 'Grok', alias: 'Gr' }
     ];
 
-    // 隐藏输入框及周边区域，所需隐藏的元素，是输入框本体的第几层父元素？以下数字即层数（后续应改为可视化配置）
+    // （可选）隐藏输入框及周边区域，所需隐藏的元素，是输入框本体的第几层父元素？以下数字即层数（后续应改为可视化配置）
     const inputAreaHideParentLevel = {
         [KIMI]: 4,
         [DEEPSEEK]: 5,
@@ -176,7 +176,7 @@
     const MARKER_CHAT = "chat/";
     const MARKER_C = "c/";
 
-	// 各站点的chatId提取所需特征词（由于正则匹配结果可能有多个，故需精准识别）
+	// （可选）各站点的chatId提取所需特征词（由于正则匹配结果可能有多个，故需精准识别）
     // Gemini和DS暂用默认兜底规则
 	const CHAT_ID_PREFIX = {
 		[KIMI]: [MARKER_CHAT],
@@ -1129,11 +1129,27 @@
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
      * ║                                                                      ║
-     * ║  🎨 7、首次使用指引 & 输入框的显示/隐藏切换 🎨                        ║
+     * ║  🎨 7、trusted HTML & 首次使用指引 & 输入框的显示/隐藏切换 🎨                        ║
      * ║                                                                      ║
      * ═══════════════════════════════════════════════════════════════════════
      ******************************************************************************/
-    
+
+    // 安全处理HTML内容（Trusted Types支持）
+    let policy = "";
+    if (window.trustedTypes) {
+        policy = trustedTypes.createPolicy("forceInner", {
+            createHTML: (to_escape) => to_escape
+        });
+    }
+
+    function makeHTML(content){
+        if(isEmpty(policy)){
+            return content;
+        }else{
+            return policy.createHTML(content);
+        }
+    }
+
     // 面板延迟时间
     let panelDelay = site === ZCHAT ? 500 : 50;
     const panel = document.createElement('div');
@@ -1623,7 +1639,7 @@
     const PANEL_STYLES = {
         panel: `cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:400px;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:99999999;overflow-y:auto;padding:2px;display:flex;flex-direction:column;`,
         panelCompact: `min-width:120px;`,
-        disable: `background:#ec7258;color:white;border-radius:6px;padding:2px 0;`,
+        disable: `background:#ec7258;color:white;border-radius:6px;padding:2px 1px;`,
         item: `display:flex;align-items:center;padding:3px 0 3px 3px;border-bottom:1px solid #eee;`,
         wordSpan: `flex:1;margin-right:10px;font-size:14px;`,
         checkbox: `margin-right:1px;font-size:20px;`,
@@ -1702,6 +1718,14 @@
     // 集中DOM操作：一次性将所有子元素添加到panel
     panel.appendChild(disable);
     panel.appendChild(contentContainer);
+
+    // 首次加载多选面板 是展开状态，后续刷新网页默认缩略状态
+    const panelNotFirstLoaded = "panelNotFirstLoaded";
+    if(getGV(panelNotFirstLoaded)){
+        switchToCompactMode();
+    }else{
+        setGV(panelNotFirstLoaded, 1);
+    }
 
     // 面板相关函数
     function disableEvent(event){
@@ -1859,10 +1883,16 @@
         // 保存原始内容
         originalHTML = contentContainer.innerHTML;
 
-        // 记录选中的项
-        const selectedWords = words.filter(word =>
+        // 记录选中的项：优先从DOM读取，如果读取不到则从存储读取
+        let selectedWords = words.filter(word =>
             document.getElementById(`word-${word}`)?.checked
         );
+
+        // 如果从DOM读取不到，则从存储读取（fallback机制）
+        if (selectedWords.length === 0) {
+            const selectedSites = getSitesAndCurrent();
+            selectedWords = selectedSites.map(site => siteToWord[site]).filter(word => word);
+        }
 
         if (selectedWords.length === 0) {
             const emptyMsg = document.createElement('div');
@@ -1978,22 +2008,6 @@
     // 获取当前URL
     function getUrl(){
         return window.location.href;
-    }
-
-    // 处理HTML内容（Trusted Types支持）
-    let policy = "";
-    if (window.trustedTypes) {
-        policy = trustedTypes.createPolicy("forceInner", {
-            createHTML: (to_escape) => to_escape
-        });
-    }
-
-    function makeHTML(content){
-        if(isEmpty(policy)){
-            return content;
-        }else{
-            return policy.createHTML(content);
-        }
     }
 
     // 远程HTTP请求
