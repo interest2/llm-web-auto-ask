@@ -501,7 +501,7 @@
             // 清空跳转用的缓存
             setS("questionBeforeJump", "");
             console.log(curDate() + "h1 send");
-            abstractSend(cachedQuestion, cachedSlaveId);
+            sendQuestion(cachedQuestion, cachedSlaveId);
 
             if(isEmpty(curSlaveId)){
                 setUid(cachedUid, cachedQuestion);
@@ -540,7 +540,7 @@
                 if(curSlaveId === slaveId){
                     console.log("h2 send", curDate());
                     hsetS(T + curSlaveId, LAST_Q, getQuesOrHash(question));
-                    abstractSend(question, curSlaveId);
+                    sendQuestion(question, curSlaveId);
                 }else{
                     targetUrl = historySites[site] + slaveId;
                 }
@@ -557,7 +557,7 @@
                 // 当前页面已经是空白页
             }else{
                 console.log("h3 send", curDate());
-                abstractSend(question, "");
+                sendQuestion(question, "");
                 setUid(uid, question);
             }
         }
@@ -577,8 +577,149 @@
      * ═══════════════════════════════════════════════════════════════════════
      ******************************************************************************/
 
+    /**
+     * 发送提问内容
+     * 整体涉及这些轮询检查：① 输入框的存在 ② 发送按钮的存在 ③ 输入框的清空
+     */
+    function sendQuestion(content, chatId){
+        updateBoxFromStorage();
 
-    // 设置uid
+        let intervalId;
+        let count = 0;
+        sendLock = true;
+
+        intervalId = setInterval(function() {
+            count ++;
+            if(count > 10000 / checkGap){
+                clearInterval(intervalId);
+            }
+            const inputArea = getInputArea(site);
+            // 输入框元素存在
+            if (!isEmpty(inputArea)) {
+                let noChatId = isEmpty(chatId);
+                // 要求是新空白对话，或者 非新但问题列表非空
+                if(noChatId || ( !noChatId && !isEmpty(getQuestionList()) ) ){
+                    clearInterval(intervalId);
+                    pasteContent(inputArea, content, chatId);
+                }
+            }
+        }, checkGap);
+    }
+
+    /**
+     * 输入框粘贴提问内容
+     */
+    async function pasteContent(editor, content, chatId){
+
+        if(!isEmpty(getS(T + JUMP_HAS_IMAGE))){
+            // 粘贴图片到输入框，并等待完成
+            await simulatePasteImage();
+            setS(T + JUMP_HAS_IMAGE, "");
+        }
+
+        // 当豆包是新对话，元素不可见会异常，故适当延迟
+        let pasteDelay = (site === DOUBAO && isEmpty(chatId)) ? 1500 : 100;
+        setTimeout(function(){
+            // 输入框粘贴文字，大致分两类处理。其中第一类里 kimi 特殊处理
+            //  第一类（lexical）
+            if(inputAreaTypes.lexical.includes(site)){
+                if([KIMI].includes(site)){
+                    editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: content }));
+                }else {
+                    const pTag = editor.querySelector('p');
+                    pTag.textContent = content;
+                }
+                //  第二类（textarea 标签）
+            }else if(inputAreaTypes.textarea.includes(site)){
+                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                    window.HTMLTextAreaElement.prototype,
+                    'value'
+                ).set;
+                nativeInputValueSetter.call(editor, content);
+                // 触发 input 事件
+                editor.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            // 点击发送
+            sendAndCheck();
+        }, pasteDelay);
+    }
+
+    /**
+     * 等待发送按钮出现，并执行发送动作
+     */
+    function sendAndCheck() {
+        let tryCount = 0;
+        console.log(curDate() + "h1 click");
+
+        const checkBtnInterval = setInterval(() => {
+            const sendBtn = getSendButton(site);
+            if (!isEmpty(sendBtn)) {
+                clearInterval(checkBtnInterval);
+                
+                // 执行发送动作：点击页面空白处，然后点击发送按钮
+                setTimeout(() => {
+                    document.body.click();
+                    setTimeout(() => {
+                        console.log(curDate() + "h2 click");
+                        sendBtn.click();
+                        // 轮询是否发送成功
+                        pollSendStatus(sendBtn);
+                    }, 300);
+                }, 200);
+            } else {
+                tryCount++;
+                if (tryCount > maxRetries) {
+                    clearInterval(checkBtnInterval);
+                    sendLock = false;
+                    console.log("tryCount " + tryCount + " sendBtn " + isEmpty(sendBtn));
+                    console.warn("sendBtn未找到或未发送成功，超时");
+                }
+            }
+        }, checkGap);
+    }
+
+    /**
+     * 轮询检查输入框是否已清空（发送成功）
+     * 如果输入框仍有内容，则继续点击发送按钮
+     */
+    function pollSendStatus(sendBtn) {
+        const maxPollTime = maxRetries * checkGap - 2000;
+        const pollInterval = checkGap * 2;
+        const startTime = Date.now();
+        let pollTryCount = 0;
+
+        function checkInputArea() {
+            const elapsed = Date.now() - startTime;
+            pollTryCount++;
+            const inputArea = getInputArea(site);
+            const areaContent = getInputContent(inputArea);
+
+            // 输入框为空，表明发送成功
+            if (isEmpty(areaContent)) {
+                sendLock = false;
+                return;
+            }
+
+            // 超时，解锁并返回
+            if (elapsed >= maxPollTime || pollTryCount > maxRetries) {
+                console.log("tryCount " + pollTryCount);
+                console.warn("未符合判据，超时");
+                sendLock = false;
+                return;
+            }
+
+            // 输入框仍有内容，继续点击发送按钮
+            console.log(curDate() + "h3 click");
+            sendBtn.click();
+            setTimeout(checkInputArea, pollInterval);
+        }
+
+        setTimeout(checkInputArea, pollInterval);
+    }
+
+    /**
+     * 设置uid
+     */
     function setUid(uid, question){
         let intervalId;
         let count = 0;
@@ -648,140 +789,6 @@
         }, checkGap);
     }
 
-    // ① 检查textArea存在 ② 检查sendBtn存在
-    function abstractSend(content, chatId){
-        updateBoxFromStorage();
-
-        let intervalId;
-        let count = 0;
-        sendLock = true;
-
-        intervalId = setInterval(function() {
-            count ++;
-            if(count > 10000 / checkGap){
-                clearInterval(intervalId);
-            }
-            const inputArea = getInputArea(site);
-            // 输入框元素存在
-            if (!isEmpty(inputArea)) {
-                let noChatId = isEmpty(chatId);
-                // 要求是新空白对话，或者非新但问题列表非空
-                if(noChatId || (!noChatId && !isEmpty(getQuestionList())) ){
-                    clearInterval(intervalId);
-                    sendContent(inputArea, content, chatId);
-                }
-            }
-        }, checkGap);
-    }
-
-    async function sendContent(editor, content, chatId){
-
-        if(!isEmpty(getS(T + JUMP_HAS_IMAGE))){
-            // 粘贴图片到输入框，并等待完成
-            await simulatePasteImage();
-            setS(T + JUMP_HAS_IMAGE, "");
-        }
-
-        // 当豆包是新对话，元素不可见会异常，故适当延迟
-        let sendGap = (site === DOUBAO && isEmpty(chatId)) ? 1500 : 100;
-        setTimeout(function(){
-            // 输入框粘贴文字，大致分两类处理。其中第一类里 kimi 特殊处理
-            //  第一类（lexical）
-            if(inputAreaTypes.lexical.includes(site)){
-                if([KIMI].includes(site)){
-                    editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: content }));
-                }else {
-                    const pTag = editor.querySelector('p');
-                    pTag.textContent = content;
-                }
-                //  第二类（textarea 标签）
-            }else if(inputAreaTypes.textarea.includes(site)){
-                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                    window.HTMLTextAreaElement.prototype,
-                    'value'
-                ).set;
-                nativeInputValueSetter.call(editor, content);
-                // 触发 input 事件
-                editor.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-            clickAndCheck();
-        }, sendGap);
-    }
-
-    function clickAndCheck() {
-        let tryCount = 0;
-        console.log(curDate() + "h1 click");
-
-        const checkBtnInterval = setInterval(() => {
-            // 检查sendBtn存在
-            let sendBtn = getSendButton(site);
-            if (!isEmpty(sendBtn)) {
-                clearInterval(checkBtnInterval);
-
-                // 如果输入有候选词列表，需要先点击页面空白处、再点击发送
-                setTimeout(function(){
-                    document.body.click();
-
-                    setTimeout(function(){
-                        console.log(curDate() + "h2 click");
-                        sendBtn.click();
-                        
-                        const maxPollTime = maxRetries * checkGap - 2000;
-                        const pollInterval = checkGap * 2;
-                        const startTime = Date.now();
-                        
-                        function pollAreaCheck() {
-                            let elapsed = Date.now() - startTime;
-                            if(elapsed >= maxPollTime){
-                                return;
-                            }
-                            let areaCheck = getInputArea(site);
-                            let areaCheckContent = getInputContent(areaCheck);
-                            if(!isEmpty(areaCheckContent)){
-                                console.log(curDate() + "h3 click");
-                                sendBtn.click();
-                                setTimeout(pollAreaCheck, pollInterval);
-                            }
-                        }
-                        setTimeout(pollAreaCheck, pollInterval);
-                    }, 300);
-                    
-                }, 200);
-                checkSendStatus();
-            } else {
-                tryCount++;
-                if (tryCount > maxRetries) {
-                    clearInterval(checkBtnInterval);
-                    sendLock = false;
-                    console.log("tryCount "+tryCount + " sendBtn "+isEmpty(sendBtn));
-                    console.warn("sendBtn未找到或未发送成功，超时");
-                    return;
-                }
-            }
-        }, checkGap);
-    }
-
-    function checkSendStatus() {
-        let tryCount = 0;
-
-        const checkInterval = setInterval(() => {
-            tryCount++;
-
-            let inputArea = getInputArea(site);
-            let areaContent = getInputContent(inputArea);
-            // 如果输入框内容为空，表明发送成功；否则继续轮询；轮询结束仍未成功则清空
-            if(isEmpty(areaContent)){
-                clearInterval(checkInterval);
-                sendLock = false;
-
-            } else if (tryCount > maxRetries) {
-                console.log("tryCount "+tryCount);
-                clearInterval(checkInterval);
-                console.warn("未符合判据，超时");
-                sendLock = false;
-            }
-        }, checkGap);
-    }
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -2200,12 +2207,6 @@
         });
     }
 
-    function getRand(min, max) {
-        min = Math.ceil(min);
-        max = Math.floor(max);
-        return Math.floor(Math.random() * (max - min + 1)) + min;
-    }
-
     /**
      * 绑定快捷键
      * @param {string} combo 组合键格式，如 "ctrl+q"
@@ -2241,6 +2242,7 @@
         });
     }
 
+    // 格式化的时间
     function curDate() {
         let timer = new Date();
         let year = timer.getFullYear();
@@ -2257,6 +2259,9 @@
         return `【${hour}:${minute}:${second}】`;
     }
 
+    /**
+     * 可选的打赏相关功能
+     */
     function showAppreciatePopup() {
         // 检查是否选择了不再提醒
         let neverRemind = getGV('never_remind_appreciate');
