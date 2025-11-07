@@ -1142,18 +1142,50 @@
      ******************************************************************************/
 
     // 安全处理HTML内容（Trusted Types支持）
-    let policy = "";
-    if (window.trustedTypes) {
-        policy = trustedTypes.createPolicy("forceInner", {
-            createHTML: (to_escape) => to_escape
-        });
+    let policy = null;
+    try {
+        if (window.trustedTypes) {
+            policy = trustedTypes.createPolicy("forceInner", {
+                createHTML: (to_escape) => to_escape
+            });
+        }
+    } catch(e) {
+        policy = null;
     }
 
     function makeHTML(content){
         if(isEmpty(policy)){
             return content;
         }else{
-            return policy.createHTML(content);
+            try {
+                return policy.createHTML(content);
+            } catch(e) {
+                return content;
+            }
+        }
+    }
+
+    // 安全设置 innerHTML，如果失败则使用 DOM 方法
+    function setInnerHTML(element, html) {
+        if (isEmpty(html)) {
+            // 清空内容使用 replaceChildren 更安全
+            element.replaceChildren();
+            return;
+        }
+        
+        try {
+            const trustedHTML = makeHTML(html);
+            element.innerHTML = trustedHTML;
+        } catch(e) {
+            // 如果 Trusted Types 失败，使用 DOMParser
+            try {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                element.replaceChildren(...Array.from(doc.body.childNodes));
+            } catch(parseError) {
+                // 如果 DOMParser 也失败，使用 textContent 作为最后手段
+                element.textContent = html.replace(/<[^>]*>/g, '');
+            }
         }
     }
 
@@ -1174,8 +1206,8 @@
         setTimeout(addSendButtonListener, 1000);
 
         setTimeout(function(){
-            if(isEmpty(getGV(FIRST_RUN_KEY)){
-                alert("网页右下角的多选面板可勾选提问范围，\n点击“禁用”可一键关闭同步提问");
+            if(isEmpty(getGV(FIRST_RUN_KEY))){
+                alert("网页右下角的多选面板可勾选提问范围，\n点击\"禁用\"可一键关闭同步提问");
                 setGV(FIRST_RUN_KEY, 1);
             }
         }, 800);
@@ -1586,7 +1618,7 @@
     // 更新导航问题列表（重新构建导航栏）
     const updateNavQuestions = (quesList) => {
         if(isEmpty(quesList)) {
-            navBar.innerHTML = makeHTML("");
+            navBar.replaceChildren();
             navBar.style.visibility = navMiniButton.style.visibility = "hidden";
             return;
         }
@@ -1597,7 +1629,7 @@
             return;
         }
 
-        navBar.innerHTML = makeHTML("");
+        navBar.replaceChildren();
         navLinks = [];
         elToLink.clear();
         if(navIO) try { navIO.disconnect(); } catch(e) {}
@@ -1901,7 +1933,7 @@
             const emptyMsg = document.createElement('div');
             emptyMsg.textContent = '未选模型';
             emptyMsg.style.cssText = PANEL_STYLES.emptyMessage;
-            contentContainer.innerHTML = makeHTML('');
+            contentContainer.replaceChildren();
             contentContainer.appendChild(emptyMsg);
         } else {
             drawCompactPanel(selectedWords);
@@ -1913,7 +1945,7 @@
 
     // 绘制缩略模式面板
     function drawCompactPanel(selectedWords){
-        contentContainer.innerHTML = makeHTML('');
+        contentContainer.replaceChildren();
         hint.style.cssText = PANEL_STYLES.hint;
         contentContainer.appendChild(hint);
 
@@ -1937,7 +1969,7 @@
         if (!isCompactMode) return;
 
         // 恢复原始内容
-        contentContainer.innerHTML = makeHTML(originalHTML);
+        setInnerHTML(contentContainer, originalHTML);
 
         // 重新绑定事件
         words.forEach(word => {
@@ -2287,12 +2319,12 @@
 
         // 创建顶部文字
         const titleText = document.createElement('div');
-        titleText.innerHTML = makeHTML('如果有帮到你一些，可以请作者喝杯咖啡吗<br>（微信扫码）');
+        setInnerHTML(titleText, '如果有帮到你一些，可以请作者喝杯咖啡吗<br>（微信扫码）');
         titleText.style.cssText = POPUP_STYLES.titleText;
 
         // 创建关闭按钮
         const closeBtn = document.createElement('button');
-        closeBtn.innerHTML = makeHTML('×');
+        closeBtn.textContent = '×';
         closeBtn.style.cssText = POPUP_STYLES.closeBtn;
 
         closeBtn.addEventListener('mouseenter', () => {
@@ -2373,7 +2405,7 @@
             errorMsg.textContent = '图片加载失败';
             errorMsg.style.cssText = POPUP_STYLES.errorText;
 
-            modal.innerHTML = makeHTML('');
+            modal.replaceChildren();
             modal.appendChild(errorMsg);
             modal.appendChild(closeBtn);
         };
