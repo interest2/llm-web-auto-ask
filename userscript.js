@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      2.0.2
+// @version      2.0.3
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -44,11 +44,16 @@
     const NAV_TOP = "20%"; // 目录栏top位置（相对网页整体）
     let MAX_QUEUE = 20; // 历史对话的记忆数量
 
-    const version = "2.0.2";
+    const version = "2.0.3";
 
-    /**
-     * 适配各站点所需代码
-     * */
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  🔧 1、适配各站点相关代码  🔧                                      ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
+
     // 定义站点常量
     const KIMI = 0;
     const DEEPSEEK = 1;
@@ -136,12 +141,6 @@
         [CLAUDE]: ["https://claude.ai/chat", "/"],
         [GROK]: ["https://grok.com/", "c/"]
     };
-    const newSites = Object.fromEntries(
-        Object.entries(webSites).map(([key, [baseUrl]]) => [key, baseUrl])
-    );
-    const historySites = Object.fromEntries(
-        Object.entries(webSites).map(([key, [baseUrl, suffix]]) => [key, baseUrl + suffix])
-    );
 
     // 多选面板配置（各站点的全称、简称）
     let wordConfig = [
@@ -171,17 +170,95 @@
         [GROK]: 7
     };
 
+	// 通用chatId正则：16~37位的数字、字母、短横杠
+	const GENERAL_PATTERN = /[a-zA-Z0-9-]{16,37}/;
+
+    const MARKER_CHAT = "chat/";
+    const MARKER_C = "c/";
+
+	// 各站点的chatId提取所需特征词（由于正则匹配结果可能有多个，故需精准识别）
+    // Gemini和DS暂用默认兜底规则
+	const CHAT_ID_PREFIX = {
+		[KIMI]: [MARKER_CHAT],
+		[TONGYI]: ["sessionId="],
+		[QWEN]: [MARKER_C],
+		[DOUBAO]: [MARKER_CHAT],
+		[CHATGPT]: [MARKER_C],
+		[ZCHAT]: [MARKER_C],
+		[CLAUDE]: [MARKER_CHAT],
+		[GROK]: ["chat=", MARKER_C]
+	};
+
+	// 从url提取各大模型网站的对话唯一标识
+	function getChatId(){
+        let url = getUrl();
+        if(isEmpty(url)){
+            return "";
+        }
+        if(site === DOUBAO && url.indexOf("local") > -1){
+            return "";
+        }
+		// 特征词规则：若定义了站点规则且能提取出匹配GENERAL_PATTERN的内容，则直接返回；否则走通用匹配
+		const markers = CHAT_ID_PREFIX[site];
+		if(markers && Array.isArray(markers)){
+			// 优先选择在 URL 中出现位置更靠前且能命中的 marker
+			const candidates = markers
+				.map(m => ({ m, idx: url.indexOf(m) }))
+				.filter(x => x.idx !== -1)
+				.sort((a,b) => a.idx - b.idx);
+			for(const { m } of candidates){
+				const id = matchAfterMarker(url, m, GENERAL_PATTERN);
+				if(!isEmpty(id)){
+					return id;
+				}
+			}
+			return ""; // 指定站点但无特征词或无法匹配时视为空
+		}
+		// 其他站点：通用匹配（如有多个匹配，取最后一个，兼容性更好）
+		const globalRegex = new RegExp(GENERAL_PATTERN.source, 'g');
+		const all = url.match(globalRegex);
+		if(isEmpty(all)){
+			return "";
+		}
+		return all[all.length - 1];
+    }
+    
+	// 工具：匹配 marker 后第一个符合 pattern 的内容（捕获分组法）
+	function escapeRegex(text){
+		return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+	}
+	function matchAfterMarker(fullUrl, marker, pattern){
+		const regex = new RegExp(escapeRegex(marker) + '(' + pattern.source + ')');
+		const m = fullUrl.match(regex);
+		return (m && m[1]) ? m[1] : "";
+	}
+
+    const newSites = Object.fromEntries(
+        Object.entries(webSites).map(([key, [baseUrl]]) => [key, baseUrl])
+    );
+    const historySites = Object.fromEntries(
+        Object.entries(webSites).map(([key, [baseUrl, suffix]]) => [key, baseUrl + suffix])
+    );
+
     // 表示当前站点的变量
     let site = 0;
-    let url = window.location.href;
+    let currentUrl = getUrl();
 
     // 根据当前网址关键词，设置site值
     for (const keyword in keywords) {
-        if (url.indexOf(keyword) > -1) {
+        if (currentUrl.indexOf(keyword) > -1) {
             site = keywords[keyword];
             break;
         }
     }
+
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  🔧 2、一些函数和变量  🔧                                            ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
 
     // 过滤出问题列表（偶数索引元素）
     const filterQuestions = (elements) => {
@@ -223,11 +300,9 @@
     const T = "tool-";
     const JUMP_HAS_IMAGE = "jumpHasImage";
     const QUEUE = "tool-queue";
-    const LEN = "len";
     const LAST_Q = "lastQ";
     const UID_KEY = "uid";
     const UID_KEY_PREFIX = "uid-";
-    const DEFAULT_DISPLAY_KEY = "defaultDisplay";
     const HEART_KEY_PREFIX ="lastHeartbeat-";
 
     let DOMAIN = "https://www.ratetend.com:5001";
@@ -268,16 +343,6 @@
     };
     remoteHttp(startUrl, startData);
 
-    // 面板数据
-    const CHOSEN_SITE = "chosenSite";
-    const panel = document.createElement('div');
-    const contentContainer = document.createElement('div');
-    let panelDelay = site === ZCHAT ? 500 : 50;
-
-    // 模式切换相关变量
-    let isCompactMode = false;
-    let originalHTML = contentContainer.innerHTML;
-
     // 生成映射
     const wordToSite = {};
     const siteToWord = {};
@@ -294,91 +359,19 @@
         wordToAlias[word] = alias;
     });
 
-	// 通用chatId正则：16~37位的数字、字母、短横杠
-	const GENERAL_PATTERN = /[a-zA-Z0-9-]{16,37}/;
 
-    const MARKER_CHAT = "chat/";
-    const MARKER_C = "c/";
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  📡 3、主从节点逻辑  📡                                              ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
 
-	// 各站点的chatId提取所需特征词（由于正则匹配结果可能有多个，故需精准识别）
-    // Gemini和DS暂用默认兜底规则
-	const CHAT_ID_PREFIX = {
-		[KIMI]: { markers: [MARKER_CHAT] },
-		[TONGYI]: { markers: ["sessionId="] },
-		[QWEN]: { markers: [MARKER_C] },
-		[DOUBAO]: { markers: [MARKER_CHAT] },
-		[CHATGPT]: { markers: [MARKER_C] },
-		[ZCHAT]: { markers: [MARKER_C] },
-		[CLAUDE]: { markers: [MARKER_CHAT] },
-		[GROK]: { markers: ["chat=", MARKER_C] }
-	};
-
-	// 从url提取各大模型网站的对话唯一标识
-	function getChatId(){
-        let url = getUrl();
-        if(isEmpty(url)){
-            return "";
-        }
-        if(site === DOUBAO && url.indexOf("local") > -1){
-            return "";
-        }
-		// 特征词规则：若定义了站点规则且能提取出匹配GENERAL_PATTERN的内容，则直接返回；否则走通用匹配
-		const rule = CHAT_ID_PREFIX[site];
-		if(rule && Array.isArray(rule.markers)){
-			// 优先选择在 URL 中出现位置更靠前且能命中的 marker
-			const candidates = rule.markers
-				.map(m => ({ m, idx: url.indexOf(m) }))
-				.filter(x => x.idx !== -1)
-				.sort((a,b) => a.idx - b.idx);
-			for(const { m } of candidates){
-				const id = matchAfterMarker(url, m, GENERAL_PATTERN);
-				if(!isEmpty(id)){
-					return id;
-				}
-			}
-			return ""; // 指定站点但无特征词或无法匹配时视为空
-		}
-		// 其他站点：通用匹配（如有多个匹配，取最后一个，兼容性更好）
-		const globalRegex = new RegExp(GENERAL_PATTERN.source, 'g');
-		const all = url.match(globalRegex);
-		if(isEmpty(all)){
-			return "";
-		}
-		return all[all.length - 1];
-    }
-    
-	// 工具：匹配 marker 后第一个符合 pattern 的内容（捕获分组法）
-	function escapeRegex(text){
-		return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	}
-	function matchAfterMarker(fullUrl, marker, pattern){
-		const regex = new RegExp(escapeRegex(marker) + '(' + pattern.source + ')');
-		const m = fullUrl.match(regex);
-		return (m && m[1]) ? m[1] : "";
-	}
-
-    function getUrl(){
-        return window.location.href;
-    }
-
-
-    // 面板样式集中定义
-    const PANEL_STYLES = {
-        panel: `cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:400px;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:99999999;overflow-y:auto;padding:2px;display:flex;flex-direction:column;`,
-        panelCompact: `min-width:120px;`,
-        disable: `background:#ec7258;color:white;border-radius:6px;padding:2px 0;`,
-        item: `display:flex;align-items:center;padding:3px 0 3px 3px;border-bottom:1px solid #eee;`,
-        wordSpan: `flex:1;margin-right:10px;font-size:14px;`,
-        checkbox: `margin-right:1px;font-size:20px;`,
-        emptyMessage: `padding:1px;text-align:center;color:#888;font-size:14px;`,
-        headline: `font-weight:bold;`,
-        hint: `color:#275fe6;width:0;height:0;padding-left:3px;margin-top:5px;margin-bottom:5px;border-top:8px solid transparent;border-right:8px solid #3498db;border-bottom:8px solid transparent;`
-    };
-
-
-    // 给发送环节加锁。能否不要这个锁？不能，因为send环节是异步轮询，新问题来时send未必轮询结束
+    // 给发送环节加锁。因为send环节是异步轮询，新问题来时send未必轮询结束
     let sendLock = false;
-    // 页面加载发送一次心跳
+
+    // 页面加载时，向本地存储发送一次心跳
     setGV(HEART_KEY_PREFIX + site, Date.now());
 
     let questionBeforeJump = getS("questionBeforeJump");
@@ -387,12 +380,7 @@
         receiveNew();
     }
 
-    /**
-     * 主从节点的逻辑
-     */
-
     // 发送端
-    const currentAskHasImage = "currentAskHasImage";
     function masterCheck(lastestQ){
         if(sendLock){
             return;
@@ -466,27 +454,6 @@
             }
         });
 
-    }
-
-    function remoteHttp(remoteUrl, data){
-        GM_xmlhttpRequest({
-            method: "POST",
-            url: remoteUrl,
-            data: JSON.stringify(data),
-            headers: {
-                "Content-Type": "application/json"
-            },
-            onload: function(response) {
-                let responseText = response.responseText;
-                if(responseText === "1"){
-                    setTimeout(showAppreciatePopup, 300);
-                }
-                // console.log(response.responseText);
-            },
-            onerror: function(error) {
-                console.error('请求失败:', error);
-            }
-        });
     }
 
     // 监听是否有新的提问
@@ -602,138 +569,14 @@
     }
 
 
-    // 监听是否有新的图片
-    GM_addValueChangeListener('image', function(name, oldValue, msg, remote) {
-        if(!remote){
-            return;
-        }
-        if(getGV("disable") === true){
-            return;
-        }
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  ⚙️ 4、从节点异步轮询检查  ⚙️                                        ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
 
-        let sites = getSitesOfStorage();
-        if(sites.includes(site)){
-            pasteImage();
-        }
-    });
-
-    // 主节点监听粘贴事件
-    let imageKey = "image";
-    document.addEventListener('paste', async (e) => {
-        // 仅当输入框处于聚焦状态时才继续处理
-        const inputArea = getInputArea(site);
-        if (!inputArea) return;
-        const activeElement = document.activeElement;
-        // gemini, grok检测的activeElement为空，不支持聚焦判断
-        if(![GEMINI, GROK].includes(site)){
-            if (activeElement !== inputArea && !inputArea.contains(activeElement)) {
-                return;
-            }
-        }
-
-        const items = e.clipboardData?.items;
-        if (!items) return;
-
-        for (let i = 0; i < items.length; i++) {
-            const item = items[i];
-            if (item.type.startsWith('image/')) {
-                const blob = item.getAsFile();
-                if (!blob) continue;
-
-                // 转为 Base64
-                const base64 = await blobToBase64(blob);
-
-                // 时序注意：先设置 chatId 和 site，最后设置 image 来触发监听器
-                let thisChatId = getChatId();
-                GM_setValue(imageKey + "-chatId", thisChatId);
-                GM_setValue(imageKey + "-site", site);
-                GM_setValue(imageKey, base64);
-                setS(T + currentAskHasImage, "1");
-
-                break; // 手动粘贴图片后，脚本读取最后一张图，存入共享存储
-            }
-        }
-    });
-
-    // 其他站点粘贴图片
-    async function pasteImage() {
-        if(!canAcceptPastedImageForCurrentChat()){
-            setS(T + JUMP_HAS_IMAGE, "1");
-            return;
-        }
-
-        return simulatePasteImage();
-    }
-
-    // 判断当前页面是否应当处理粘贴的图片（基于 chatId 绑定关系）
-    function canAcceptPastedImageForCurrentChat(){
-        const sourceSite = GM_getValue(imageKey + "-site");
-        const masterChatId = GM_getValue(imageKey + "-chatId");
-        const curChatId = getChatId();
-
-        const empty1 = isEmpty(masterChatId);
-        const empty2 = isEmpty(curChatId);
-        const bothEmpty = empty1 && empty2;
-
-        let pairdChatId = false;
-        const uid = hgetS(T + curChatId, UID_KEY);
-        const uidJson = getGV(uid);
-        if(!isEmpty(uidJson)){
-            const expectedChatId = uidJson[sourceSite];
-            if(!empty1 && !empty2 && expectedChatId === masterChatId){
-                pairdChatId = true;
-            }
-        }
-
-        return bothEmpty || pairdChatId;
-    }
-
-    // 模拟将 base64 图片粘贴到输入框（返回在实际触发粘贴后才 resolve）
-    function simulatePasteImage() {
-        const base64 = GM_getValue(imageKey);
-        if (!base64) {
-            console.error('未找到指定的图片');
-            return false;
-        }
-        return new Promise((resolve) => {
-            try {
-                const blob = base64ToBlob(base64);
-                const file = new File([blob], 'pasted-image.png', {
-                    type: blob.type || 'image/png',
-                    lastModified: Date.now()
-                });
-
-                const dataTransfer = new DataTransfer();
-                dataTransfer.items.add(file);
-
-                const pasteEvent = new ClipboardEvent('paste', {
-                    clipboardData: dataTransfer,
-                    bubbles: true,
-                    cancelable: true
-                });
-
-                let targetElement = getInputArea(site);
-                const interval = setInterval(() => {
-                    if (targetElement && typeof targetElement.focus === 'function') {
-                        clearInterval(interval);
-                        targetElement.focus();
-
-                        // 粘贴
-                        const dispatched = targetElement.dispatchEvent(pasteEvent);
-                        console.log('模拟粘贴图片成功');
-                        resolve(!!dispatched);
-                    }
-                }, 100);
-            } catch (error) {
-                console.error('模拟粘贴失败:', error);
-                resolve(false);
-            }
-        });
-    }
-
-    /**
-     * 异步轮询检查环节
-     */
 
     // 设置uid
     function setUid(uid, question){
@@ -940,9 +783,152 @@
         }, checkGap);
     }
 
-    /**
-     * 监听新的提问：监听输入框回车事件、发送按钮点击事件
-     */
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  🖼️ 5、图片同步功能  🖼️                                              ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
+
+    // 监听是否有新的图片
+    GM_addValueChangeListener('image', function(name, oldValue, msg, remote) {
+        if(!remote){
+            return;
+        }
+        if(getGV("disable") === true){
+            return;
+        }
+
+        let sites = getSitesOfStorage();
+        if(sites.includes(site)){
+            pasteImage();
+        }
+    });
+
+    // 主节点监听粘贴事件
+    const imageKey = "image";
+    const currentAskHasImage = "currentAskHasImage";
+
+    document.addEventListener('paste', async (e) => {
+        // 仅当输入框处于聚焦状态时才继续处理
+        const inputArea = getInputArea(site);
+        if (!inputArea) return;
+        const activeElement = document.activeElement;
+        // gemini, grok检测的activeElement为空，不支持聚焦判断
+        if(![GEMINI, GROK].includes(site)){
+            if (activeElement !== inputArea && !inputArea.contains(activeElement)) {
+                return;
+            }
+        }
+
+        const items = e.clipboardData?.items;
+        if (!items) return;
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item.type.startsWith('image/')) {
+                const blob = item.getAsFile();
+                if (!blob) continue;
+
+                // 转为 Base64
+                const base64 = await blobToBase64(blob);
+
+                // 时序注意：先设置 chatId 和 site，最后设置 image 来触发监听器
+                let thisChatId = getChatId();
+                GM_setValue(imageKey + "-chatId", thisChatId);
+                GM_setValue(imageKey + "-site", site);
+                GM_setValue(imageKey, base64);
+                setS(T + currentAskHasImage, "1");
+
+                break; // 手动粘贴图片后，脚本读取最后一张图，存入共享存储
+            }
+        }
+    });
+
+    // 其他站点粘贴图片
+    async function pasteImage() {
+        if(!canAcceptPastedImageForCurrentChat()){
+            setS(T + JUMP_HAS_IMAGE, "1");
+            return;
+        }
+
+        return simulatePasteImage();
+    }
+
+    // 判断当前页面是否应当处理粘贴的图片（基于 chatId 绑定关系）
+    function canAcceptPastedImageForCurrentChat(){
+        const sourceSite = GM_getValue(imageKey + "-site");
+        const masterChatId = GM_getValue(imageKey + "-chatId");
+        const curChatId = getChatId();
+
+        const empty1 = isEmpty(masterChatId);
+        const empty2 = isEmpty(curChatId);
+        const bothEmpty = empty1 && empty2;
+
+        let pairdChatId = false;
+        const uid = hgetS(T + curChatId, UID_KEY);
+        const uidJson = getGV(uid);
+        if(!isEmpty(uidJson)){
+            const expectedChatId = uidJson[sourceSite];
+            if(!empty1 && !empty2 && expectedChatId === masterChatId){
+                pairdChatId = true;
+            }
+        }
+
+        return bothEmpty || pairdChatId;
+    }
+
+    // 模拟将 base64 图片粘贴到输入框（返回在实际触发粘贴后才 resolve）
+    function simulatePasteImage() {
+        const base64 = GM_getValue(imageKey);
+        if (!base64) {
+            console.error('未找到指定的图片');
+            return false;
+        }
+        return new Promise((resolve) => {
+            try {
+                const blob = base64ToBlob(base64);
+                const file = new File([blob], 'pasted-image.png', {
+                    type: blob.type || 'image/png',
+                    lastModified: Date.now()
+                });
+
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+
+                const pasteEvent = new ClipboardEvent('paste', {
+                    clipboardData: dataTransfer,
+                    bubbles: true,
+                    cancelable: true
+                });
+
+                let targetElement = getInputArea(site);
+                const interval = setInterval(() => {
+                    if (targetElement && typeof targetElement.focus === 'function') {
+                        clearInterval(interval);
+                        targetElement.focus();
+
+                        // 粘贴
+                        const dispatched = targetElement.dispatchEvent(pasteEvent);
+                        console.log('模拟粘贴图片成功');
+                        resolve(!!dispatched);
+                    }
+                }, 100);
+            } catch (error) {
+                console.error('模拟粘贴失败:', error);
+                resolve(false);
+            }
+        });
+    }
+
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  👂 6、监听新的提问：监听输入框回车事件、发送按钮点击事件  👂        ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
 
     // 检查事件是否带有修饰键
     const hasModifierKey = (event) => event.shiftKey || event.ctrlKey || event.altKey || event.metaKey;
@@ -1140,202 +1126,37 @@
     }, 1500);
 
 
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  🎨 7、首次使用指引 & 输入框的显示/隐藏切换 🎨                        ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
+    
+    // 面板延迟时间
+    let panelDelay = site === ZCHAT ? 500 : 50;
+    const panel = document.createElement('div');
+
     /**
-     * 多选面板
+     * 脚本首次使用的指引
      */
+    setTimeout(function(){
+        document.body.appendChild(panel);
+        document.body.appendChild(toggleButton);
+        reloadDisableStatus();
 
-    // 创建面板容器
-    panel.style.cssText = PANEL_STYLES.panel;
-    let hint = document.createElement('div');
+        // 添加发送按钮监听
+        setTimeout(addSendButtonListener, 1000);
 
-    const DISABLE = "禁用";
-    const ENABLE = "开启";
-    let disable = document.createElement('div');
-    disable.id = "tool-disable";
-    disable.textContent = DISABLE;
-    disable.style = PANEL_STYLES.disable;
-    panel.appendChild(disable);
-
-    disable.addEventListener('click', (e) => disableEvent(e));
-
-    function disableEvent(event){
-        event.stopPropagation();
-        if(disable.textContent === DISABLE){
-            changeDisable(true);
-        }else{
-            changeDisable(false);
-        }
-    }
-
-    function changeDisable(status){
-        if(status === true){
-            setGV("disable", true);
-            disable.textContent = ENABLE;
-            contentContainer.style.color = "lightgray";
-            // hint.style.borderRight = "8px solid #ffffff";
-        }else{
-            setGV("disable", false);
-            disable.textContent = DISABLE;
-            contentContainer.style.color = "black";
-            // hint.style.borderRight = "8px solid #3498db";
-        }
-    }
-
-
-    // 存储原始内容的容器
-    panel.appendChild(contentContainer);
-
-    // 从前端DOM获取面板被选中的元素，并存储
-    function getSitesFromDomAndSave(){
-        const checkboxes = document.querySelectorAll('input[type="checkbox"][id^="word-"]');
-        const selectedSites = [];
-
-        checkboxes.forEach(checkbox => {
-            if (checkbox.checked) {
-                const word = checkbox.id.split('-')[1]; // 提取选中的文本
-                selectedSites.push(wordToSite[word]);
+        setTimeout(function(){
+            if(isEmpty(getGV("notice4"))){
+                alert("网页右下角的多选面板可勾选提问范围，\n点击“禁用”可一键关闭同步提问");
+                setGV("notice4", 1);
             }
-        });
-        setGV(CHOSEN_SITE, selectedSites);
-        return selectedSites;
-    };
+        }, 800);
+    }, panelDelay);
 
-    // 从存储获取已选站点
-    function getSitesOfStorage(){
-        try {
-            return getGV(CHOSEN_SITE) || [];
-        } catch (e) {
-            console.error('Failed to parse selectedSites from GV', e);
-            return [];
-        }
-    };
-
-    function getSitesAndCurrent() {
-        let sitesOfStorage = getSitesOfStorage();
-        if(!sitesOfStorage.includes(site)){
-            sitesOfStorage.unshift(site);
-        }
-        return sitesOfStorage;
-    };
-    function addCurrentToStorage() {
-        let sitesOfStorage = getSitesOfStorage();
-        if(!sitesOfStorage.includes(site)){
-            sitesOfStorage.unshift(site);
-            setGV(CHOSEN_SITE, sitesOfStorage);
-        }
-    };
-
-    function getSitesExcludeCurrent() {
-        let sitesOfStorage = getSitesOfStorage();
-        if(sitesOfStorage.includes(site)){
-            sitesOfStorage = sitesOfStorage.filter(element => element !== site);
-        }
-        return sitesOfStorage;
-    };
-
-    // 更新存储中的已选单词数字
-    function updateStorageSites(word) {
-        // 只要有勾选动作，就关闭禁用模式
-        changeDisable(false);
-
-        const selectedSites = words
-            .filter(word => document.getElementById(`word-${word}`)?.checked)
-            .map(word => wordToSite[word]);
-
-        setGV(CHOSEN_SITE, selectedSites);
-        console.log('Current selected sites:', selectedSites);
-
-        let isDisable = getGV("disable");
-        if(isDisable){
-            return;
-        }
-        let siteOfWord = wordToSite[word];
-        if (siteOfWord!== site && selectedSites.includes(siteOfWord)) {
-            let lastHeartbeat = getGV(HEART_KEY_PREFIX + siteOfWord);
-            if(isEmpty(lastHeartbeat) || Date.now() - lastHeartbeat > 1000 * HIBERNATE_GAP){
-                setTimeout(function(){
-                    window.open(newSites[siteOfWord], '_blank');
-                }, OPEN_GAP);
-            }
-        }
-    };
-
-    // 存储-->复选框
-    function updateBoxFromStorage() {
-        const selectedSites = getSitesAndCurrent();
-        // console.log('Syncing checkboxes from stoage:', selectedSites);
-
-        words.forEach(word => {
-            const checkbox = document.getElementById(`word-${word}`);
-            if (checkbox) {
-                checkbox.checked = selectedSites.includes(wordToSite[word]);
-            }
-        });
-    };
-
-    // 生成单词和选择框
-    let headline = document.createElement('div');
-    headline.textContent = "全部模型";
-    headline.style.cssText = PANEL_STYLES.headline;
-    contentContainer.appendChild(headline);
-
-    let sitesAndCurrent = getSitesAndCurrent();
-
-    words.forEach(word => {
-        const item = document.createElement('div');
-        item.style.cssText = PANEL_STYLES.item;
-        item.className = 'panel-item'; // 添加类名用于识别
-        item.dataset.word = word; // 添加data-word属性
-
-        const wordSpan = document.createElement('span');
-        wordSpan.textContent = word;
-        wordSpan.style.cssText = PANEL_STYLES.wordSpan;
-
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.id = `word-${word}`;
-        checkbox.style.cssText = PANEL_STYLES.checkbox;
-
-        checkbox.checked = sitesAndCurrent.includes(wordToSite[word]);
-
-        // 添加点击事件
-        checkbox.addEventListener('change', () => updateStorageSites(word));
-
-        // 点击整个item div也能切换checkbox状态
-        item.addEventListener('click', (e) => {
-            // 如果点击的是checkbox本身，不重复处理
-            if (e.target.tagName === 'INPUT') {
-                return;
-            }
-            e.stopPropagation(); // 阻止冒泡到panel
-            checkbox.checked = !checkbox.checked;
-            updateStorageSites(word);
-        });
-
-        item.appendChild(wordSpan);
-        item.appendChild(checkbox);
-        contentContainer.appendChild(item);
-    });
-
-    // zchat特殊处理
-    if(site === ZCHAT){
-        // if(site === ZCHAT && getGV(DEFAULT_DISPLAY_KEY) === true){
-        let lastVisibleState = false; // 记录上一次的可见状态
-        const observer = new IntersectionObserver((entries, instance) => {
-            entries.forEach(entry => {
-                const isCurrentlyVisible = entry.isIntersecting;
-                // 状态发生变化时触发逻辑
-                if (lastVisibleState === true && isCurrentlyVisible === false) {
-                    document.body.appendChild(panel);
-                    instance.unobserve(entry.target); // 停止观察当前元素
-                }
-                lastVisibleState = isCurrentlyVisible; // 更新状态记录
-            });
-        }, {
-            threshold: 0.1 // 阈值可根据需求调整
-        });
-        observer.observe(panel);
-    }
 
     /**
      * 输入框的显示/隐藏切换功能
@@ -1369,10 +1190,13 @@
         }
     });
 
-
-    /**
-     * 目录导航功能
-     */
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  📑 8、目录导航功能  📑                                              ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
 
     const NAV_ITEM_COLOR = "#333";
     // 目录导航相关常量
@@ -1786,29 +1610,229 @@
         setNavMinimized(false);
     });
 
-    /**
-     * 脚本首次使用的指引
-     */
-    setTimeout(function(){
-        document.body.appendChild(panel);
-        document.body.appendChild(toggleButton);
-        reloadDisableStatus();
 
-        // 添加发送按钮监听
-        setTimeout(addSendButtonListener, 1000);
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  🎛️ 9、多选面板  🎛️                                                  ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
 
-        setTimeout(function(){
-            if(isEmpty(getGV("notice4"))){
-                alert("网页右下角的多选面板可勾选提问范围，\n点击“禁用”可一键关闭同步提问");
-                setGV("notice4", 1);
+    // 面板样式集中定义
+    const PANEL_STYLES = {
+        panel: `cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:400px;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:99999999;overflow-y:auto;padding:2px;display:flex;flex-direction:column;`,
+        panelCompact: `min-width:120px;`,
+        disable: `background:#ec7258;color:white;border-radius:6px;padding:2px 0;`,
+        item: `display:flex;align-items:center;padding:3px 0 3px 3px;border-bottom:1px solid #eee;`,
+        wordSpan: `flex:1;margin-right:10px;font-size:14px;`,
+        checkbox: `margin-right:1px;font-size:20px;`,
+        emptyMessage: `padding:1px;text-align:center;color:#888;font-size:14px;`,
+        headline: `font-weight:bold;`,
+        hint: `color:#275fe6;width:0;height:0;padding-left:3px;margin-top:5px;margin-bottom:5px;border-top:8px solid transparent;border-right:8px solid #3498db;border-bottom:8px solid transparent;`
+    };
+
+    // 面板数据
+    const CHOSEN_SITE = "chosenSite";
+    const contentContainer = document.createElement('div');
+    let isCompactMode = false;
+    let originalHTML = contentContainer.innerHTML;
+
+    // 创建面板容器
+    panel.style.cssText = PANEL_STYLES.panel;
+    let hint = document.createElement('div');
+
+    const DISABLE = "禁用";
+    const ENABLE = "开启";
+    let disable = document.createElement('div');
+    disable.id = "tool-disable";
+    disable.textContent = DISABLE;
+    disable.style = PANEL_STYLES.disable;
+
+    disable.addEventListener('click', (e) => disableEvent(e));
+
+    // 生成单词和选择框
+    let headline = document.createElement('div');
+    headline.textContent = "全部模型";
+    headline.style.cssText = PANEL_STYLES.headline;
+
+    let sitesAndCurrent = getSitesAndCurrent();
+    const items = []; // 收集所有item元素
+
+    words.forEach(word => {
+        const item = document.createElement('div');
+        item.style.cssText = PANEL_STYLES.item;
+        item.className = 'panel-item'; // 添加类名用于识别
+        item.dataset.word = word; // 添加data-word属性
+
+        const wordSpan = document.createElement('span');
+        wordSpan.textContent = word;
+        wordSpan.style.cssText = PANEL_STYLES.wordSpan;
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.id = `word-${word}`;
+        checkbox.style.cssText = PANEL_STYLES.checkbox;
+
+        checkbox.checked = sitesAndCurrent.includes(wordToSite[word]);
+
+        // 添加点击事件
+        checkbox.addEventListener('change', () => updateStorageSites(word));
+
+        // 点击整个item div也能切换checkbox状态
+        item.addEventListener('click', (e) => {
+            // 如果点击的是checkbox本身，不重复处理
+            if (e.target.tagName === 'INPUT') {
+                return;
             }
-        }, 800);
-    }, panelDelay);
+            e.stopPropagation(); // 阻止冒泡到panel
+            checkbox.checked = !checkbox.checked;
+            updateStorageSites(word);
+        });
 
+        item.appendChild(wordSpan);
+        item.appendChild(checkbox);
+        items.push(item); // 收集item，稍后统一添加
+    });
 
-    /**
-     * 多选面板
-     */
+    // 集中DOM操作：一次性添加所有元素到contentContainer
+    contentContainer.appendChild(headline);
+    items.forEach(item => contentContainer.appendChild(item));
+
+    // 集中DOM操作：一次性将所有子元素添加到panel
+    panel.appendChild(disable);
+    panel.appendChild(contentContainer);
+
+    // 面板相关函数
+    function disableEvent(event){
+        event.stopPropagation();
+        if(disable.textContent === DISABLE){
+            changeDisable(true);
+        }else{
+            changeDisable(false);
+        }
+    }
+
+    function changeDisable(status){
+        if(status === true){
+            setGV("disable", true);
+            disable.textContent = ENABLE;
+            contentContainer.style.color = "lightgray";
+            // hint.style.borderRight = "8px solid #ffffff";
+        }else{
+            setGV("disable", false);
+            disable.textContent = DISABLE;
+            contentContainer.style.color = "black";
+            // hint.style.borderRight = "8px solid #3498db";
+        }
+    }
+
+    // 从前端DOM获取面板被选中的元素，并存储
+    function getSitesFromDomAndSave(){
+        const checkboxes = document.querySelectorAll('input[type="checkbox"][id^="word-"]');
+        const selectedSites = [];
+
+        checkboxes.forEach(checkbox => {
+            if (checkbox.checked) {
+                const word = checkbox.id.split('-')[1]; // 提取选中的文本
+                selectedSites.push(wordToSite[word]);
+            }
+        });
+        setGV(CHOSEN_SITE, selectedSites);
+        return selectedSites;
+    };
+
+    // 从存储获取已选站点
+    function getSitesOfStorage(){
+        try {
+            return getGV(CHOSEN_SITE) || [];
+        } catch (e) {
+            console.error('Failed to parse selectedSites from GV', e);
+            return [];
+        }
+    };
+
+    function getSitesAndCurrent() {
+        let sitesOfStorage = getSitesOfStorage();
+        if(!sitesOfStorage.includes(site)){
+            sitesOfStorage.unshift(site);
+        }
+        return sitesOfStorage;
+    };
+    function addCurrentToStorage() {
+        let sitesOfStorage = getSitesOfStorage();
+        if(!sitesOfStorage.includes(site)){
+            sitesOfStorage.unshift(site);
+            setGV(CHOSEN_SITE, sitesOfStorage);
+        }
+    };
+
+    function getSitesExcludeCurrent() {
+        let sitesOfStorage = getSitesOfStorage();
+        if(sitesOfStorage.includes(site)){
+            sitesOfStorage = sitesOfStorage.filter(element => element !== site);
+        }
+        return sitesOfStorage;
+    };
+
+    // 更新存储中的已选单词数字
+    function updateStorageSites(word) {
+        // 只要有勾选动作，就关闭禁用模式
+        changeDisable(false);
+
+        const selectedSites = words
+            .filter(word => document.getElementById(`word-${word}`)?.checked)
+            .map(word => wordToSite[word]);
+
+        setGV(CHOSEN_SITE, selectedSites);
+        console.log('Current selected sites:', selectedSites);
+
+        let isDisable = getGV("disable");
+        if(isDisable){
+            return;
+        }
+        let siteOfWord = wordToSite[word];
+        if (siteOfWord!== site && selectedSites.includes(siteOfWord)) {
+            let lastHeartbeat = getGV(HEART_KEY_PREFIX + siteOfWord);
+            if(isEmpty(lastHeartbeat) || Date.now() - lastHeartbeat > 1000 * HIBERNATE_GAP){
+                setTimeout(function(){
+                    window.open(newSites[siteOfWord], '_blank');
+                }, OPEN_GAP);
+            }
+        }
+    };
+
+    // 存储-->复选框
+    function updateBoxFromStorage() {
+        const selectedSites = getSitesAndCurrent();
+        // console.log('Syncing checkboxes from stoage:', selectedSites);
+
+        words.forEach(word => {
+            const checkbox = document.getElementById(`word-${word}`);
+            if (checkbox) {
+                checkbox.checked = selectedSites.includes(wordToSite[word]);
+            }
+        });
+    };
+
+    // zchat特殊处理
+    if(site === ZCHAT){
+        let lastVisibleState = false; // 记录上一次的可见状态
+        const observer = new IntersectionObserver((entries, instance) => {
+            entries.forEach(entry => {
+                const isCurrentlyVisible = entry.isIntersecting;
+                // 状态发生变化时触发逻辑
+                if (lastVisibleState === true && isCurrentlyVisible === false) {
+                    document.body.appendChild(panel);
+                    instance.unobserve(entry.target); // 停止观察当前元素
+                }
+                lastVisibleState = isCurrentlyVisible; // 更新状态记录
+            });
+        }, {
+            threshold: 0.1 // 阈值可根据需求调整
+        });
+        observer.observe(panel);
+    }
 
     // 刷新简略模式
     function reloadCompactMode(){
@@ -1819,22 +1843,6 @@
         drawCompactPanel(selectedWords);
 
         reloadDisableStatus();
-    }
-
-
-    let policy = "";
-    if (window.trustedTypes) {
-        policy = trustedTypes.createPolicy("forceInner", {
-            createHTML: (to_escape) => to_escape
-        });
-    }
-
-    function makeHTML(content){
-        if(isEmpty(policy)){
-            return content;
-        }else{
-            return policy.createHTML(content);
-        }
     }
 
     function reloadDisableStatus(){
@@ -1870,6 +1878,7 @@
         panel.style.cssText = PANEL_STYLES.panel;
     };
 
+    // 绘制缩略模式面板
     function drawCompactPanel(selectedWords){
         contentContainer.innerHTML = makeHTML('');
         hint.style.cssText = PANEL_STYLES.hint;
@@ -1885,17 +1894,7 @@
             wordSpan.textContent = alias;
             wordSpan.style.cssText = PANEL_STYLES.wordSpan;
 
-            // const checkbox = document.createElement('input');
-            // checkbox.type = 'checkbox';
-            // checkbox.id = `word-${word}`;
-            // checkbox.style.cssText = checkboxStyle;
-            // checkbox.checked = true;
-
-            // 添加点击事件
-            // checkbox.addEventListener('change', () => updateStorageSites(word));
-
             item.appendChild(wordSpan);
-            // item.appendChild(checkbox);
             contentContainer.appendChild(item);
         });
     }
@@ -1945,7 +1944,7 @@
             return;
         }
 
-        // 切换模式
+        // 切换模式：缩略-->展开；展开-->缩略
         if (isCompactMode) {
             switchToOriginalMode();
         } else {
@@ -1966,6 +1965,58 @@
         }
     });
 
+    
+
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  ⚠️ 10、一些工具函数  ⚠️                       ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
+
+    // 获取当前URL
+    function getUrl(){
+        return window.location.href;
+    }
+
+    // 处理HTML内容（Trusted Types支持）
+    let policy = "";
+    if (window.trustedTypes) {
+        policy = trustedTypes.createPolicy("forceInner", {
+            createHTML: (to_escape) => to_escape
+        });
+    }
+
+    function makeHTML(content){
+        if(isEmpty(policy)){
+            return content;
+        }else{
+            return policy.createHTML(content);
+        }
+    }
+
+    // 远程HTTP请求
+    function remoteHttp(remoteUrl, data){
+        GM_xmlhttpRequest({
+            method: "POST",
+            url: remoteUrl,
+            data: JSON.stringify(data),
+            headers: {
+                "Content-Type": "application/json"
+            },
+            onload: function(response) {
+                let responseText = response.responseText;
+                if(responseText === "1"){
+                    setTimeout(showAppreciatePopup, 300);
+                }
+                // console.log(response.responseText);
+            },
+            onerror: function(error) {
+                console.error('请求失败:', error);
+            }
+        });
+    }
 
     /**
      * 存储管理
