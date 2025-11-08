@@ -78,6 +78,24 @@
 
     // 选择器配置
     const selectors = {
+        // 输入框分两类处理
+        inputArea: {
+            ...Object.fromEntries(inputAreaTypes.textarea.map(site => [site, getTextareaInput])),
+            ...Object.fromEntries(inputAreaTypes.lexical.map(site => [site, getContenteditableInput]))
+        },
+        // 输入框里的发送按钮
+        sendBtn: {
+            [KIMI]: () => document.getElementsByClassName('send-button')[0],
+            [DEEPSEEK]: () => ((btns) => btns[btns.length - 1])(document.querySelectorAll('[role="button"]')),
+            [TONGYI]: () => document.querySelector('[class^="operateBtn-"], [class*=" operateBtn-"]'),
+            [CHATGPT]: () => document.getElementById('composer-submit-button'),
+            [ZCHAT]: () => document.getElementById('composer-submit-button'),
+            [DOUBAO]: () => document.getElementById('flow-end-msg-send'),
+            [GEMINI]: () => document.querySelector('button.send-button'),
+            [QWEN]: () => document.getElementById('send-message-button'),
+            [CLAUDE]: () => document.querySelector('[aria-label^="Send"]'),
+            [GROK]: () => document.querySelector('button[type="submit"]')
+        }
         // 已提问的列表（与同步提问功能无关，与目录功能有关）
         questionList: {
             [KIMI]: () => document.getElementsByClassName("user-content"),
@@ -91,27 +109,6 @@
             [CLAUDE]: () => document.querySelectorAll('[data-testid="user-message"]'),
             [GROK]: () => document.querySelectorAll('div.items-end .message-bubble')
         },
-        // 输入框分两类处理
-        inputArea: {
-            ...Object.fromEntries(inputAreaTypes.textarea.map(site => [site, getTextareaInput])),
-            ...Object.fromEntries(inputAreaTypes.lexical.map(site => [site, getContenteditableInput]))
-        },
-        // 输入框里的发送按钮
-        sendBtn: {
-            [KIMI]: () => document.getElementsByClassName('send-button')[0],
-            [DEEPSEEK]: () => {
-                var btns = document.querySelectorAll('[role="button"]');
-                return btns[btns.length - 1];
-            },
-            [TONGYI]: () => document.querySelectorAll('[class^="operateBtn-"], [class*=" operateBtn-"]')[0],
-            [CHATGPT]: () => document.getElementById('composer-submit-button'),
-            [ZCHAT]: () => document.getElementById('composer-submit-button'),
-            [DOUBAO]: () => document.getElementById('flow-end-msg-send'),
-            [GEMINI]: () => document.querySelector('button.send-button'),
-            [QWEN]: () => document.getElementById('send-message-button'),
-            [CLAUDE]: () => document.querySelector('[aria-label^="Send"]'),
-            [GROK]: () => document.querySelector('button[type="submit"]')
-        }
     };
 
     // url里关键词与各站点的对应关系
@@ -252,6 +249,9 @@
         }
     }
 
+    // 面板数据常量
+    const CHOSEN_SITE = "chosenSite";
+
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
      * ║                                                                      ║
@@ -270,18 +270,18 @@
     };
 
 
-    // 获取元素的抽象方法
+    // 以下几个，是获取元素的入口方法
     function getQuestionList() {
         const selector = selectors.questionList[site];
         return selector ? selector() : [];
     }
 
-    function getInputArea(site) {
+    function getInputArea() {
         const selector = selectors.inputArea[site];
         return selector ? selector() : null;
     }
 
-    function getSendButton(site) {
+    function getSendButton() {
         const selector = selectors.sendBtn[site];
         return selector ? selector() : null;
     }
@@ -593,7 +593,7 @@
             if(count > 10000 / checkGap){
                 clearInterval(intervalId);
             }
-            const inputArea = getInputArea(site);
+            const inputArea = getInputArea();
             // 输入框元素存在
             if (!isEmpty(inputArea)) {
                 let noChatId = isEmpty(chatId);
@@ -650,9 +650,10 @@
     function sendAndCheck() {
         let tryCount = 0;
         console.log(curDate() + "h1 click");
+        const pollInterval = checkGap;
 
         const checkBtnInterval = setInterval(() => {
-            const sendBtn = getSendButton(site);
+            const sendBtn = getSendButton();
             if (!isEmpty(sendBtn)) {
                 clearInterval(checkBtnInterval);
                 
@@ -675,7 +676,7 @@
                     console.warn("sendBtn未找到或未发送成功，超时");
                 }
             }
-        }, checkGap);
+        }, pollInterval);
     }
 
     /**
@@ -691,7 +692,7 @@
         function checkInputArea() {
             const elapsed = Date.now() - startTime;
             pollTryCount++;
-            const inputArea = getInputArea(site);
+            const inputArea = getInputArea();
             const areaContent = getInputContent(inputArea);
 
             // 输入框为空，表明发送成功
@@ -819,7 +820,7 @@
 
     document.addEventListener('paste', async (e) => {
         // 仅当输入框处于聚焦状态时才继续处理
-        const inputArea = getInputArea(site);
+        const inputArea = getInputArea();
         if (!inputArea) return;
         const activeElement = document.activeElement;
         // gemini, grok检测的activeElement为空，不支持聚焦判断
@@ -910,7 +911,7 @@
                     cancelable: true
                 });
 
-                let targetElement = getInputArea(site);
+                let targetElement = getInputArea();
                 const interval = setInterval(() => {
                     if (targetElement && typeof targetElement.focus === 'function') {
                         clearInterval(interval);
@@ -985,8 +986,8 @@
     let cachedInputContent = ""; // 缓存的输入框内容
 
     function addSendButtonListener() {
-        const sendBtn = getSendButton(site);
-        const inputArea = getInputArea(site);
+        const sendBtn = getSendButton();
+        const inputArea = getInputArea();
 
         if (!isEmpty(sendBtn) && !sendBtnListenerAdded) {
             // 给元素添加标记，用于检测元素是否被替换
@@ -994,7 +995,7 @@
 
             // 鼠标按下（记录输入框内容）
             sendBtn.addEventListener('mousedown', function() {
-                const inputArea = getInputArea(site);
+                const inputArea = getInputArea();
                 if (!isEmpty(inputArea)) {
                     const lastestQ = getInputContent(inputArea);
                     // 如果lastestQ为空，则使用缓存的内容
@@ -1064,8 +1065,8 @@
 
     // 检查监听器是否丢失（元素被替换）
     function checkListenerIntegrity() {
-        const sendBtn = getSendButton(site);
-        const inputArea = getInputArea(site);
+        const sendBtn = getSendButton();
+        const inputArea = getInputArea();
 
         // 检查发送按钮
         if (!isEmpty(sendBtn) && sendBtnListenerAdded) {
@@ -1231,7 +1232,7 @@
 
     // 按钮点击事件 - 切换面板显示/隐藏
     toggleButton.addEventListener('click', (e) => {
-        let inputArea = getInputArea(site);
+        let inputArea = getInputArea();
         let aroundInputArea = getNthParent(inputArea, inputAreaHideParentLevel[site]);
 
         e.stopPropagation();
@@ -1504,7 +1505,7 @@
             } else {
                 // 元素不存在，等待一段时间后重试
                 let retryCount = 0;
-                const maxRetries = 10;
+                const navMaxRetries = 10;
                 const retryInterval = 100;
                 const retryTimer = setInterval(() => {
                     retryCount++;
@@ -1525,7 +1526,7 @@
                             }
                         }
                     }
-                    if (retryCount >= maxRetries) {
+                    if (retryCount >= navMaxRetries) {
                         clearInterval(retryTimer);
                         console.warn('目录项跳转失败：元素未找到');
                     }
@@ -1689,7 +1690,6 @@
     };
 
     // 面板数据
-    const CHOSEN_SITE = "chosenSite";
     const contentContainer = document.createElement('div');
     let isCompactMode = false;
     let originalHTML = contentContainer.innerHTML;
@@ -2184,19 +2184,13 @@
 
     // 通用判空函数
     function isEmpty(item){
-        if(item === null || item === undefined || item === "null"){
+        if(item===null || item===undefined || item.length===0 || item === "null"){
             return true;
+        }else{
+            return false;
         }
-        // 字符串、数组等有 length 属性的类型
-        if(typeof item === 'string' || Array.isArray(item)){
-            return item.length === 0;
-        }
-        // 对象类型：空对象判断
-        if(typeof item === 'object'){
-            return Object.keys(item).length === 0;
-        }
-        return false;
     }
+
 
     // 自定义哈希
     function dHash(str, length = HASH_LEN) {
