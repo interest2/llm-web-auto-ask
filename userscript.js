@@ -95,8 +95,8 @@
             [QWEN]: () => document.getElementById('send-message-button'),
             [CLAUDE]: () => document.querySelector('[aria-label^="Send"]'),
             [GROK]: () => document.querySelector('button[type="submit"]')
-        }
-        // 已提问的列表（与同步提问功能无关，与目录功能有关）
+        },
+        // 已提问的列表（官网样式变更不会影响同步提问功能，只影响目录功能）
         questionList: {
             [KIMI]: () => document.getElementsByClassName("user-content"),
             [DEEPSEEK]: () => filterQuestions(document.getElementsByClassName("ds-message")),
@@ -108,7 +108,7 @@
             [QWEN]: () => document.getElementsByClassName("user-message-content"),
             [CLAUDE]: () => document.querySelectorAll('[data-testid="user-message"]'),
             [GROK]: () => document.querySelectorAll('div.items-end .message-bubble')
-        },
+        }
     };
 
     // url里关键词与各站点的对应关系
@@ -291,6 +291,7 @@
     const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
     const HASH_LEN = 16; // 问题的哈希长度
     const checkGap = 100;
+    const HISTORY_WAIT_ROUNDS = Math.ceil(3000 / checkGap);
     const maxRetries = 200;
     const OPEN_GAP = 300; // 打开网页的间隔
     const HIBERNATE_GAP = 600; // 单位：秒
@@ -591,14 +592,17 @@
         intervalId = setInterval(function() {
             count ++;
             if(count > 10000 / checkGap){
+                console.log("监测输入框存在超时");
                 clearInterval(intervalId);
             }
             const inputArea = getInputArea();
             // 输入框元素存在
             if (!isEmpty(inputArea)) {
                 let noChatId = isEmpty(chatId);
-                // 要求是新空白对话，或者 非新但问题列表非空
-                if(noChatId || ( !noChatId && !isEmpty(getQuestionList()) ) ){
+                // 要求是新空白对话，或者 非新但问题列表非空（或超时）
+                const questionReady = !isEmpty(getQuestionList());
+                const waitTimeout = count >= HISTORY_WAIT_ROUNDS;
+                if(noChatId || (!noChatId && (questionReady || waitTimeout)) ){
                     clearInterval(intervalId);
                     pasteContent(inputArea, content, chatId);
                 }
@@ -613,7 +617,7 @@
 
         if(!isEmpty(getS(T + JUMP_HAS_IMAGE))){
             // 粘贴图片到输入框，并等待完成
-            await simulatePasteImage();
+            await doPasteImage();
             setS(T + JUMP_HAS_IMAGE, "");
         }
 
@@ -856,16 +860,16 @@
 
     // 其他站点粘贴图片
     async function pasteImage() {
-        if(!canAcceptPastedImageForCurrentChat()){
+        if(!shouldPasteImageNow()){
             setS(T + JUMP_HAS_IMAGE, "1");
             return;
         }
 
-        return simulatePasteImage();
+        return doPasteImage();
     }
 
     // 判断当前页面是否应当处理粘贴的图片（基于 chatId 绑定关系）
-    function canAcceptPastedImageForCurrentChat(){
+    function shouldPasteImageNow(){
         const sourceSite = GM_getValue(imageKey + "-site");
         const masterChatId = GM_getValue(imageKey + "-chatId");
         const curChatId = getChatId();
@@ -888,7 +892,7 @@
     }
 
     // 模拟将 base64 图片粘贴到输入框（返回在实际触发粘贴后才 resolve）
-    function simulatePasteImage() {
+    function doPasteImage() {
         const base64 = GM_getValue(imageKey);
         if (!base64) {
             console.error('未找到指定的图片');
@@ -1208,8 +1212,17 @@
 
         setTimeout(function(){
             if(isEmpty(getGV(FIRST_RUN_KEY))){
-                alert("网页右下角的多选面板可勾选提问范围，\n点击\"禁用\"可一键关闭同步提问");
                 setGV(FIRST_RUN_KEY, 1);
+
+                let updateHint = "脚本使用提示：\n网页右下角的多选面板可勾选提问范围，\n点击\"禁用\"可一键关闭同步提问";
+
+                if(!isEmpty(getGV("notice4"))){
+                    setGV("notice4", "");
+
+                    updateHint = "脚本近期更新：\n支持带图片（粘贴方式）提问的自动同步；\n进一步降低核心功能对官网样式的依赖";
+                }
+
+                alert(updateHint);
             }
         }, 800);
     }, panelDelay);
@@ -1760,8 +1773,6 @@
     // 首次加载多选面板 是展开状态，后续刷新网页默认缩略状态
     if(getGV(FIRST_RUN_KEY)){
         switchToCompactMode();
-    }else{
-        setGV(FIRST_RUN_KEY, 1);
     }
 
     // 面板相关函数
