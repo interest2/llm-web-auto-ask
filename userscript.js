@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
+// @version      2.1.1
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -44,7 +44,7 @@
     const NAV_TOP = "20%"; // 目录栏top位置（相对网页整体）
     let MAX_QUEUE = 20; // 历史对话的记忆数量
 
-    const version = "2.1.0";
+    const version = "2.1.1";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -299,7 +299,7 @@
 
     // 存储时的特征词
     const T = "tool-";
-    const JUMP_HAS_IMAGE = "jumpHasImage";
+    const HAS_IMAGE_BEFORE_JUMP = "hasImageBeforeJump";
     const QUEUE = "tool-queue";
     const LAST_Q = "lastQ";
     const UID_KEY = "uid";
@@ -615,10 +615,14 @@
      */
     async function pasteContent(editor, content, chatId){
 
-        if(!isEmpty(getS(T + JUMP_HAS_IMAGE))){
+        if(!isEmpty(getS(T + HAS_IMAGE_BEFORE_JUMP))){
+            console.log("有跳转前的图片待粘贴");
             // 粘贴图片到输入框，并等待完成
             await doPasteImage();
-            setS(T + JUMP_HAS_IMAGE, "");
+            console.log("粘贴完成");
+            setS(T + HAS_IMAGE_BEFORE_JUMP, "");
+        }else{
+            console.log("无需粘贴图片");
         }
 
         // 当豆包是新对话，元素不可见会异常，故适当延迟
@@ -715,6 +719,7 @@
 
             // 输入框仍有内容，继续点击发送按钮
             console.log(curDate() + "h3 click");
+            console.log(sendBtn);
             sendBtn.click();
             setTimeout(checkInputArea, pollInterval);
         }
@@ -861,7 +866,7 @@
     // 其他站点粘贴图片
     async function pasteImage() {
         if(!shouldPasteImageNow()){
-            setS(T + JUMP_HAS_IMAGE, "1");
+            setS(T + HAS_IMAGE_BEFORE_JUMP, "1");
             return;
         }
 
