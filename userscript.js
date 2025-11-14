@@ -1121,6 +1121,10 @@
             sendBtnListenerAdded = false;
             inputAreaListenerAdded = false;
             pendingQuestion = null;
+            // URL 变化时隐藏副目录
+            if (typeof hideSubNavBar === 'function') {
+                hideSubNavBar();
+            }
             setTimeout(addSendButtonListener, 500);
         }
     }
@@ -1295,13 +1299,13 @@
         title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;`,
         hideBtn: `font-weight:normal;color:#666;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`,
         subNavBar: `position:fixed;left:270px;top:5%;width:270px;max-height:94vh;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
-        subNavTitle: `font-weight:bold;color:#333;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
-        subNavItem: `padding:4px 8px;cursor:pointer;color:#666;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
+        subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
+        subNavItem: `padding:4px 8px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
         subNavItemH2: `padding-left:8px;font-weight:600;`,
         subNavItemH3: `padding-left:16px;font-weight:500;`,
         subNavItemH4: `padding-left:24px;font-weight:400;`,
-        subNavCloseBtn: `position:absolute;top:6px;right:8px;font-size:16px;cursor:pointer;color:#999;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
-        levelBtn: `padding:2px 8px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#666;transition:all 0.2s;user-select:none;`,
+        subNavCloseBtn: `position:absolute;top:6px;right:8px;font-size:16px;cursor:pointer;color:#777;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+        levelBtn: `padding:2px 8px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;transition:all 0.2s;user-select:none;`,
         levelBtnActive: `background:#0066cc;color:#fff;border-color:#0066cc;`,
         levelBtnGroup: `display:flex;gap:4px;align-items:center;`
     };
@@ -1454,6 +1458,10 @@
     const highlightActiveNav = () => {
         const idx = computeActiveIndex();
         navLinks.forEach((link, i) => setLinkStyle(link, i === idx));
+        // 自动显示当前高亮项对应的副目录
+        if (idx >= 0 && typeof autoShowSubNav === 'function') {
+            autoShowSubNav(idx);
+        }
     };
 
     // 检查并切换高亮状态（根据滚动位置智能高亮）
@@ -1485,6 +1493,10 @@
         if(targetIndex >= 0) {
             clearAllHighlights();
             setLinkStyle(navLinks[targetIndex], true);
+            // 自动显示当前高亮项对应的副目录
+            if (typeof autoShowSubNav === 'function') {
+                autoShowSubNav(targetIndex);
+            }
         }
     };
 
@@ -1644,8 +1656,34 @@
             const level = parseInt(h.tagName.substring(1));
             let text = h.textContent.trim();
             
-            // 匹配开头的 emoji 和空格（包括各种空格字符和常见 emoji 范围）
-            text = text.replace(/^[\s\p{Emoji}]+/u, '').trim();
+            // 移除开头的空格和 emoji，但保留数字编号
+            // 先移除开头的连续空格
+            text = text.replace(/^\s+/, '');
+            
+            // 关键优化：先检查第一个字符是否是数字，避免某些环境将数字误识别为 emoji
+            const firstChar = text.charAt(0);
+            if (/[0-9]/.test(firstChar)) {
+                // 第一个字符是数字，不做任何处理，保留完整的数字编号
+                // 例如："8. ..."、"8.1 ..."、"1. ..." 等
+            } else {
+                // 第一个字符不是数字，可能是 emoji 或其他字符
+                // 检查是否是 emoji 开头，且后面紧跟数字（可能含空格）
+                if (/^\p{Emoji}\s*[0-9]/u.test(text)) {
+                    // emoji 后面是数字，只移除 emoji 和空格，保留数字
+                    // 例如："✅ 1. ..." → "1. ..."
+                    text = text.replace(/^\p{Emoji}+\s*/u, '');
+                } else if (/^\p{Emoji}/u.test(text)) {
+                    // emoji 后面不是数字，安全移除 emoji
+                    // 再次确认第一个字符不是数字（双重检查，防止误识别）
+                    if (!/[0-9]/.test(text.charAt(0))) {
+                        text = text.replace(/^\p{Emoji}+\s*/u, '');
+                    }
+                    // 如果第一个字符是数字，说明被误识别为 emoji，不做处理
+                }
+            }
+            
+            // 移除末尾的冒号（中英文）
+            text = text.replace(/[:：]+$/, '');
             
             return {
                 element: h,
@@ -1702,7 +1740,7 @@
             });
             item.addEventListener('mouseleave', () => {
                 item.style.backgroundColor = 'transparent';
-                item.style.color = '#666';
+                item.style.color = '#333';
             });
             
             // 点击跳转
@@ -1751,7 +1789,9 @@
         // 创建标题文本
         const titleText = document.createElement('span');
         titleText.style.cssText = 'font-weight:bold;color:#333;font-size:14px;';
-        titleText.textContent = '副目录';
+        // 如果主目录只有一项，不显示序号；否则显示序号
+        const totalQuestions = navQuestions ? navQuestions.length : 0;
+        titleText.textContent = totalQuestions <= 1 ? '副目录' : `副目录 ${questionIndex + 1}`;
         
         // 创建层级按钮组
         const levelBtnGroup = document.createElement('div');
@@ -1781,7 +1821,7 @@
                 if (level !== currentSubNavLevel) {
                     btn.style.backgroundColor = '#fff';
                     btn.style.borderColor = '#ddd';
-                    btn.style.color = '#666';
+                    btn.style.color = '#333';
                 }
             });
             
@@ -1848,6 +1888,33 @@
         currentSubNavQuestionIndex = -1;
     };
 
+    // 根据问题索引自动显示对应的副目录
+    const autoShowSubNav = (questionIndex) => {
+        if (questionIndex < 0 || !navQuestions || questionIndex >= navQuestions.length) {
+            return;
+        }
+        
+        const targetEl = navQuestions[questionIndex];
+        if (!targetEl || !document.body.contains(targetEl)) {
+            return;
+        }
+        
+        // 查找回答内容区域
+        const answerContent = findAnswerContent(targetEl);
+        if (!answerContent) {
+            return;
+        }
+        
+        // 查找标题
+        const headings = findHeadingsInContent(answerContent);
+        if (headings.length === 0) {
+            return;
+        }
+        
+        // 显示副目录栏
+        showSubNavBar(questionIndex, headings);
+    };
+
     // 创建导航链接元素
     const createNavLink = (el, i) => {
         // 创建链接容器
@@ -1866,7 +1933,7 @@
         });
         waveIcon.addEventListener('mouseleave', () => {
             waveIcon.style.backgroundColor = 'transparent';
-            waveIcon.style.color = '#666';
+            waveIcon.style.color = '#333';
         });
         waveIcon.addEventListener('click', (e) => {
             e.preventDefault();
@@ -1948,6 +2015,10 @@
                 clickLockUntil = Date.now() + NAV_CLICK_LOCK_DURATION;
                 clearAllHighlights();
                 setLinkStyle(linkContainer, true);
+                // 自动显示当前点击项对应的副目录
+                if (typeof autoShowSubNav === 'function') {
+                    autoShowSubNav(i);
+                }
             } else {
                 // 元素不存在，等待一段时间后重试
                 let retryCount = 0;
@@ -1965,6 +2036,10 @@
                             clickLockUntil = Date.now() + NAV_CLICK_LOCK_DURATION;
                             clearAllHighlights();
                             setLinkStyle(linkContainer, true);
+                            // 自动显示当前点击项对应的副目录
+                            if (typeof autoShowSubNav === 'function') {
+                                autoShowSubNav(i);
+                            }
                             // 更新navQuestions中的元素引用
                             if (navQuestions && navQuestions[i] !== newEl) {
                                 navQuestions[i] = newEl;
@@ -2058,6 +2133,13 @@
 
                 // 应用高亮
                 navLinks.forEach((link, i) => setLinkStyle(link, navQuestions[i] === nextEl));
+                // 自动显示当前高亮项对应的副目录
+                if (nextEl && typeof autoShowSubNav === 'function') {
+                    const activeIndex = navQuestions.indexOf(nextEl);
+                    if (activeIndex >= 0) {
+                        autoShowSubNav(activeIndex);
+                    }
+                }
             }, { root: null, rootMargin: '0px 0px -70% 0px', threshold: [0, 0.1, 0.5, 1] });
 
             navQuestions.forEach(el => {
@@ -2107,6 +2189,10 @@
                 // 视野无任何目录项，高亮最后一项
                 clearAllHighlights();
                 setLinkStyle(navLinks[navLinks.length - 1], true);
+                // 自动显示最后一项对应的副目录
+                if (typeof autoShowSubNav === 'function') {
+                    autoShowSubNav(navLinks.length - 1);
+                }
             }
         }, 100);
     };
