@@ -1210,6 +1210,7 @@
     setTimeout(function(){
         document.body.appendChild(panel);
         document.body.appendChild(toggleButton);
+        document.body.appendChild(subNavBar);
         reloadDisableStatus();
 
         // 添加发送按钮监听
@@ -1279,14 +1280,30 @@
     const NAV_VIEWPORT_THRESHOLD = 0.9; // 可视区域阈值（90%）
     const NAV_NEAR_TOP_THRESHOLD = 24; // 接近顶部阈值（像素）
     const NAV_CLICK_LOCK_DURATION = 1200; // 点击锁定持续时间（毫秒）
+    // 副目录标题级别配置（可配置为 h2~h4 或 h2~h3）
+    const SUB_NAV_HEADING_LEVELS = [2, 3, 4]; // 支持 h2, h3, h4，如需只支持 h2~h3，改为 [2, 3]
+    const SUB_NAV_HEADING_SELECTOR = SUB_NAV_HEADING_LEVELS.map(level => `h${level}`).join(', '); // 生成选择器字符串，如 "h2, h3, h4"
+    const SUB_NAV_HEADING_TAGS = SUB_NAV_HEADING_LEVELS.map(level => `H${level}`); // 生成标签数组，如 ["H2", "H3", "H4"]
 
     // 样式常量
     const NAV_STYLES = {
         navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:100vh;overflow-y:auto;box-sizing:border-box;`,
         miniButton: `position:fixed;top:${NAV_TOP};right:15px;color:${NAV_ITEM_COLOR};border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:2147483647;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
         link: `width:100%;padding:4px 5px;cursor:pointer;color:#333;font-size:14px;line-height:1.5;white-space:normal;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;max-height:calc(1.9em * 2);box-sizing:border-box;`,
+        linkContainer: `display:flex;align-items:center;gap:4px;width:100%;`,
+        waveIcon: `font-size:12px;cursor:pointer;color:#666;padding:2px 4px;border-radius:3px;user-select:none;flex-shrink:0;transition:background-color 0.2s;`,
         title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;`,
-        hideBtn: `font-weight:normal;color:#666;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`
+        hideBtn: `font-weight:normal;color:#666;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`,
+        subNavBar: `position:fixed;left:270px;top:5%;width:270px;max-height:94vh;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+        subNavTitle: `font-weight:bold;color:#333;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
+        subNavItem: `padding:4px 8px;cursor:pointer;color:#666;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
+        subNavItemH2: `padding-left:8px;font-weight:600;`,
+        subNavItemH3: `padding-left:16px;font-weight:500;`,
+        subNavItemH4: `padding-left:24px;font-weight:400;`,
+        subNavCloseBtn: `position:absolute;top:6px;right:8px;font-size:16px;cursor:pointer;color:#999;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+        levelBtn: `padding:2px 8px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#666;transition:all 0.2s;user-select:none;`,
+        levelBtnActive: `background:#0066cc;color:#fff;border-color:#0066cc;`,
+        levelBtnGroup: `display:flex;gap:4px;align-items:center;`
     };
 
     // 弹窗样式常量
@@ -1314,15 +1331,28 @@
     navMiniButton.textContent = '目录';
     navMiniButton.style.cssText = NAV_STYLES.miniButton;
 
+    // 创建副目录栏元素
+    const subNavBar = document.createElement('div');
+    subNavBar.id = "tool-sub-nav-bar";
+    subNavBar.style.cssText = NAV_STYLES.subNavBar;
+
     // 状态变量
     let navQuestions, navLinks = [], navIO, elToLink = new Map();
     let clickedTarget = null, clickLockUntil = 0, scrollDebounceTimer;
+    let currentSubNavQuestionIndex = -1; // 当前显示的副目录对应的主目录索引
+    let currentSubNavLevel = 3; // 当前副目录显示的层级（默认 h3）
+    let currentSubNavHeadings = []; // 当前副目录的所有标题数据（未过滤）
 
     // 从localStorage读取最小化状态，默认为false
     let navMinimized = localStorage.getItem(T + 'navMinimized') === 'true';
 
     // 设置导航链接的样式（高亮或普通状态）
-    const setLinkStyle = (link, isActive) => {
+    const setLinkStyle = (linkContainer, isActive) => {
+        if(!linkContainer) return;
+        // 如果是 linkContainer，从中查找 link 元素
+        const link = linkContainer.classList?.contains('tool-nav-link-container') 
+            ? linkContainer.querySelector('.tool-nav-link')
+            : linkContainer;
         if(!link) return;
         if(isActive) {
             link.style.cssText = NAV_STYLES.link + 'background-color:;color:#0066cc;';
@@ -1481,8 +1511,406 @@
 
     window.addEventListener('scroll', onScrollRefreshActive, { passive: true });
 
+    // 查找问题对应的回答内容区域
+    const findAnswerContent = (questionEl) => {
+        if (!questionEl) return null;
+        
+        // 获取所有问题元素，用于确定回答区域的边界
+        const allQuestions = getQuestionList();
+        if (!allQuestions || allQuestions.length === 0) return null;
+        
+        const questionIndex = Array.from(allQuestions).indexOf(questionEl);
+        if (questionIndex < 0) {
+            // 问题不在列表中，尝试直接查找
+            let nextSibling = questionEl.nextElementSibling;
+            let checkedCount = 0;
+            while (nextSibling && checkedCount < 30) {
+                const headings = nextSibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
+                if (headings.length > 0) {
+                    return nextSibling;
+                }
+                if (nextSibling.tagName && SUB_NAV_HEADING_TAGS.includes(nextSibling.tagName)) {
+                    return nextSibling.parentElement;
+                }
+                nextSibling = nextSibling.nextElementSibling;
+                checkedCount++;
+            }
+            return null;
+        }
+        
+        if (questionIndex >= allQuestions.length - 1) {
+            // 如果是最后一个问题，查找它之后的所有内容
+            let current = questionEl;
+            let depth = 0;
+            while (current && depth < 10) {
+                // 查找当前元素的父元素
+                let parent = current.parentElement;
+                if (!parent) break;
+                
+                // 查找父元素的兄弟元素
+                let sibling = parent.nextElementSibling;
+                let checkedCount = 0;
+                while (sibling && checkedCount < 20) {
+                    const headings = sibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
+                    if (headings.length > 0) {
+                        return sibling;
+                    }
+                    // 检查当前元素本身是否是h2~h4
+                    if (sibling.tagName && SUB_NAV_HEADING_TAGS.includes(sibling.tagName)) {
+                        return sibling.parentElement;
+                    }
+                    sibling = sibling.nextElementSibling;
+                    checkedCount++;
+                }
+                
+                // 向上查找
+                current = parent;
+                depth++;
+            }
+        } else {
+            // 如果不是最后一个问题，查找当前问题和下一个问题之间的内容
+            const nextQuestion = allQuestions[questionIndex + 1];
+            if (!nextQuestion) return null;
+            
+            // 查找问题元素和下一个问题元素之间的所有元素
+            let current = questionEl;
+            let depth = 0;
+            while (current && depth < 10) {
+                // 查找当前元素的父元素
+                let parent = current.parentElement;
+                if (!parent) break;
+                
+                // 查找父元素的兄弟元素，直到找到下一个问题
+                let sibling = parent.nextElementSibling;
+                let checkedCount = 0;
+                while (sibling && checkedCount < 50) {
+                    // 如果找到了下一个问题，停止搜索
+                    if (sibling.contains(nextQuestion) || sibling === nextQuestion) {
+                        break;
+                    }
+                    
+                    // 查找包含h2~h4的元素
+                    const headings = sibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
+                    if (headings.length > 0) {
+                        return sibling;
+                    }
+                    
+                    // 检查当前元素本身是否是h2~h4
+                    if (sibling.tagName && SUB_NAV_HEADING_TAGS.includes(sibling.tagName)) {
+                        return sibling.parentElement;
+                    }
+                    
+                    sibling = sibling.nextElementSibling;
+                    checkedCount++;
+                }
+                
+                // 向上查找
+                current = parent;
+                depth++;
+            }
+        }
+        
+        // 如果以上方法都没找到，尝试在问题元素之后直接查找
+        let nextSibling = questionEl.nextElementSibling;
+        let checkedCount = 0;
+        while (nextSibling && checkedCount < 30) {
+            const headings = nextSibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
+            if (headings.length > 0) {
+                return nextSibling;
+            }
+            if (nextSibling.tagName && SUB_NAV_HEADING_TAGS.includes(nextSibling.tagName)) {
+                return nextSibling.parentElement;
+            }
+            nextSibling = nextSibling.nextElementSibling;
+            checkedCount++;
+        }
+        
+        return null;
+    };
+
+    // 在回答内容区域中查找所有配置的标题级别
+    const findHeadingsInContent = (contentEl) => {
+        if (!contentEl) return [];
+        
+        const headings = contentEl.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
+        return Array.from(headings).filter(h => {
+            // 确保标题是可见的
+            const rect = h.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return false;
+            // 确保标题级别在配置的范围内
+            const level = parseInt(h.tagName.substring(1));
+            return SUB_NAV_HEADING_LEVELS.includes(level);
+        }).map(h => {
+            const level = parseInt(h.tagName.substring(1));
+            let text = h.textContent.trim();
+            
+            // 匹配开头的 emoji 和空格（包括各种空格字符和常见 emoji 范围）
+            text = text.replace(/^[\s\p{Emoji}]+/u, '').trim();
+            
+            return {
+                element: h,
+                tagName: h.tagName,
+                text: text,
+                level: level
+            };
+        });
+    };
+
+    // 渲染副目录项（根据当前选择的层级过滤）
+    const renderSubNavItems = () => {
+        // 获取标题容器后的所有元素
+        const titleContainer = subNavBar.querySelector('.sub-nav-title-container');
+        if (!titleContainer) return;
+        
+        // 移除所有标题项（保留标题容器）
+        const items = subNavBar.querySelectorAll('.sub-nav-item');
+        items.forEach(item => item.remove());
+        
+        // 根据当前选择的层级过滤标题
+        const filteredHeadings = currentSubNavHeadings.filter(h => h.level <= currentSubNavLevel);
+        
+        // 创建标题级别样式映射
+        const headingStyleMap = {
+            2: NAV_STYLES.subNavItemH2,
+            3: NAV_STYLES.subNavItemH3,
+            4: NAV_STYLES.subNavItemH4
+        };
+        
+        // 添加过滤后的标题
+        filteredHeadings.forEach((heading, index) => {
+            const item = document.createElement('div');
+            item.className = 'sub-nav-item';
+            let itemStyle = NAV_STYLES.subNavItem;
+            
+            // 根据标题级别设置不同的缩进（如果配置中包含该级别）
+            if (SUB_NAV_HEADING_LEVELS.includes(heading.level) && headingStyleMap[heading.level]) {
+                itemStyle += headingStyleMap[heading.level];
+            } else {
+                // 如果级别不在预定义样式中，根据级别动态计算缩进（每级8px）
+                const paddingLeft = heading.level * 8;
+                itemStyle += `padding-left:${paddingLeft}px;`;
+            }
+            
+            item.style.cssText = itemStyle;
+            item.textContent = heading.text;
+            item.title = heading.text;
+            
+            // 鼠标悬停效果
+            item.addEventListener('mouseenter', () => {
+                item.style.backgroundColor = '#f0f0f0';
+                item.style.color = '#0066cc';
+            });
+            item.addEventListener('mouseleave', () => {
+                item.style.backgroundColor = 'transparent';
+                item.style.color = '#666';
+            });
+            
+            // 点击跳转
+            item.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                if (heading.element && document.body.contains(heading.element)) {
+                    heading.element.scrollIntoView({ block: 'start' });
+                } else {
+                    console.warn('标题元素不存在');
+                }
+            });
+            
+            subNavBar.appendChild(item);
+        });
+    };
+
+    // 显示副目录栏
+    const showSubNavBar = (questionIndex, headings) => {
+        if (!headings || headings.length === 0) {
+            console.log('未找到标题');
+            return;
+        }
+        
+        // 保存标题数据和状态
+        currentSubNavHeadings = headings;
+        currentSubNavQuestionIndex = questionIndex;
+        
+        // 清空副目录栏
+        subNavBar.replaceChildren();
+        
+        // 创建标题容器（相对定位，用于放置关闭按钮）
+        const titleContainer = document.createElement('div');
+        titleContainer.style.cssText = 'position:relative;padding-right:24px;padding-bottom:6px;border-bottom:1px solid #eaeaea;margin-bottom:6px;';
+        titleContainer.className = 'sub-nav-title-container';
+        
+        // 创建标题行容器
+        const titleRow = document.createElement('div');
+        titleRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+        
+        // 创建标题文本和按钮组容器
+        const titleLeft = document.createElement('div');
+        titleLeft.style.cssText = 'display:flex;align-items:center;gap:8px;flex:1;';
+        
+        // 创建标题文本
+        const titleText = document.createElement('span');
+        titleText.style.cssText = 'font-weight:bold;color:#333;font-size:14px;';
+        titleText.textContent = '副目录';
+        
+        // 创建层级按钮组
+        const levelBtnGroup = document.createElement('div');
+        levelBtnGroup.style.cssText = NAV_STYLES.levelBtnGroup;
+        
+        // 创建层级按钮（只显示配置中包含的层级）
+        SUB_NAV_HEADING_LEVELS.forEach(level => {
+            const btn = document.createElement('div');
+            btn.textContent = `h${level}`;
+            btn.dataset.level = level;
+            
+            // 设置按钮样式
+            let btnStyle = NAV_STYLES.levelBtn;
+            if (level === currentSubNavLevel) {
+                btnStyle += NAV_STYLES.levelBtnActive;
+            }
+            btn.style.cssText = btnStyle;
+            
+            // 鼠标悬停效果
+            btn.addEventListener('mouseenter', () => {
+                if (level !== currentSubNavLevel) {
+                    btn.style.backgroundColor = '#f0f0f0';
+                    btn.style.borderColor = '#ccc';
+                }
+            });
+            btn.addEventListener('mouseleave', () => {
+                if (level !== currentSubNavLevel) {
+                    btn.style.backgroundColor = '#fff';
+                    btn.style.borderColor = '#ddd';
+                    btn.style.color = '#666';
+                }
+            });
+            
+            // 点击切换层级
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // 更新当前层级
+                currentSubNavLevel = level;
+                
+                // 更新所有按钮的样式
+                levelBtnGroup.querySelectorAll('[data-level]').forEach(b => {
+                    if (parseInt(b.dataset.level) === level) {
+                        b.style.cssText = NAV_STYLES.levelBtn + NAV_STYLES.levelBtnActive;
+                    } else {
+                        b.style.cssText = NAV_STYLES.levelBtn;
+                    }
+                });
+                
+                // 重新渲染标题项
+                renderSubNavItems();
+            });
+            
+            levelBtnGroup.appendChild(btn);
+        });
+        
+        // 组装左侧（标题和按钮组）
+        titleLeft.appendChild(titleText);
+        titleLeft.appendChild(levelBtnGroup);
+        titleRow.appendChild(titleLeft);
+        titleContainer.appendChild(titleRow);
+        
+        // 创建关闭按钮
+        const closeBtn = document.createElement('div');
+        closeBtn.style.cssText = NAV_STYLES.subNavCloseBtn;
+        closeBtn.textContent = '×';
+        closeBtn.title = '关闭副目录';
+        closeBtn.addEventListener('mouseenter', () => {
+            closeBtn.style.backgroundColor = '#f0f0f0';
+        });
+        closeBtn.addEventListener('mouseleave', () => {
+            closeBtn.style.backgroundColor = 'transparent';
+        });
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            hideSubNavBar();
+        });
+        titleContainer.appendChild(closeBtn);
+        
+        // 添加到副目录栏
+        subNavBar.appendChild(titleContainer);
+        
+        // 渲染标题项
+        renderSubNavItems();
+        
+        // 显示副目录栏
+        subNavBar.style.display = 'block';
+    };
+
+    // 隐藏副目录栏
+    const hideSubNavBar = () => {
+        subNavBar.style.display = 'none';
+        currentSubNavQuestionIndex = -1;
+    };
+
     // 创建导航链接元素
     const createNavLink = (el, i) => {
+        // 创建链接容器
+        const linkContainer = document.createElement('div');
+        linkContainer.className = 'tool-nav-link-container';
+        linkContainer.style.cssText = NAV_STYLES.linkContainer;
+
+        // 创建波浪图标
+        const waveIcon = document.createElement('span');
+        waveIcon.textContent = '~';
+        waveIcon.style.cssText = NAV_STYLES.waveIcon;
+        waveIcon.title = '显示副目录';
+        waveIcon.addEventListener('mouseenter', () => {
+            waveIcon.style.backgroundColor = '#f0f0f0';
+            waveIcon.style.color = '#0066cc';
+        });
+        waveIcon.addEventListener('mouseleave', () => {
+            waveIcon.style.backgroundColor = 'transparent';
+            waveIcon.style.color = '#666';
+        });
+        waveIcon.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // 如果当前已经显示该问题的副目录，则隐藏
+            if (currentSubNavQuestionIndex === i && subNavBar.style.display === 'block') {
+                hideSubNavBar();
+                return;
+            }
+            
+            // 查找问题对应的回答内容区域
+            let targetEl = el;
+            if (!targetEl || !document.body.contains(targetEl)) {
+                const questions = getQuestionList();
+                if (questions && questions.length > i) {
+                    targetEl = questions[i];
+                }
+            }
+            
+            if (!targetEl) {
+                console.warn('问题元素不存在');
+                return;
+            }
+            
+            // 查找回答内容区域
+            const answerContent = findAnswerContent(targetEl);
+            if (!answerContent) {
+                console.log('未找到回答内容区域');
+                return;
+            }
+            
+            // 查找标题
+            const headings = findHeadingsInContent(answerContent);
+            if (headings.length === 0) {
+                console.log('未找到h2~h4标题');
+                return;
+            }
+            
+            // 显示副目录栏
+            showSubNavBar(i, headings);
+        });
+
+        // 创建链接内容
         const link = document.createElement('div');
         link.className = 'tool-nav-link';
         link.style.cssText = NAV_STYLES.link;
@@ -1519,7 +1947,7 @@
                 clickedTarget = targetEl;
                 clickLockUntil = Date.now() + NAV_CLICK_LOCK_DURATION;
                 clearAllHighlights();
-                setLinkStyle(link, true);
+                setLinkStyle(linkContainer, true);
             } else {
                 // 元素不存在，等待一段时间后重试
                 let retryCount = 0;
@@ -1536,11 +1964,11 @@
                             clickedTarget = newEl;
                             clickLockUntil = Date.now() + NAV_CLICK_LOCK_DURATION;
                             clearAllHighlights();
-                            setLinkStyle(link, true);
+                            setLinkStyle(linkContainer, true);
                             // 更新navQuestions中的元素引用
                             if (navQuestions && navQuestions[i] !== newEl) {
                                 navQuestions[i] = newEl;
-                                elToLink.set(newEl, link);
+                                elToLink.set(newEl, linkContainer);
                             }
                         }
                     }
@@ -1552,7 +1980,11 @@
             }
         });
 
-        return link;
+        // 组装链接容器
+        linkContainer.appendChild(waveIcon);
+        linkContainer.appendChild(link);
+
+        return linkContainer;
     };
 
     // 创建导航栏标题元素（包含隐藏按钮）
