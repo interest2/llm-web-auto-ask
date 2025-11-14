@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      2.1.1
+// @version      2.2.0
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -44,7 +44,7 @@
     const NAV_TOP = "20%"; // 目录栏top位置（相对网页整体）
     let MAX_QUEUE = 20; // 历史对话的记忆数量
 
-    const version = "2.1.1";
+    const version = "2.2.0";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -1644,16 +1644,18 @@
     const findHeadingsInContent = (contentEl) => {
         if (!contentEl) return [];
         
+        const headingList = [];
+        
+        // 1. 查找现有的 h2~h4 标签标题
         const headings = contentEl.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
-        return Array.from(headings).filter(h => {
+        Array.from(headings).forEach(h => {
             // 确保标题是可见的
             const rect = h.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) return false;
+            if (rect.width === 0 || rect.height === 0) return;
             // 确保标题级别在配置的范围内
             const level = parseInt(h.tagName.substring(1));
-            return SUB_NAV_HEADING_LEVELS.includes(level);
-        }).map(h => {
-            const level = parseInt(h.tagName.substring(1));
+            if (!SUB_NAV_HEADING_LEVELS.includes(level)) return;
+            
             let text = h.textContent.trim();
             
             // 移除开头的空格和 emoji，但保留数字编号
@@ -1685,13 +1687,106 @@
             // 移除末尾的冒号（中英文）
             text = text.replace(/[:：]+$/, '');
             
-            return {
+            headingList.push({
                 element: h,
                 tagName: h.tagName,
                 text: text,
-                level: level
-            };
+                level: level,
+                position: rect.top
+            });
         });
+        
+        // 2. 查找文本中以 "## " 或 "### " 开头的 Markdown 标题
+        // 支持标题被分割在多个元素中的情况（如 <span>## 五、</span><span>标题内容</span>）
+        const markdownHeadingPatterns = [
+            { level: 2, prefix: '## ' },  // h2: ## 标题
+            { level: 3, prefix: '### ' }  // h3: ### 标题
+        ];
+
+        // 检查纯文本节点（包括合并后的文本，如分割在多个span中的标题在textContent中会合并成一行）
+        const walker = document.createTreeWalker(
+            contentEl,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+        
+        let textNode;
+        let domOrder = 0; // 记录DOM遍历顺序
+        while (textNode = walker.nextNode()) {
+            const text = textNode.textContent;
+            if (!text) continue;
+            
+            const lines = text.split(/\n|\r\n?/);
+            for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+                const line = lines[lineIndex];
+                const trimmedLine = line.trim();
+                
+                // 对每一行，检查所有 markdown 标题模式
+                markdownHeadingPatterns.forEach(({ level, prefix }) => {
+                    if (!SUB_NAV_HEADING_LEVELS.includes(level)) return;
+                    
+                    if (trimmedLine.startsWith(prefix)) {
+                        const titleText = trimmedLine.substring(prefix.length).trim();
+                        if (!titleText) return;
+                        
+                        // 找到包含该文本的可见父元素
+                        let parentEl = textNode.parentElement;
+                        while (parentEl && parentEl !== contentEl) {
+                            const rect = parentEl.getBoundingClientRect();
+                            if (rect.width > 0 && rect.height > 0) {
+                                // 检查是否已经存在相同文本和级别的标题（避免重复）
+                                const exists = headingList.some(h => 
+                                    h.text === titleText && 
+                                    h.level === level &&
+                                    Math.abs(h.position - rect.top) < 30
+                                );
+                                
+                                if (!exists) {
+                                    headingList.push({
+                                        element: parentEl,
+                                        tagName: `H${level}`,
+                                        text: titleText,
+                                        level: level,
+                                        position: rect.top,
+                                        domOrder: domOrder++, // 记录DOM顺序（每个匹配的标题单独分配）
+                                        isMarkdown: true
+                                    });
+                                }
+                                return; // 找到匹配后退出当前模式循环
+                            }
+                            parentEl = parentEl.parentElement;
+                        }
+                    }
+                });
+            }
+        }
+        
+        // 3. 去重并排序（按DOM顺序，保持文档中的原始顺序）
+        const uniqueHeadings = [];
+        const seenKeys = new Set();
+        
+        // 按DOM顺序排序（TreeWalker遍历的顺序）
+        headingList.sort((a, b) => a.domOrder - b.domOrder);
+        
+        headingList.forEach(heading => {
+            // 使用文本、级别和更精确的位置作为唯一标识，避免重复
+            // 使用更小的位置区间（5像素）来区分不同的标题
+            const positionKey = Math.floor(heading.position / 5);
+            const key = `${heading.text}_${heading.level}_${positionKey}`;
+            
+            if (!seenKeys.has(key)) {
+                seenKeys.add(key);
+                uniqueHeadings.push({
+                    element: heading.element,
+                    tagName: heading.tagName,
+                    text: heading.text,
+                    level: heading.level
+                });
+            }
+        });
+        
+        return uniqueHeadings;
     };
 
     // 渲染副目录项（根据当前选择的层级过滤）
