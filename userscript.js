@@ -7,11 +7,12 @@
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
 // @match        https://www.tongyi.com/*
-// @match        https://chatgpt.com/*
-// @match        https://www.doubao.com/*
-// @match        https://chat.zchat.tech/*
-// @match        https://gemini.google.com/*
 // @match        https://chat.qwen.ai/*
+// @match        https://www.doubao.com/*
+// @match        https://yiyan.baidu.com/*
+// @match        https://chat.zchat.tech/*
+// @match        https://chatgpt.com/*
+// @match        https://gemini.google.com/*
 // @match        https://claude.ai/*
 // @match        https://grok.com/*
 // @grant        GM_addStyle
@@ -65,11 +66,12 @@
     const QWEN = 7;
     const CLAUDE = 8;
     const GROK = 9;
+    const WENXIN = 10;
 
     // 输入框类型分类
     const inputAreaTypes = {
         textarea: [DEEPSEEK, TONGYI, DOUBAO, QWEN],
-        lexical: [KIMI, CHATGPT, ZCHAT, GEMINI, CLAUDE, GROK]
+        lexical: [KIMI, WENXIN, CHATGPT, ZCHAT, GEMINI, CLAUDE, GROK]
     };
 
     // 通用输入框选择器，两类：textarea标签、lexical
@@ -94,7 +96,8 @@
             [GEMINI]: () => document.querySelector('button.send-button'),
             [QWEN]: () => document.getElementById('send-message-button'),
             [CLAUDE]: () => document.querySelector('[aria-label^="Send"]'),
-            [GROK]: () => document.querySelector('button[type="submit"]')
+            [GROK]: () => document.querySelector('button[type="submit"]'),
+            [WENXIN]: () => document.querySelector('[class^="sendInner"]')
         },
         // 已提问的列表（官网样式变更不会影响同步提问功能，只影响目录功能）
         questionList: {
@@ -107,7 +110,8 @@
             [GEMINI]: () => document.getElementsByTagName('user-query'),
             [QWEN]: () => document.getElementsByClassName("user-message-content"),
             [CLAUDE]: () => document.querySelectorAll('[data-testid="user-message"]'),
-            [GROK]: () => document.querySelectorAll('div.items-end .message-bubble')
+            [GROK]: () => document.querySelectorAll('div.items-end .message-bubble'),
+            [WENXIN]: () => document.querySelectorAll('[class^="questionText"]')
         }
     };
 
@@ -122,7 +126,8 @@
         "gemini": GEMINI,
         "qwen": QWEN,
         "claude": CLAUDE,
-        "grok": GROK
+        "grok": GROK,
+        "yiyan": WENXIN
     };
 
     // 各家大模型的网址（新对话，历史对话的前缀）
@@ -136,7 +141,8 @@
         [GEMINI]: ["https://gemini.google.com/app", "/"],
         [QWEN]: ["https://chat.qwen.ai/", "c/"],
         [CLAUDE]: ["https://claude.ai/chat", "/"],
-        [GROK]: ["https://grok.com/", "c/"]
+        [GROK]: ["https://grok.com/", "c/"],
+        [WENXIN]: ["https://yiyan.baidu.com/", "chat/"]
     };
 
     // 多选面板里，各站点的全称、简称
@@ -146,6 +152,7 @@
         { site: TONGYI, word: '通义千问', alias: '通' },
         { site: QWEN, word: 'Qwen', alias: 'Q' },
         { site: DOUBAO, word: '豆包', alias: '豆' },
+        { site: WENXIN, word: '文心一言', alias: '文' },
         { site: ZCHAT, word: 'ZCHAT-GPT', alias: 'Z' },
         { site: CHATGPT, word: 'ChatGPT', alias: 'C' },
         { site: GEMINI, word: 'Gemini', alias: 'G' },
@@ -164,11 +171,12 @@
         [GEMINI]: 9,
         [QWEN]: 9,
         [CLAUDE]: 6,
-        [GROK]: 7
+        [GROK]: 7,
+        [WENXIN]: 8
     };
 
-	// 通用chatId正则：16~37位的数字、字母、短横杠
-	const GENERAL_PATTERN = /[a-zA-Z0-9-]{16,37}/;
+	// 通用chatId正则：16~37位的数字、字母、短横杠、等号
+	const GENERAL_PATTERN = /[a-zA-Z0-9-=]{16,37}/;
 
     const MARKER_CHAT = "chat/";
     const MARKER_C = "c/";
@@ -183,7 +191,8 @@
 		[CHATGPT]: [MARKER_C],
 		[ZCHAT]: [MARKER_C],
 		[CLAUDE]: [MARKER_CHAT],
-		[GROK]: ["chat=", MARKER_C]
+		[GROK]: ["chat=", MARKER_C],
+		[WENXIN]: [MARKER_CHAT]
 	};
 
 	// 从url提取各大模型网站的对话唯一标识
@@ -631,7 +640,7 @@
             // 输入框粘贴文字，大致分两类处理。其中第一类里 kimi 特殊处理
             //  第一类（lexical）
             if(inputAreaTypes.lexical.includes(site)){
-                if([KIMI].includes(site)){
+                if([KIMI, WENXIN].includes(site)){
                     editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: content }));
                 }else {
                     const pTag = editor.querySelector('p');
@@ -2859,41 +2868,6 @@
             var r = Math.random() * 16 | 0,
                 v = c == 'x' ? r : (r & 0x3 | 0x8);
             return v.toString(16);
-        });
-    }
-
-    /**
-     * 绑定快捷键
-     * @param {string} combo 组合键格式，如 "ctrl+q"
-     * @param {Function} callback 触发回调
-     * @param {boolean} preventDefault 是否阻止默认行为
-     */
-    function bindShortcut(combo, callback, preventDefault = true) {
-        const keys = combo.toLowerCase().split('+');
-        const requiredKeys = {
-            ctrl: false,
-            alt: false,
-            shift: false,
-            key: null
-        };
-
-        keys.forEach(key => {
-            if (key === 'ctrl') requiredKeys.ctrl = true;
-            else if (key === 'alt') requiredKeys.alt = true;
-            else if (key === 'shift') requiredKeys.shift = true;
-            else requiredKeys.key = key;
-        });
-
-        document.addEventListener('keydown', (event) => {
-            if (
-                event.ctrlKey === requiredKeys.ctrl &&
-                event.altKey === requiredKeys.alt &&
-                event.shiftKey === requiredKeys.shift &&
-                event.key.toLowerCase() === requiredKeys.key
-            ) {
-                if (preventDefault) event.preventDefault();
-                callback(event);
-            }
         });
     }
 
