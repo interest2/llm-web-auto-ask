@@ -2,7 +2,7 @@
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
 // @version      2.2.1
-// @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
+// @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如建立目录等提升网页阅读体验的功能），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -938,7 +938,11 @@
                 });
 
                 let targetElement = getInputArea();
+                let retryCount = 0;
+                const maxRetries = 100; // 最多重试（20秒）
                 const interval = setInterval(() => {
+                    retryCount++;
+                    targetElement = getInputArea(); // 每次重试时重新获取元素
                     if (targetElement && typeof targetElement.focus === 'function') {
                         clearInterval(interval);
                         targetElement.focus();
@@ -947,8 +951,12 @@
                         const dispatched = targetElement.dispatchEvent(pasteEvent);
                         console.log('模拟粘贴图片成功');
                         resolve(!!dispatched);
+                    } else if (retryCount >= maxRetries) {
+                        clearInterval(interval);
+                        console.warn('粘贴图片超时：输入框未找到或无法聚焦');
+                        resolve(false);
                     }
-                }, 100);
+                }, 200);
             } catch (error) {
                 console.error('模拟粘贴失败:', error);
                 resolve(false);
@@ -1254,7 +1262,7 @@
                 let VERSION_MARK = FIRST_RUN_KEY + "_2";
                 if(isEmpty(getGV(VERSION_MARK))){
                     setGV(VERSION_MARK, 1);
-                    let updateHint = "脚本近期更新：\n为单个回答内容建立目录导航功能（KIMI 文心除外）";
+                    let updateHint = "脚本近期更新：\n为单个回答内容建立目录导航功能（文心除外）";
                     alert(updateHint);
                 }
             }
