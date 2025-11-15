@@ -76,6 +76,9 @@
     const GROK = 9;
     const WENXIN = 10;
 
+    // 启用 Markdown 标题识别的站点列表（性能优化：仅对需要的站点启用）
+    const ENABLE_MARKDOWN_HEADING_SITES = [CLAUDE];
+
     // 输入框类型分类
     const inputAreaTypes = {
         textarea: [DEEPSEEK, TONGYI, DOUBAO, QWEN],
@@ -168,7 +171,7 @@
         { site: GROK, word: 'Grok', alias: 'Gr' }
     ];
 
-    // （可选）隐藏输入框及周边区域，所需隐藏的元素，是输入框本体的第几层父元素？以下数字即层数（后续应改为可视化配置）
+    // （可选）隐藏输入框及周边区域，所需隐藏的元素，是输入框本体的第几层父元素？以下数字即层数（后续应改为半自动配置）
     const inputAreaHideParentLevel = {
         [KIMI]: 4,
         [DEEPSEEK]: 5,
@@ -179,7 +182,7 @@
         [GEMINI]: 9,
         [QWEN]: 9,
         [CLAUDE]: 6,
-        [GROK]: 7,
+        [GROK]: 10,
         [WENXIN]: 8
     };
 
@@ -1682,64 +1685,48 @@
         return null;
     };
 
-    // 在回答内容区域中查找所有配置的标题级别
-    const findHeadingsInContent = (contentEl) => {
-        if (!contentEl) return [];
+    // 规范化标题文本（移除 emoji、空格、冒号等，但保留数字编号）
+    const normalizeHeadingText = (text) => {
+        if (!text) return '';
         
-        const headingList = [];
+        let normalized = text.trim();
         
-        // 1. 查找现有的 h2~h4 标签标题
-        const headings = contentEl.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
-        Array.from(headings).forEach(h => {
-            // 确保标题是可见的
-            const rect = h.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) return;
-            // 确保标题级别在配置的范围内
-            const level = parseInt(h.tagName.substring(1));
-            if (!SUB_NAV_HEADING_LEVELS.includes(level)) return;
-            
-            let text = h.textContent.trim();
-            
-            // 移除开头的空格和 emoji，但保留数字编号
-            // 先移除开头的连续空格
-            text = text.replace(/^\s+/, '');
-            
-            // 关键优化：先检查第一个字符是否是数字，避免某些环境将数字误识别为 emoji
-            const firstChar = text.charAt(0);
-            if (/[0-9]/.test(firstChar)) {
-                // 第一个字符是数字，不做任何处理，保留完整的数字编号
-                // 例如："8. ..."、"8.1 ..."、"1. ..." 等
-            } else {
-                // 第一个字符不是数字，可能是 emoji 或其他字符
-                // 检查是否是 emoji 开头，且后面紧跟数字（可能含空格）
-                if (/^\p{Emoji}\s*[0-9]/u.test(text)) {
-                    // emoji 后面是数字，只移除 emoji 和空格，保留数字
-                    // 例如："✅ 1. ..." → "1. ..."
-                    text = text.replace(/^\p{Emoji}+\s*/u, '');
-                } else if (/^\p{Emoji}/u.test(text)) {
-                    // emoji 后面不是数字，安全移除 emoji
-                    // 再次确认第一个字符不是数字（双重检查，防止误识别）
-                    if (!/[0-9]/.test(text.charAt(0))) {
-                        text = text.replace(/^\p{Emoji}+\s*/u, '');
-                    }
-                    // 如果第一个字符是数字，说明被误识别为 emoji，不做处理
+        // 移除开头的空格和 emoji，但保留数字编号
+        // 先移除开头的连续空格
+        normalized = normalized.replace(/^\s+/, '');
+        
+        // 关键优化：先检查第一个字符是否是数字，避免某些环境将数字误识别为 emoji
+        const firstChar = normalized.charAt(0);
+        if (/[0-9]/.test(firstChar)) {
+            // 第一个字符是数字，不做任何处理，保留完整的数字编号
+            // 例如："8. ..."、"8.1 ..."、"1. ..." 等
+        } else {
+            // 第一个字符不是数字，可能是 emoji 或其他字符
+            // 检查是否是 emoji 开头，且后面紧跟数字（可能含空格）
+            if (/^\p{Emoji}\s*[0-9]/u.test(normalized)) {
+                // emoji 后面是数字，只移除 emoji 和空格，保留数字
+                // 例如："✅ 1. ..." → "1. ..."
+                normalized = normalized.replace(/^\p{Emoji}+\s*/u, '');
+            } else if (/^\p{Emoji}/u.test(normalized)) {
+                // emoji 后面不是数字，安全移除 emoji
+                // 再次确认第一个字符不是数字（双重检查，防止误识别）
+                if (!/[0-9]/.test(normalized.charAt(0))) {
+                    normalized = normalized.replace(/^\p{Emoji}+\s*/u, '');
                 }
+                // 如果第一个字符是数字，说明被误识别为 emoji，不做处理
             }
-            
-            // 移除末尾的冒号（中英文）
-            text = text.replace(/[:：]+$/, '');
-            
-            headingList.push({
-                element: h,
-                tagName: h.tagName,
-                text: text,
-                level: level,
-                position: rect.top
-            });
-        });
+        }
         
-        // 2. 查找文本中以 "## " 或 "### " 开头的 Markdown 标题
+        // 移除末尾的冒号（中英文）
+        normalized = normalized.replace(/[:：]+$/, '');
+        
+        return normalized;
+    };
+
+    // 查找 Markdown 格式的标题（## 或 ### 开头）
+    const findMarkdownHeadings = (contentEl, headingList, startDomOrder) => {
         // 支持标题被分割在多个元素中的情况（如 <span>## 五、</span><span>标题内容</span>）
+        // 兼容代码块未正确闭合的情况：即使标题在代码块内（因代码块未正确闭合导致的），也要识别为标题
         const markdownHeadingPatterns = [
             { level: 2, prefix: '## ' },  // h2: ## 标题
             { level: 3, prefix: '### ' }  // h3: ### 标题
@@ -1754,11 +1741,12 @@
         );
         
         let textNode;
-        let domOrder = 0; // 记录DOM遍历顺序
+        let domOrder = startDomOrder; // 继续使用传入的domOrder，保持顺序连续
         while (textNode = walker.nextNode()) {
             const text = textNode.textContent;
             if (!text) continue;
             
+            // 兼容代码块未正确闭合的情况：不跳过代码块内的文本节点，识别所有标题
             const lines = text.split(/\n|\r\n?/);
             for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
                 const line = lines[lineIndex];
@@ -1773,6 +1761,7 @@
                         if (!titleText) return;
                         
                         // 找到包含该文本的可见父元素
+                        // 兼容代码块未正确闭合的情况：即使父元素在代码块内，也识别为标题
                         let parentEl = textNode.parentElement;
                         while (parentEl && parentEl !== contentEl) {
                             const rect = parentEl.getBoundingClientRect();
@@ -1804,12 +1793,60 @@
             }
         }
         
+        return domOrder; // 返回更新后的domOrder
+    };
+
+    // 在回答内容区域中查找所有配置的标题级别
+    const findHeadingsInContent = (contentEl) => {
+        if (!contentEl) return [];
+        
+        const headingList = [];
+        
+        // 1. 查找现有的 h2~h4 标签标题
+        let domOrder = 0; // 初始化DOM顺序计数器（HTML标签标题和Markdown标题共用）
+        const headings = contentEl.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
+        Array.from(headings).forEach(h => {
+            // 确保标题是可见的
+            const rect = h.getBoundingClientRect();
+            if (rect.width === 0 || rect.height === 0) return;
+            // 确保标题级别在配置的范围内
+            const level = parseInt(h.tagName.substring(1));
+            if (!SUB_NAV_HEADING_LEVELS.includes(level)) return;
+            
+            // 规范化标题文本
+            const text = normalizeHeadingText(h.textContent);
+            
+            headingList.push({
+                element: h,
+                tagName: h.tagName,
+                text: text,
+                level: level,
+                position: rect.top,
+                domOrder: domOrder++ // 为HTML标签标题也添加domOrder，确保排序正确
+            });
+        });
+        
+        // 2. 查找文本中以 "## " 或 "### " 开头的 Markdown 标题
+        // 性能优化：仅对配置的站点启用此功能，避免对其他站点造成性能占用
+        if (ENABLE_MARKDOWN_HEADING_SITES.includes(site)) {
+            domOrder = findMarkdownHeadings(contentEl, headingList, domOrder);
+        }
+        
         // 3. 去重并排序（按DOM顺序，保持文档中的原始顺序）
         const uniqueHeadings = [];
         const seenKeys = new Set();
         
         // 按DOM顺序排序（TreeWalker遍历的顺序）
-        headingList.sort((a, b) => a.domOrder - b.domOrder);
+        // 如果domOrder不存在，使用position作为备选排序依据
+        headingList.sort((a, b) => {
+            const orderA = a.domOrder !== undefined ? a.domOrder : Infinity;
+            const orderB = b.domOrder !== undefined ? b.domOrder : Infinity;
+            if (orderA !== Infinity && orderB !== Infinity) {
+                return orderA - orderB;
+            }
+            // 如果某个标题没有domOrder，使用position排序
+            return a.position - b.position;
+        });
         
         headingList.forEach(heading => {
             // 使用文本、级别和更精确的位置作为唯一标识，避免重复
@@ -1907,7 +1944,7 @@
     };
 
     // 显示副目录栏
-    const showSubNavBar = (questionIndex, headings) => {
+    const showSubNavBar = (questionIndex, headings, isPolling = false) => {
         // 如果已关闭，则不加载
         if (isSubNavClosed()) {
             return;
@@ -1921,6 +1958,31 @@
         // 检测标题总条数，超过指定数量才显示副目录
         if (headings.length <= SUB_NAV_MIN_ITEMS) {
             return;
+        }
+        
+        // 轮询时的优化：如果当前已有标题且新标题数量少于或等于现有标题数量，可能是DOM还没完全加载
+        // 只有在标题数量增加时才更新（保留更完整的数据）
+        if (isPolling && currentSubNavHeadings.length > 0) {
+            // 如果新标题数量少于现有标题，说明可能丢失了某些标题，不更新
+            if (headings.length < currentSubNavHeadings.length) {
+                console.log(`轮询时标题数量减少（${headings.length} < ${currentSubNavHeadings.length}），保留现有标题`);
+                return;
+            }
+            // 如果标题数量相同，检查是否有实际变化（避免不必要的重建）
+            if (headings.length === currentSubNavHeadings.length) {
+                // 检查标题列表是否完全相同（通过比较标题文本和位置的hash）
+                const existingKeys = new Set(currentSubNavHeadings.map(h => 
+                    `${h.text}_${h.level}_${Math.floor(h.position / 5)}`
+                ));
+                const newKeys = new Set(headings.map(h => 
+                    `${h.text}_${h.level}_${Math.floor(h.position / 5)}`
+                ));
+                // 如果标题完全相同，不更新
+                if (existingKeys.size === newKeys.size && 
+                    [...existingKeys].every(k => newKeys.has(k))) {
+                    return;
+                }
+            }
         }
         
         // 保存标题数据和状态
@@ -2181,7 +2243,10 @@
         }
         
         // 显示副目录栏
-        showSubNavBar(questionIndex, headings);
+        // 检查是否是轮询调用（通过检查副目录栏是否已显示来判断）
+        const isPolling = subNavBar.style.display === 'block' && 
+                         currentSubNavQuestionIndex === questionIndex;
+        showSubNavBar(questionIndex, headings, isPolling);
     };
 
     // 创建导航链接元素
