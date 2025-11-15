@@ -41,9 +41,17 @@
     /**
      * 可自行修改的简单变量
      * */
-    const NAV_MAX_WIDTH = "230px"; // 目录栏最大宽度
-    const NAV_TOP = "20%"; // 目录栏top位置（相对网页整体）
     let MAX_QUEUE = 20; // 历史对话的记忆数量
+
+    const NAV_MAX_WIDTH = "230px"; // 主目录的最大宽度
+    const NAV_TOP = "20%"; // 主目录的默认 top 位置
+    const NAV_TOP_THRESHOLD = 7; // 主目录条目超过此数量时，top位置抬高到5%
+    const SUB_NAV_LEFT = "270px"; // 副目录的水平位置（距离屏幕左侧）
+    const SUB_NAV_WIDTH = "270px"; // 副目录的宽度
+
+    const SUB_NAV_MIN_ITEMS = 2; // 副目录标题总条数超过此数量才显示
+    const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此数量时，top位置抬高到5%
+    const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此数量时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
     const version = "2.2.0";
 
@@ -149,7 +157,7 @@
     let wordConfig = [
         { site: DEEPSEEK, word: 'DeepSeek', alias: 'D'},
         { site: KIMI, word: 'Kimi', alias: 'K' },
-        { site: TONGYI, word: '通义千问', alias: '通' },
+        { site: TONGYI, word: '千问', alias: '千' },
         { site: QWEN, word: 'Qwen', alias: 'Q' },
         { site: DOUBAO, word: '豆包', alias: '豆' },
         { site: WENXIN, word: '文心一言', alias: '文' },
@@ -1286,53 +1294,56 @@
      * ║                                                                      ║
      * ═══════════════════════════════════════════════════════════════════════
      ******************************************************************************/
+        
+    // 查找回答内容区域的查找限制（用于性能优化）
+    const FIND_ANSWER_SIBLING_LIMIT = 20; // 兄弟元素查找上限（原30，已优化）
+    const FIND_ANSWER_MIDDLE_SIBLING_LIMIT = 30; // 中间问题查找时的兄弟元素上限（原50，已优化）
+    const FIND_ANSWER_LAST_SIBLING_LIMIT = 15; // 最后一个问题查找时的兄弟元素上限（原20，已优化）
+    const FIND_ANSWER_PARENT_DEPTH_LIMIT = 10// 向上查找父元素的最大深度（原10，已优化）
+
 
     const NAV_ITEM_COLOR = "#333";
+    // 副目录项悬停样式常量
+    const SUB_NAV_ITEM_HOVER_BG = '#f0f0f0';
+    const SUB_NAV_ITEM_HOVER_COLOR = '#0066cc';
+    const SUB_NAV_ITEM_NORMAL_BG = 'transparent';
+    const SUB_NAV_ITEM_NORMAL_COLOR = '#333';
     // 目录导航相关常量
     const NAV_HIGHLIGHT_THRESHOLD = 0.3; // 目录高亮阈值（0~30%高亮当前项，30%~100%高亮前一项）
     const NAV_VIEWPORT_THRESHOLD = 0.9; // 可视区域阈值（90%）
     const NAV_NEAR_TOP_THRESHOLD = 24; // 接近顶部阈值（像素）
     const NAV_CLICK_LOCK_DURATION = 1200; // 点击锁定持续时间（毫秒）
     // 副目录标题级别配置（可配置为 h2~h4 或 h2~h3）
-    const SUB_NAV_HEADING_LEVELS = [2, 3, 4]; // 支持 h2, h3, h4，如需只支持 h2~h3，改为 [2, 3]
+    const SUB_NAV_HEADING_LEVELS = [4, 3, 2]; // 支持 h4, h3, h2（顺序从低到高）
     const SUB_NAV_HEADING_SELECTOR = SUB_NAV_HEADING_LEVELS.map(level => `h${level}`).join(', '); // 生成选择器字符串，如 "h2, h3, h4"
     const SUB_NAV_HEADING_TAGS = SUB_NAV_HEADING_LEVELS.map(level => `H${level}`); // 生成标签数组，如 ["H2", "H3", "H4"]
 
     // 样式常量
     const NAV_STYLES = {
+        // 主目录样式
         navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:100vh;overflow-y:auto;box-sizing:border-box;`,
         miniButton: `position:fixed;top:${NAV_TOP};right:15px;color:${NAV_ITEM_COLOR};border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:2147483647;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
-        link: `width:100%;padding:4px 5px;cursor:pointer;color:#333;font-size:14px;line-height:1.5;white-space:normal;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;max-height:calc(1.9em * 2);box-sizing:border-box;`,
-        linkContainer: `display:flex;align-items:center;gap:4px;width:100%;`,
-        waveIcon: `font-size:12px;cursor:pointer;color:#666;padding:2px 4px;border-radius:3px;user-select:none;flex-shrink:0;transition:background-color 0.2s;`,
         title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;`,
         hideBtn: `font-weight:normal;color:#666;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`,
-        subNavBar: `position:fixed;left:270px;top:5%;width:270px;max-height:94vh;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+        linkContainer: `display:flex;align-items:center;gap:4px;width:100%;`,
+        link: `width:100%;padding:4px 2px;cursor:pointer;color:#333;font-size:14px;line-height:1.5;white-space:normal;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;max-height:calc(1.9em * 2);box-sizing:border-box;`,
+        waveIcon: `font-size:12px;cursor:pointer;color:#666;padding:0;border-radius:3px;user-select:none;flex-shrink:0;transition:background-color 0.2s;`,
+        waveIconHover: `background-color:#f0f0f0;color:#0066cc;`,
+        waveIconNormal: `background-color:transparent;color:#333;`,
+        
+        // 副目录样式
+        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${NAV_TOP};width:${SUB_NAV_WIDTH};max-height:94vh;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
         subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
-        subNavItem: `padding:4px 8px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
-        subNavItemH2: `padding-left:8px;font-weight:600;`,
-        subNavItemH3: `padding-left:16px;font-weight:500;`,
-        subNavItemH4: `padding-left:24px;font-weight:400;`,
-        subNavCloseBtn: `position:absolute;top:6px;right:8px;font-size:16px;cursor:pointer;color:#777;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+        subNavCloseBtn: `position:absolute;top:0;right:8px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+        subNavItem: `padding:4px 2px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
+        subNavItemH2: `padding-left:2px;font-weight:600;`,
+        subNavItemH3: `padding-left:10px;font-weight:500;`,
+        subNavItemH4: `padding-left:18px;font-weight:400;`,
+        levelBtnGroup: `display:flex;gap:4px;align-items:center;`,
         levelBtn: `padding:2px 8px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;transition:all 0.2s;user-select:none;`,
         levelBtnActive: `background:#0066cc;color:#fff;border-color:#0066cc;`,
-        levelBtnGroup: `display:flex;gap:4px;align-items:center;`
-    };
-
-    // 弹窗样式常量
-    const POPUP_STYLES = {
-        overlay: `position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:999999999;display:flex;justify-content:center;align-items:center;padding:20px;box-sizing:border-box;`,
-        modal: `position:relative;background:white;border-radius:12px;padding:20px;max-width:30vw;max-height:50vh;width:auto;height:auto;box-shadow:0 8px 32px rgba(0,0,0,0.3);display:flex;flex-direction:column;align-items:center;overflow:hidden;box-sizing:border-box;`,
-        closeBtn: `position:absolute;top:10px;right:15px;background:none;border:none;font-size:24px;cursor:pointer;color:#666;width:30px;height:30px;display:flex;align-items:center;justify-content:center;border-radius:50%;transition:background-color 0.2s;z-index:1;`,
-        imgContainer: `width:100%;height:100%;display:flex;justify-content:center;align-items:center;overflow:hidden;`,
-        img: `max-width:calc(30vw - 60px);max-height:calc(50vh - 200px);width:auto;height:auto;object-fit:contain;border-radius:8px;display:block;`,
-        errorText: `color:#666;text-align:center;`,
-        titleText: `font-size:20px;font-weight:bold;color:#333;text-align:center;margin-bottom:15px;padding:10px 15px;border-bottom:1px solid #eee;line-height:1.4;word-wrap:break-word;white-space:normal;max-width:100%;`,
-        buttonContainer: `display:flex;justify-content:center;gap:10px;margin-top:15px;padding-top:15px;border-top:1px solid #eee;width:100%;`,
-        optionButton: `background:#fff;border:1px solid #ddd;border-radius:6px;padding:8px 16px;font-size:14px;color:#333;cursor:pointer;transition:all 0.2s;min-width:80px;text-align:center;`,
-        primaryButton: `background:#ec7258;border:1px solid #ec7258;border-radius:6px;padding:10px 20px;font-size:14px;color:#fff;cursor:pointer;transition:all 0.2s;min-width:90px;text-align:center;font-weight:bold;box-shadow:0 2px 4px rgba(0,123,255,0.3);`,
-        secondaryButton: `background:#f8f9fa;border:1px solid #dee2e6;border-radius:6px;padding:8px 16px;font-size:13px;color:#6c757d;cursor:pointer;transition:all 0.2s;min-width:80px;text-align:center;`,
-        toast: `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.8);color:white;padding:15px 25px;border-radius:8px;font-size:16px;font-weight:bold;z-index:999999999;animation:toastFadeIn 0.3s ease-out;`
+        levelBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
+        levelBtnLeave: `background-color:#fff;border-color:#ddd;color:#333;`
     };
 
     // 创建导航元素
@@ -1353,7 +1364,7 @@
     let navQuestions, navLinks = [], navIO, elToLink = new Map();
     let clickedTarget = null, clickLockUntil = 0, scrollDebounceTimer;
     let currentSubNavQuestionIndex = -1; // 当前显示的副目录对应的主目录索引
-    let currentSubNavLevel = 3; // 当前副目录显示的层级（默认 h3）
+    let currentSubNavLevel = 4; // 当前副目录显示的层级（默认 h4）
     let currentSubNavHeadings = []; // 当前副目录的所有标题数据（未过滤）
 
     // 从localStorage读取最小化状态，默认为false
@@ -1417,14 +1428,18 @@
             return;
         }
 
-        // 如果条目数量超过7条，则将navBar的top改为5%
-        if(linkCount > 7) {
-            navBar.style.top = "5%";
-            navMiniButton.style.top = "5%";
+        // 如果条目数量超过指定阈值，则将navBar的top改为5%
+        let navTop;
+        if(linkCount > NAV_TOP_THRESHOLD) {
+            navTop = "5%";
+            navBar.style.top = navTop;
+            navMiniButton.style.top = navTop;
         } else {
-            navBar.style.top = NAV_TOP;
-            navMiniButton.style.top = NAV_TOP;
+            navTop = NAV_TOP;
+            navBar.style.top = navTop;
+            navMiniButton.style.top = navTop;
         }
+        
 
         if(navMinimized) {
             navBar.style.visibility = "hidden";
@@ -1545,7 +1560,7 @@
             // 问题不在列表中，尝试直接查找
             let nextSibling = questionEl.nextElementSibling;
             let checkedCount = 0;
-            while (nextSibling && checkedCount < 30) {
+            while (nextSibling && checkedCount < FIND_ANSWER_SIBLING_LIMIT) {
                 const headings = nextSibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
                 if (headings.length > 0) {
                     return nextSibling;
@@ -1563,7 +1578,7 @@
             // 如果是最后一个问题，查找它之后的所有内容
             let current = questionEl;
             let depth = 0;
-            while (current && depth < 10) {
+            while (current && depth < FIND_ANSWER_PARENT_DEPTH_LIMIT) {
                 // 查找当前元素的父元素
                 let parent = current.parentElement;
                 if (!parent) break;
@@ -1571,7 +1586,7 @@
                 // 查找父元素的兄弟元素
                 let sibling = parent.nextElementSibling;
                 let checkedCount = 0;
-                while (sibling && checkedCount < 20) {
+                while (sibling && checkedCount < FIND_ANSWER_LAST_SIBLING_LIMIT) {
                     const headings = sibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
                     if (headings.length > 0) {
                         return sibling;
@@ -1596,7 +1611,7 @@
             // 查找问题元素和下一个问题元素之间的所有元素
             let current = questionEl;
             let depth = 0;
-            while (current && depth < 10) {
+            while (current && depth < FIND_ANSWER_PARENT_DEPTH_LIMIT) {
                 // 查找当前元素的父元素
                 let parent = current.parentElement;
                 if (!parent) break;
@@ -1604,7 +1619,7 @@
                 // 查找父元素的兄弟元素，直到找到下一个问题
                 let sibling = parent.nextElementSibling;
                 let checkedCount = 0;
-                while (sibling && checkedCount < 50) {
+                while (sibling && checkedCount < FIND_ANSWER_MIDDLE_SIBLING_LIMIT) {
                     // 如果找到了下一个问题，停止搜索
                     if (sibling.contains(nextQuestion) || sibling === nextQuestion) {
                         break;
@@ -1634,7 +1649,7 @@
         // 如果以上方法都没找到，尝试在问题元素之后直接查找
         let nextSibling = questionEl.nextElementSibling;
         let checkedCount = 0;
-        while (nextSibling && checkedCount < 30) {
+        while (nextSibling && checkedCount < FIND_ANSWER_SIBLING_LIMIT) {
             const headings = nextSibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
             if (headings.length > 0) {
                 return nextSibling;
@@ -1839,12 +1854,12 @@
             
             // 鼠标悬停效果
             item.addEventListener('mouseenter', () => {
-                item.style.backgroundColor = '#f0f0f0';
-                item.style.color = '#0066cc';
+                item.style.backgroundColor = SUB_NAV_ITEM_HOVER_BG;
+                item.style.color = SUB_NAV_ITEM_HOVER_COLOR;
             });
             item.addEventListener('mouseleave', () => {
-                item.style.backgroundColor = 'transparent';
-                item.style.color = '#333';
+                item.style.backgroundColor = SUB_NAV_ITEM_NORMAL_BG;
+                item.style.color = SUB_NAV_ITEM_NORMAL_COLOR;
             });
             
             // 点击跳转
@@ -1863,16 +1878,53 @@
         });
     };
 
+    // 根据副目录条目数量动态设置top位置
+    const updateSubNavTop = () => {
+        const subNavItemCount = subNavBar.querySelectorAll('.sub-nav-item').length;
+        if (subNavItemCount > SUB_NAV_TOP_THRESHOLD) {
+            subNavBar.style.top = "5%";
+        } else {
+            subNavBar.style.top = NAV_TOP;
+        }
+    };
+
     // 显示副目录栏
     const showSubNavBar = (questionIndex, headings) => {
+        // 如果已关闭，则不加载
+        if (isSubNavClosed()) {
+            return;
+        }
+        
         if (!headings || headings.length === 0) {
             console.log('未找到标题');
+            return;
+        }
+        
+        // 检测标题总条数，超过指定数量才显示副目录
+        if (headings.length <= SUB_NAV_MIN_ITEMS) {
             return;
         }
         
         // 保存标题数据和状态
         currentSubNavHeadings = headings;
         currentSubNavQuestionIndex = questionIndex;
+        
+        // 获取实际存在的标题层级（从高到低：h4, h3, h2）
+        const existingLevels = [...new Set(headings.map(h => h.level))].sort((a, b) => b - a);
+        // 设置默认层级
+        if (existingLevels.length > 0) {
+            const highestLevel = existingLevels[0]; // 最高层级（数字最大，如h4=4）
+            // 如果总条数超过阈值，则默认显示到上一层级
+            if (headings.length > SUB_NAV_PREV_LEVEL_THRESHOLD) {
+                // 查找上一层级（比最高层级小1的层级）
+                const prevLevel = highestLevel - 1;
+                // 如果存在上一层级，则显示到上一层级；否则显示到最高层级
+                currentSubNavLevel = existingLevels.includes(prevLevel) ? prevLevel : highestLevel;
+            } else {
+                // 否则显示到实际存在的最高层级（h4 > h3 > h2）
+                currentSubNavLevel = highestLevel;
+            }
+        }
         
         // 清空副目录栏
         subNavBar.replaceChildren();
@@ -1901,8 +1953,8 @@
         const levelBtnGroup = document.createElement('div');
         levelBtnGroup.style.cssText = NAV_STYLES.levelBtnGroup;
         
-        // 创建层级按钮（只显示配置中包含的层级）
-        SUB_NAV_HEADING_LEVELS.forEach(level => {
+        // 创建层级按钮（只显示实际存在的层级，按钮显示顺序为 h2, h3, h4，从高到低）
+        existingLevels.slice().reverse().forEach(level => {
             const btn = document.createElement('div');
             btn.textContent = `h${level}`;
             btn.dataset.level = level;
@@ -1917,15 +1969,12 @@
             // 鼠标悬停效果
             btn.addEventListener('mouseenter', () => {
                 if (level !== currentSubNavLevel) {
-                    btn.style.backgroundColor = '#f0f0f0';
-                    btn.style.borderColor = '#ccc';
+                    btn.style.cssText = btnStyle + NAV_STYLES.levelBtnHover;
                 }
             });
             btn.addEventListener('mouseleave', () => {
                 if (level !== currentSubNavLevel) {
-                    btn.style.backgroundColor = '#fff';
-                    btn.style.borderColor = '#ddd';
-                    btn.style.color = '#333';
+                    btn.style.cssText = btnStyle + NAV_STYLES.levelBtnLeave;
                 }
             });
             
@@ -1948,6 +1997,9 @@
                 
                 // 重新渲染标题项
                 renderSubNavItems();
+                
+                // 根据副目录条目数量动态设置top位置
+                updateSubNavTop();
             });
             
             levelBtnGroup.appendChild(btn);
@@ -1972,6 +2024,18 @@
         });
         closeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            
+            // 检查是否是首次点击（用GM存储标记状态）
+            const firstCloseKey = `${T}subNavFirstCloseShown`;
+            const hasShownFirstClose = GM_getValue(firstCloseKey, false);
+            if (!hasShownFirstClose) {
+                alert("这家大模型将不再显示副目录；\n若需恢复，点击主目录每条提问前的小图标即可");
+                GM_setValue(firstCloseKey, true);
+            }
+            
+            // 记录关闭状态
+            setSubNavClosed(true);
+            
             hideSubNavBar();
         });
         titleContainer.appendChild(closeBtn);
@@ -1982,8 +2046,32 @@
         // 渲染标题项
         renderSubNavItems();
         
+        // 根据副目录条目数量动态设置top位置
+        updateSubNavTop();
+        
         // 显示副目录栏
         subNavBar.style.display = 'block';
+    };
+
+    // 获取副目录关闭状态的key
+    const getSubNavClosedKey = () => {
+        return `${T}subNavClosed`;
+    };
+
+    // 检查副目录是否已关闭
+    const isSubNavClosed = () => {
+        const key = getSubNavClosedKey();
+        return localStorage.getItem(key) === 'true';
+    };
+
+    // 设置副目录关闭状态
+    const setSubNavClosed = (closed) => {
+        const key = getSubNavClosedKey();
+        if (closed) {
+            localStorage.setItem(key, 'true');
+        } else {
+            localStorage.removeItem(key);
+        }
     };
 
     // 隐藏副目录栏
@@ -1995,6 +2083,11 @@
     // 根据问题索引自动显示对应的副目录
     const autoShowSubNav = (questionIndex) => {
         if (questionIndex < 0 || !navQuestions || questionIndex >= navQuestions.length) {
+            return;
+        }
+        
+        // 如果已关闭，则不加载
+        if (isSubNavClosed()) {
             return;
         }
         
@@ -2028,16 +2121,14 @@
 
         // 创建波浪图标
         const waveIcon = document.createElement('span');
-        waveIcon.textContent = '~';
+        waveIcon.textContent = '📖';
         waveIcon.style.cssText = NAV_STYLES.waveIcon;
         waveIcon.title = '显示副目录';
         waveIcon.addEventListener('mouseenter', () => {
-            waveIcon.style.backgroundColor = '#f0f0f0';
-            waveIcon.style.color = '#0066cc';
+            waveIcon.style.cssText = NAV_STYLES.waveIcon + NAV_STYLES.waveIconHover;
         });
         waveIcon.addEventListener('mouseleave', () => {
-            waveIcon.style.backgroundColor = 'transparent';
-            waveIcon.style.color = '#333';
+            waveIcon.style.cssText = NAV_STYLES.waveIcon + NAV_STYLES.waveIconNormal;
         });
         waveIcon.addEventListener('click', (e) => {
             e.preventDefault();
@@ -2076,6 +2167,9 @@
                 console.log('未找到h2~h4标题');
                 return;
             }
+            
+            // 清除关闭状态（恢复副目录）
+            setSubNavClosed(false);
             
             // 显示副目录栏
             showSubNavBar(i, headings);
@@ -2172,7 +2266,7 @@
         title.style.cssText = NAV_STYLES.title;
 
         const titleText = document.createElement('span');
-        titleText.textContent = '目录';
+        titleText.textContent = '主目录';
 
         const hideBtn = document.createElement('span');
         hideBtn.textContent = '隐藏';
