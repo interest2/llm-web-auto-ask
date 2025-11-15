@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
+// @version      2.2.1
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如提升网页阅读体验），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -53,7 +53,7 @@
     const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此数量时，top位置抬高到5%
     const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此数量时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
-    const version = "2.2.0";
+    const version = "2.2.1";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -1238,19 +1238,27 @@
         setTimeout(addSendButtonListener, 1000);
 
         setTimeout(function(){
+            // 首次运行
             if(isEmpty(getGV(FIRST_RUN_KEY))){
                 setGV(FIRST_RUN_KEY, 1);
-
                 let updateHint = "脚本使用提示：\n网页右下角的多选面板可勾选提问范围，\n点击\"禁用\"可一键关闭同步提问";
-
+                
                 if(!isEmpty(getGV("notice4"))){
                     setGV("notice4", "");
-
                     updateHint = "脚本近期更新：\n支持带图片（粘贴方式）提问的自动同步；\n进一步降低核心功能对官网样式的依赖";
                 }
-
+                
                 alert(updateHint);
+            } else {
+                // 非首次运行，检查版本更新
+                let VERSION_MARK = FIRST_RUN_KEY + "_" + version;
+                if(isEmpty(getGV(VERSION_MARK))){
+                    setGV(VERSION_MARK, 1);
+                    let updateHint = "脚本近期更新：\n为单个回答内容建立目录导航功能";
+                    alert(updateHint);
+                }
             }
+
         }, 800);
     }, panelDelay);
 
@@ -1366,6 +1374,7 @@
     let currentSubNavQuestionIndex = -1; // 当前显示的副目录对应的主目录索引
     let currentSubNavLevel = 4; // 当前副目录显示的层级（默认 h4）
     let currentSubNavHeadings = []; // 当前副目录的所有标题数据（未过滤）
+    let subNavPollInterval = null; // 副目录轮询定时器
 
     // 从localStorage读取最小化状态，默认为false
     let navMinimized = localStorage.getItem(T + 'navMinimized') === 'true';
@@ -2051,6 +2060,9 @@
         
         // 显示副目录栏
         subNavBar.style.display = 'block';
+        
+        // 启动轮询更新，每10秒检查一次是否需要更新副目录
+        startSubNavObserver(questionIndex);
     };
 
     // 获取副目录关闭状态的key
@@ -2074,10 +2086,48 @@
         }
     };
 
+    // 启动副目录轮询更新（复用 autoShowSubNav 实现）
+    const startSubNavObserver = (questionIndex) => {
+        // 先停止之前的轮询
+        stopSubNavObserver();
+        
+        if (questionIndex < 0 || !navQuestions || questionIndex >= navQuestions.length) {
+            return;
+        }
+        
+        // 保存问题索引，供轮询函数使用
+        const pollQuestionIndex = questionIndex;
+        
+        // 轮询间隔
+        const POLL_INTERVAL = 6000;
+        
+        // 启动轮询定时器，复用 autoShowSubNav 实现更新
+        subNavPollInterval = setInterval(() => {
+            // 检查副目录是否还在显示或已关闭
+            if (subNavBar.style.display !== 'block' || currentSubNavQuestionIndex !== pollQuestionIndex || isSubNavClosed()) {
+                stopSubNavObserver();
+                return;
+            }
+            
+            // 复用 autoShowSubNav 实现更新
+            autoShowSubNav(pollQuestionIndex);
+        }, POLL_INTERVAL);
+    };
+    
+    // 停止副目录轮询更新
+    const stopSubNavObserver = () => {
+        if (subNavPollInterval) {
+            clearInterval(subNavPollInterval);
+            subNavPollInterval = null;
+        }
+    };
+    
     // 隐藏副目录栏
     const hideSubNavBar = () => {
         subNavBar.style.display = 'none';
         currentSubNavQuestionIndex = -1;
+        // 停止内容变化监听
+        stopSubNavObserver();
     };
 
     // 根据问题索引自动显示对应的副目录
