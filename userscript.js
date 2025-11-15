@@ -1251,10 +1251,10 @@
                 alert(updateHint);
             } else {
                 // 非首次运行，检查版本更新
-                let VERSION_MARK = FIRST_RUN_KEY + "_" + version;
+                let VERSION_MARK = FIRST_RUN_KEY + "_2";
                 if(isEmpty(getGV(VERSION_MARK))){
                     setGV(VERSION_MARK, 1);
-                    let updateHint = "脚本近期更新：\n为单个回答内容建立目录导航功能";
+                    let updateHint = "脚本近期更新：\n为单个回答内容建立目录导航功能（KIMI 文心除外）";
                     alert(updateHint);
                 }
             }
