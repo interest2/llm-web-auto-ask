@@ -1922,10 +1922,37 @@
                 e.preventDefault();
                 e.stopPropagation();
                 
-                if (heading.element && document.body.contains(heading.element)) {
-                    heading.element.scrollIntoView({ block: 'start' });
+                // 先尝试使用保存的元素引用
+                let targetElement = heading.element;
+                
+                // 如果元素引用失效，重新查找对应的标题元素
+                if (!targetElement || !document.body.contains(targetElement)) {
+                    // 获取当前问题索引
+                    const questionIndex = currentSubNavQuestionIndex;
+                    if (questionIndex >= 0 && navQuestions && questionIndex < navQuestions.length) {
+                        const targetEl = navQuestions[questionIndex];
+                        if (targetEl && document.body.contains(targetEl)) {
+                            // 查找回答内容区域
+                            const answerContent = findAnswerContent(targetEl);
+                            if (answerContent) {
+                                // 重新查找所有标题
+                                const headings = findHeadingsInContent(answerContent);
+                                // 查找匹配的标题（通过文本和级别）
+                                const matchedHeading = headings.find(h => 
+                                    h.text === heading.text && h.level === heading.level
+                                );
+                                if (matchedHeading && matchedHeading.element) {
+                                    targetElement = matchedHeading.element;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                if (targetElement && document.body.contains(targetElement)) {
+                    targetElement.scrollIntoView({ block: 'start' });
                 } else {
-                    console.warn('标题元素不存在');
+                    console.warn('标题元素不存在，无法跳转');
                 }
             });
             
