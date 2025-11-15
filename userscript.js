@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      2.2.1
+// @version      2.2.3
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如建立目录等提升网页阅读体验的功能），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -53,7 +53,7 @@
     const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此数量时，top位置抬高到5%
     const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此数量时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
-    const version = "2.2.1";
+    const version = "2.2.3";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -1383,6 +1383,7 @@
     let currentSubNavLevel = 4; // 当前副目录显示的层级（默认 h4）
     let currentSubNavHeadings = []; // 当前副目录的所有标题数据（未过滤）
     let subNavPollInterval = null; // 副目录轮询定时器
+    let isSubNavLevelManuallySet = false; // 用户是否手动选择了层级
 
     // 从localStorage读取最小化状态，默认为false
     let navMinimized = localStorage.getItem(T + 'navMinimized') === 'true';
@@ -1924,22 +1925,33 @@
         
         // 保存标题数据和状态
         currentSubNavHeadings = headings;
-        currentSubNavQuestionIndex = questionIndex;
         
         // 获取实际存在的标题层级（从高到低：h4, h3, h2）
         const existingLevels = [...new Set(headings.map(h => h.level))].sort((a, b) => b - a);
-        // 设置默认层级
-        if (existingLevels.length > 0) {
-            const highestLevel = existingLevels[0]; // 最高层级（数字最大，如h4=4）
-            // 如果总条数超过阈值，则默认显示到上一层级
-            if (headings.length > SUB_NAV_PREV_LEVEL_THRESHOLD) {
-                // 查找上一层级（比最高层级小1的层级）
-                const prevLevel = highestLevel - 1;
-                // 如果存在上一层级，则显示到上一层级；否则显示到最高层级
-                currentSubNavLevel = existingLevels.includes(prevLevel) ? prevLevel : highestLevel;
-            } else {
-                // 否则显示到实际存在的最高层级（h4 > h3 > h2）
-                currentSubNavLevel = highestLevel;
+        
+        // 检查是否是同一个问题且用户已手动选择层级
+        const isSameQuestion = questionIndex === currentSubNavQuestionIndex;
+        if (isSameQuestion && isSubNavLevelManuallySet) {
+            // 如果是同一个问题且用户已手动选择层级，保留用户的选择，不重新计算
+            currentSubNavQuestionIndex = questionIndex;
+        } else {
+            // 如果是新问题或用户未手动选择，重新计算层级
+            currentSubNavQuestionIndex = questionIndex;
+            isSubNavLevelManuallySet = false; // 重置手动选择标志
+            
+            // 设置默认层级
+            if (existingLevels.length > 0) {
+                const highestLevel = existingLevels[0]; // 最高层级（数字最大，如h4=4）
+                // 如果总条数超过阈值，则默认显示到上一层级
+                if (headings.length > SUB_NAV_PREV_LEVEL_THRESHOLD) {
+                    // 查找上一层级（比最高层级小1的层级）
+                    const prevLevel = highestLevel - 1;
+                    // 如果存在上一层级，则显示到上一层级；否则显示到最高层级
+                    currentSubNavLevel = existingLevels.includes(prevLevel) ? prevLevel : highestLevel;
+                } else {
+                    // 否则显示到实际存在的最高层级（h4 > h3 > h2）
+                    currentSubNavLevel = highestLevel;
+                }
             }
         }
         
@@ -2002,6 +2014,8 @@
                 
                 // 更新当前层级
                 currentSubNavLevel = level;
+                // 标记用户已手动选择层级
+                isSubNavLevelManuallySet = true;
                 
                 // 更新所有按钮的样式
                 levelBtnGroup.querySelectorAll('[data-level]').forEach(b => {
