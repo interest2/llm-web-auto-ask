@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         多家大模型网页同时回答
+// @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.2.5
-// @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如建立目录等提升网页阅读体验的功能），见本页面下方介绍。
+// @version      2.2.6
+// @description  输入一次问题，就能自动同步在各家大模型官网提问。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。以及目录导航等提升网页阅读体验的功能，见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -53,7 +53,7 @@
     const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此数量时，top位置抬高到5%
     const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此数量时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
-    const version = "2.2.5";
+    const version = "2.2.6";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -1332,10 +1332,10 @@
     const NAV_VIEWPORT_THRESHOLD = 0.9; // 可视区域阈值（90%）
     const NAV_NEAR_TOP_THRESHOLD = 24; // 接近顶部阈值（像素）
     const NAV_CLICK_LOCK_DURATION = 1200; // 点击锁定持续时间（毫秒）
-    // 副目录标题级别配置（可配置为 h2~h4 或 h2~h3）
-    const SUB_NAV_HEADING_LEVELS = [4, 3, 2]; // 支持 h4, h3, h2（顺序从低到高）
-    const SUB_NAV_HEADING_SELECTOR = SUB_NAV_HEADING_LEVELS.map(level => `h${level}`).join(', '); // 生成选择器字符串，如 "h2, h3, h4"
-    const SUB_NAV_HEADING_TAGS = SUB_NAV_HEADING_LEVELS.map(level => `H${level}`); // 生成标签数组，如 ["H2", "H3", "H4"]
+    // 副目录标题级别配置（可配置为 h1~h4、h2~h4 或 h2~h3）
+    const SUB_NAV_HEADING_LEVELS = [4, 3, 2, 1]; // 支持 h4, h3, h2, h1（顺序从低到高）
+    const SUB_NAV_HEADING_SELECTOR = SUB_NAV_HEADING_LEVELS.map(level => `h${level}`).join(', '); // 生成选择器字符串，如 "h1, h2, h3, h4"
+    const SUB_NAV_HEADING_TAGS = SUB_NAV_HEADING_LEVELS.map(level => `H${level}`); // 生成标签数组，如 ["H1", "H2", "H3", "H4"]
 
     // 样式常量
     const NAV_STYLES = {
@@ -1355,6 +1355,7 @@
         subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
         subNavCloseBtn: `position:absolute;top:0;right:8px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
         subNavItem: `padding:4px 2px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
+        subNavItemH1: `padding-left:0px;font-weight:700;`,
         subNavItemH2: `padding-left:2px;font-weight:600;`,
         subNavItemH3: `padding-left:10px;font-weight:500;`,
         subNavItemH4: `padding-left:18px;font-weight:400;`,
@@ -1748,13 +1749,14 @@
         return normalized;
     };
 
-    // 查找 Markdown 格式的标题（## 或 ### 开头）
+    // 查找 Markdown 格式的标题（#、## 或 ### 开头）
     const findMarkdownHeadings = (contentEl, headingList, startDomOrder) => {
         // 支持标题被分割在多个元素中的情况（如 <span>## 五、</span><span>标题内容</span>）
         // 兼容代码块未正确闭合的情况：即使标题在代码块内（因代码块未正确闭合导致的），也要识别为标题
         const markdownHeadingPatterns = [
-            { level: 2, prefix: '## ' },  // h2: ## 标题
-            { level: 3, prefix: '### ' }  // h3: ### 标题
+            { level: 1, prefix: '# ' },    // h1: # 标题
+            { level: 2, prefix: '## ' },   // h2: ## 标题
+            { level: 3, prefix: '### ' }   // h3: ### 标题
         ];
 
         // 检查纯文本节点（包括合并后的文本，如分割在多个span中的标题在textContent中会合并成一行）
@@ -1908,6 +1910,7 @@
         
         // 创建标题级别样式映射
         const headingStyleMap = {
+            1: NAV_STYLES.subNavItemH1,
             2: NAV_STYLES.subNavItemH2,
             3: NAV_STYLES.subNavItemH3,
             4: NAV_STYLES.subNavItemH4
