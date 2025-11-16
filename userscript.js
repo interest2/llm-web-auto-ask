@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答
 // @namespace    http://tampermonkey.net/
-// @version      2.2.3
+// @version      2.2.5
 // @description  输入一次问题，就能自动在各家大模型官网同步提问，节省了到处粘贴提问并等待的麻烦。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。其他更多功能（例如建立目录等提升网页阅读体验的功能），见本页面下方介绍。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -53,7 +53,7 @@
     const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此数量时，top位置抬高到5%
     const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此数量时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
-    const version = "2.2.3";
+    const version = "2.2.5";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -1362,7 +1362,12 @@
         levelBtn: `padding:2px 8px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;transition:all 0.2s;user-select:none;`,
         levelBtnActive: `background:#0066cc;color:#fff;border-color:#0066cc;`,
         levelBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
-        levelBtnLeave: `background-color:#fff;border-color:#ddd;color:#333;`
+        levelBtnLeave: `background-color:#fff;border-color:#ddd;color:#333;`,
+       
+        subNavPositionBtn: `position:absolute;top:0;right:32px;font-size:12px;cursor:pointer;color:#111;width:40px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+        subNavPositionBtnHover: `background-color:#f0f0f0;`,
+        subNavPositionBtnNormal: `background-color:transparent;`,
+        subNavPositionInput: `position:absolute;top:0;right:32px;width:60px;height:18px;padding:0 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;`
     };
 
     // 创建导航元素
@@ -1374,10 +1379,30 @@
     navMiniButton.textContent = '目录';
     navMiniButton.style.cssText = NAV_STYLES.miniButton;
 
+    // 获取副目录left位置的key
+    const getSubNavLeftKey = () => {
+        return `${T}subNavLeft`;
+    };
+
+    // 获取副目录的left值（优先从localStorage读取）
+    const getSubNavLeft = () => {
+        const key = getSubNavLeftKey();
+        const savedLeft = localStorage.getItem(key);
+        return savedLeft || SUB_NAV_LEFT;
+    };
+
+    // 设置副目录的left值到localStorage
+    const setSubNavLeft = (left) => {
+        const key = getSubNavLeftKey();
+        localStorage.setItem(key, left);
+    };
+
     // 创建副目录栏元素
     const subNavBar = document.createElement('div');
     subNavBar.id = "tool-sub-nav-bar";
-    subNavBar.style.cssText = NAV_STYLES.subNavBar;
+    // 使用动态获取的left值设置样式
+    const subNavLeft = getSubNavLeft();
+    subNavBar.style.cssText = NAV_STYLES.subNavBar.replace(`left:${SUB_NAV_LEFT}`, `left:${subNavLeft}`);
 
     // 状态变量
     let navQuestions, navLinks = [], navIO, elToLink = new Map();
@@ -2131,6 +2156,62 @@
         titleRow.appendChild(titleLeft);
         titleContainer.appendChild(titleRow);
         
+        // 创建位置按钮
+        const positionBtn = document.createElement('div');
+        positionBtn.style.cssText = NAV_STYLES.subNavPositionBtn;
+        positionBtn.textContent = '位置';
+        positionBtn.title = '设置副目录位置';
+        positionBtn.addEventListener('mouseenter', () => {
+            positionBtn.style.backgroundColor = '#f0f0f0';
+        });
+        positionBtn.addEventListener('mouseleave', () => {
+            positionBtn.style.backgroundColor = 'transparent';
+        });
+        positionBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            
+            // 创建输入框
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = getSubNavLeft();
+            input.style.cssText = NAV_STYLES.subNavPositionInput;
+            
+            // 替换按钮为输入框
+            positionBtn.style.display = 'none';
+            titleContainer.appendChild(input);
+            input.focus();
+            input.select();
+            
+            // blur事件：保存值并更新位置
+            input.addEventListener('blur', () => {
+                const newLeft = input.value.trim();
+                // 检查格式：需为数字+px
+                const formatRegex = /^\d+(\.\d+)?px$/;
+                if (newLeft && formatRegex.test(newLeft)) {
+                    // 格式正确，保存到localStorage
+                    setSubNavLeft(newLeft);
+                    // 更新副目录的left位置
+                    subNavBar.style.left = newLeft;
+                } else if (newLeft) {
+                    // 格式不正确，提示用户并恢复原值
+                    alert('位置格式错误，请输入"数字+px"格式，例如：270px');
+                    // 恢复原值
+                    input.value = getSubNavLeft();
+                }
+                // 恢复按钮
+                input.remove();
+                positionBtn.style.display = 'flex';
+            });
+            
+            // Enter键也触发blur
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    input.blur();
+                }
+            });
+        });
+        titleContainer.appendChild(positionBtn);
+        
         // 创建关闭按钮
         const closeBtn = document.createElement('div');
         closeBtn.style.cssText = NAV_STYLES.subNavCloseBtn;
@@ -2168,6 +2249,9 @@
         
         // 根据副目录条目数量动态设置top位置
         updateSubNavTop();
+        
+        // 确保使用最新的left值（从localStorage读取）
+        subNavBar.style.left = getSubNavLeft();
         
         // 显示副目录栏
         subNavBar.style.display = 'block';
