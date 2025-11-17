@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.2.6
-// @description  输入一次问题，就能自动同步在各家大模型官网提问。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok。以及目录导航等提升网页阅读体验的功能，见本页面下方介绍。
+// @version      2.2.7
+// @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -45,15 +45,16 @@
 
     const NAV_MAX_WIDTH = "230px"; // 主目录的最大宽度
     const NAV_TOP = "20%"; // 主目录的默认 top 位置
-    const NAV_TOP_THRESHOLD = 7; // 主目录条目超过此数量时，top位置抬高到5%
+    const NAV_TOP_THRESHOLD = 7; // 主目录条目超过此阈值时，top位置抬高到5%
+    const NAV_COUNT_THRESHOLD = 15; // 主目录条数超过此阈值时，会显示"共xx条"
     const SUB_NAV_LEFT = "270px"; // 副目录的水平位置（距离屏幕左侧）
     const SUB_NAV_WIDTH = "270px"; // 副目录的宽度
 
-    const SUB_NAV_MIN_ITEMS = 2; // 副目录标题总条数超过此数量才显示
-    const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此数量时，top位置抬高到5%
-    const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此数量时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
+    const SUB_NAV_MIN_ITEMS = 2; // 副目录标题总条数超过此阈值才显示
+    const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此阈值时，top位置抬高到5%
+    const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
-    const version = "2.2.6";
+    const version = "2.2.7";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -176,9 +177,9 @@
         [KIMI]: 4,
         [DEEPSEEK]: 5,
         [TONGYI]: 6,
-        [CHATGPT]: 10,
         [DOUBAO]: 11,
-        [ZCHAT]: 10,
+        [ZCHAT]: 11,
+        [CHATGPT]: 10,
         [GEMINI]: 9,
         [QWEN]: 9,
         [CLAUDE]: 6,
@@ -1340,18 +1341,19 @@
     // 样式常量
     const NAV_STYLES = {
         // 主目录样式
-        navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:100vh;overflow-y:auto;box-sizing:border-box;`,
+        navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:90vh;overflow-y:auto;box-sizing:border-box;`,
         miniButton: `position:fixed;top:${NAV_TOP};right:15px;color:${NAV_ITEM_COLOR};border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:2147483647;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
-        title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;`,
-        hideBtn: `font-weight:normal;color:#666;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`,
+        title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;position:sticky;top:0;background:rgba(255,255,255,0.95);z-index:10;`,
+        hideBtn: `font-weight:normal;color:#333;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`,
+        countText: `font-weight:normal;color:#333;font-size:14px;margin-left:6px;user-select:none;`,
         linkContainer: `display:flex;align-items:center;gap:4px;width:100%;`,
         link: `width:100%;padding:4px 2px;cursor:pointer;color:#333;font-size:14px;line-height:1.5;white-space:normal;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;max-height:calc(1.9em * 2);box-sizing:border-box;`,
-        waveIcon: `font-size:12px;cursor:pointer;color:#666;padding:0;border-radius:3px;user-select:none;flex-shrink:0;transition:background-color 0.2s;`,
+        waveIcon: `font-size:12px;cursor:pointer;color:#333;padding:0;border-radius:3px;user-select:none;flex-shrink:0;transition:background-color 0.2s;`,
         waveIconHover: `background-color:#f0f0f0;color:#0066cc;`,
         waveIconNormal: `background-color:transparent;color:#333;`,
         
         // 副目录样式
-        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${NAV_TOP};width:${SUB_NAV_WIDTH};max-height:94vh;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${NAV_TOP};width:${SUB_NAV_WIDTH};max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
         subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
         subNavCloseBtn: `position:absolute;top:0;right:8px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
         subNavItem: `padding:4px 2px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
@@ -1413,6 +1415,7 @@
     let currentSubNavHeadings = []; // 当前副目录的所有标题数据（未过滤）
     let subNavPollInterval = null; // 副目录轮询定时器
     let isSubNavLevelManuallySet = false; // 用户是否手动选择了层级
+    let navCountText = null; // 主目录条数显示元素
 
     // 从localStorage读取最小化状态，默认为false
     let navMinimized = localStorage.getItem(T + 'navMinimized') === 'true';
@@ -1464,6 +1467,21 @@
         });
     };
 
+    // 更新主目录条数显示
+    const updateNavCount = () => {
+        if (!navCountText) return;
+        
+        const linkCount = navBar.querySelectorAll('.tool-nav-link').length;
+        
+        // 如果条数超过阈值，显示"共xx条"
+        if (linkCount > NAV_COUNT_THRESHOLD) {
+            navCountText.textContent = `共${linkCount}条`;
+            navCountText.style.display = '';
+        } else {
+            navCountText.style.display = 'none';
+        }
+    };
+
     // 刷新导航栏的显示状态（显示/隐藏/最小化）
     const refreshNavBarVisibility = () => {
         const root = document.body || document.documentElement;
@@ -1472,6 +1490,7 @@
         const linkCount = navBar.querySelectorAll('.tool-nav-link').length;
         if(linkCount === 0) {
             navBar.style.visibility = navMiniButton.style.visibility = "hidden";
+            updateNavCount(); // 更新条数显示
             return;
         }
 
@@ -1487,6 +1506,8 @@
             navMiniButton.style.top = navTop;
         }
         
+        // 更新条数显示
+        updateNavCount();
 
         if(navMinimized) {
             navBar.style.visibility = "hidden";
@@ -2529,8 +2550,14 @@
             setNavMinimized(true);
         });
 
+        // 创建条数显示元素
+        navCountText = document.createElement('span');
+        navCountText.style.cssText = NAV_STYLES.countText;
+        navCountText.style.display = 'none'; // 默认隐藏
+
         title.appendChild(titleText);
         title.appendChild(hideBtn);
+        title.appendChild(navCountText);
         return title;
     };
 
@@ -2602,6 +2629,7 @@
         if(isEmpty(quesList)) {
             navBar.replaceChildren();
             navBar.style.visibility = navMiniButton.style.visibility = "hidden";
+            updateNavCount(); // 更新条数显示
             return;
         }
 
