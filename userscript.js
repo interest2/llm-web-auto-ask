@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.2.7
+// @version      2.2.8
 // @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -54,7 +54,7 @@
     const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此阈值时，top位置抬高到5%
     const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
-    const version = "2.2.7";
+    const version = "2.2.8";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -1341,7 +1341,7 @@
     // 样式常量
     const NAV_STYLES = {
         // 主目录样式
-        navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:90vh;overflow-y:auto;box-sizing:border-box;`,
+        navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:0 5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:90vh;overflow-y:auto;box-sizing:border-box;`,
         miniButton: `position:fixed;top:${NAV_TOP};right:15px;color:${NAV_ITEM_COLOR};border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:2147483647;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
         title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;position:sticky;top:0;background:rgba(255,255,255,0.95);z-index:10;`,
         hideBtn: `font-weight:normal;color:#333;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`,
@@ -2909,7 +2909,9 @@
         if (!isCompactMode) return;
 
         let selectedSites = getSitesAndCurrent();
-        let selectedWords = selectedSites.map(site => siteToWord[site])
+        let selectedWords = selectedSites.map(site => siteToWord[site]).filter(word => word);
+        // 按照 wordConfig 的顺序排序
+        selectedWords = words.filter(word => selectedWords.includes(word));
         drawCompactPanel(selectedWords);
 
         reloadDisableStatus();
@@ -2937,7 +2939,9 @@
         // 如果从DOM读取不到，则从存储读取（fallback机制）
         if (selectedWords.length === 0) {
             const selectedSites = getSitesAndCurrent();
-            selectedWords = selectedSites.map(site => siteToWord[site]).filter(word => word);
+            let wordsFromStorage = selectedSites.map(site => siteToWord[site]).filter(word => word);
+            // 按照 wordConfig 的顺序排序
+            selectedWords = words.filter(word => wordsFromStorage.includes(word));
         }
 
         if (selectedWords.length === 0) {
