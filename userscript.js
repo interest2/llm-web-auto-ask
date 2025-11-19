@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.3.0
+// @version      2.3.1
 // @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -49,6 +49,7 @@
     const NAV_TOP_THRESHOLD = 7;    // 主目录条目超过此阈值时，top位置抬高到5%
     const NAV_COUNT_THRESHOLD = 12; // 主目录条数超过此阈值时，会显示"共xx条"
 
+    let SUB_NAV_TOP = "20%";          // 副目录的默认 top 位置
     const SUB_NAV_LEFT = "270px";     // 副目录的水平位置（距离屏幕左侧）
     const SUB_NAV_WIDTH = "270px";    // 副目录的宽度
     const SUB_NAV_MIN_ITEMS = 2;      // 副目录标题总条数超过此阈值才显示
@@ -58,7 +59,7 @@
     const CHAT_ID_WAIT_TIME = 20000; // 主节点等待获取对话ID的超时时间（毫秒）
     const SET_UID_WAIT_TIME = 15000;  // 从节点等待获取对话ID的超时时间（毫秒）
 
-    const version = "2.3.0";
+    const version = "2.3.1";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -329,6 +330,9 @@
         return selector ? selector() : null;
     }
 
+    if(site === STUDIO) {
+        SUB_NAV_TOP = "35%";
+    }
 
     // 系统功能配置
     const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
@@ -1288,20 +1292,20 @@
                 setGV(FIRST_RUN_KEY, 1);
                 let updateHint = "脚本使用提示：\n网页右下角的多选面板可勾选提问范围，\n点击\"禁用\"可一键关闭同步提问";
                 
-                if(!isEmpty(getGV("notice4"))){
-                    setGV("notice4", "");
-                    updateHint = "脚本近期更新：\n支持带图片（粘贴方式）提问的自动同步；\n进一步降低核心功能对官网样式的依赖";
-                }
+                // if(!isEmpty(getGV("notice4"))){
+                //     setGV("notice4", "");
+                //     updateHint = "脚本近期更新：\n支持带图片（粘贴方式）提问的自动同步；\n进一步降低核心功能对官网样式的依赖";
+                // }
                 
                 alert(updateHint);
             } else {
                 // 非首次运行，检查版本更新
-                let VERSION_MARK = FIRST_RUN_KEY + "_2";
-                if(isEmpty(getGV(VERSION_MARK))){
-                    setGV(VERSION_MARK, 1);
-                    let updateHint = "脚本近期更新：\n为单个回答内容建立目录导航功能（文心除外）";
-                    alert(updateHint);
-                }
+                // let VERSION_MARK = FIRST_RUN_KEY + "_2";
+                // if(isEmpty(getGV(VERSION_MARK))){
+                //     setGV(VERSION_MARK, 1);
+                //     let updateHint = "脚本近期更新：\n为单个回答内容建立目录导航功能";
+                //     alert(updateHint);
+                // }
             }
 
         }, 800);
@@ -1386,7 +1390,7 @@
         waveIconNormal: `background-color:transparent;color:#333;`,
         
         // 副目录样式
-        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${NAV_TOP};width:${SUB_NAV_WIDTH};max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${SUB_NAV_TOP};width:${SUB_NAV_WIDTH};max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
         subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
         subNavCloseBtn: `position:absolute;top:0;right:8px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
         subNavItem: `padding:4px 2px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
@@ -2048,7 +2052,7 @@
         if (subNavItemCount > SUB_NAV_TOP_THRESHOLD) {
             subNavBar.style.top = "5%";
         } else {
-            subNavBar.style.top = NAV_TOP;
+            subNavBar.style.top = SUB_NAV_TOP;
         }
     };
 
@@ -2523,7 +2527,7 @@
                         link.title = (i + 1) + '. ' + newText;
                     }
                 }
-            }, 1000);
+            }, 500);
             
             // 如果元素存在，执行滚动
             if (targetEl && document.body.contains(targetEl)) {
