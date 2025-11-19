@@ -776,7 +776,8 @@
     function setUid(uid, question){
         let intervalId;
         let count = 0;
-        let waitTime = SET_UID_WAIT_TIME;
+        let waitTime = site === STUDIO ? 40000 : SET_UID_WAIT_TIME;
+
 
         console.log("ready to setUid");
         intervalId = setInterval(function() {
