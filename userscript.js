@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.2.8
+// @version      2.3.0
 // @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -13,6 +13,7 @@
 // @match        https://chat.zchat.tech/*
 // @match        https://chatgpt.com/*
 // @match        https://gemini.google.com/*
+// @match        https://aistudio.google.com/*
 // @match        https://claude.ai/*
 // @match        https://grok.com/*
 // @grant        GM_addStyle
@@ -43,18 +44,21 @@
      * */
     let MAX_QUEUE = 20; // 历史对话的记忆数量
 
-    const NAV_MAX_WIDTH = "230px"; // 主目录的最大宽度
-    const NAV_TOP = "20%"; // 主目录的默认 top 位置
-    const NAV_TOP_THRESHOLD = 7; // 主目录条目超过此阈值时，top位置抬高到5%
-    const NAV_COUNT_THRESHOLD = 15; // 主目录条数超过此阈值时，会显示"共xx条"
-    const SUB_NAV_LEFT = "270px"; // 副目录的水平位置（距离屏幕左侧）
-    const SUB_NAV_WIDTH = "270px"; // 副目录的宽度
+    const NAV_MAX_WIDTH = "230px";  // 主目录的最大宽度
+    const NAV_TOP = "20%";          // 主目录的默认 top 位置
+    const NAV_TOP_THRESHOLD = 7;    // 主目录条目超过此阈值时，top位置抬高到5%
+    const NAV_COUNT_THRESHOLD = 12; // 主目录条数超过此阈值时，会显示"共xx条"
 
-    const SUB_NAV_MIN_ITEMS = 2; // 副目录标题总条数超过此阈值才显示
+    const SUB_NAV_LEFT = "270px";     // 副目录的水平位置（距离屏幕左侧）
+    const SUB_NAV_WIDTH = "270px";    // 副目录的宽度
+    const SUB_NAV_MIN_ITEMS = 2;      // 副目录标题总条数超过此阈值才显示
     const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此阈值时，top位置抬高到5%
     const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
-    const version = "2.2.8";
+    const CHAT_ID_WAIT_TIME = 20000; // 主节点等待获取对话ID的超时时间（毫秒）
+    const SET_UID_WAIT_TIME = 15000;  // 从节点等待获取对话ID的超时时间（毫秒）
+
+    const version = "2.3.0";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -76,13 +80,17 @@
     const CLAUDE = 8;
     const GROK = 9;
     const WENXIN = 10;
+    const STUDIO = 11;
+
+    // 默认不启用的站点列表，移除元素可启用对应站点
+    const DISABLE_SITES = [WENXIN];
 
     // 启用 Markdown 标题识别的站点列表（性能优化：仅对需要的站点启用）
     const ENABLE_MARKDOWN_HEADING_SITES = [CLAUDE];
 
     // 输入框类型分类
     const inputAreaTypes = {
-        textarea: [DEEPSEEK, TONGYI, DOUBAO, QWEN],
+        textarea: [DEEPSEEK, TONGYI, DOUBAO, QWEN, STUDIO],
         lexical: [KIMI, WENXIN, CHATGPT, ZCHAT, GEMINI, CLAUDE, GROK]
     };
 
@@ -99,47 +107,50 @@
         },
         // 输入框里的发送按钮
         sendBtn: {
-            [KIMI]: () => document.getElementsByClassName('send-button')[0],
             [DEEPSEEK]: () => ((btns) => btns[btns.length - 1])(document.querySelectorAll('[role="button"]')),
+            [KIMI]: () => document.getElementsByClassName('send-button')[0],
             [TONGYI]: () => document.querySelector('[class^="operateBtn-"], [class*=" operateBtn-"]'),
-            [CHATGPT]: () => document.getElementById('composer-submit-button'),
-            [ZCHAT]: () => document.getElementById('composer-submit-button'),
-            [DOUBAO]: () => document.getElementById('flow-end-msg-send'),
-            [GEMINI]: () => document.querySelector('button.send-button'),
             [QWEN]: () => document.getElementById('send-message-button'),
+            [DOUBAO]: () => document.getElementById('flow-end-msg-send'),
+            [WENXIN]: () => document.querySelector('[class^="sendInner"]'),
+            [ZCHAT]: () => document.getElementById('composer-submit-button'),
+            [CHATGPT]: () => document.getElementById('composer-submit-button'),
+            [GEMINI]: () => document.querySelector('button.send-button'),
+            [STUDIO]: () => document.querySelector('.run-button-content'),
             [CLAUDE]: () => document.querySelector('[aria-label^="Send"]'),
-            [GROK]: () => document.querySelector('button[type="submit"]'),
-            [WENXIN]: () => document.querySelector('[class^="sendInner"]')
+            [GROK]: () => document.querySelector('button[type="submit"]')
         },
         // 已提问的列表（官网样式变更不会影响同步提问功能，只影响目录功能）
         questionList: {
-            [KIMI]: () => document.getElementsByClassName("user-content"),
             [DEEPSEEK]: () => filterQuestions(document.getElementsByClassName("ds-message")),
+            [KIMI]: () => document.getElementsByClassName("user-content"),
             [TONGYI]: () => document.querySelectorAll('[class^="bubble-"]'),
-            [CHATGPT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
-            [ZCHAT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
-            [DOUBAO]: () => Array.from(document.querySelectorAll('[data-testid="message_text_content"]')).filter(el => !el.children || el.children.length === 0),
-            [GEMINI]: () => document.getElementsByTagName('user-query'),
             [QWEN]: () => document.getElementsByClassName("user-message-content"),
+            [DOUBAO]: () => Array.from(document.querySelectorAll('[data-testid="message_text_content"]')).filter(el => !el.children || el.children.length === 0),
+            [WENXIN]: () => document.querySelectorAll('[class^="questionText"]'),
+            [ZCHAT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
+            [CHATGPT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
+            [GEMINI]: () => document.getElementsByTagName('user-query'),
+            [STUDIO]: () => document.querySelectorAll('[data-turn-role="User"]'),
             [CLAUDE]: () => document.querySelectorAll('[data-testid="user-message"]'),
-            [GROK]: () => document.querySelectorAll('div.items-end .message-bubble'),
-            [WENXIN]: () => document.querySelectorAll('[class^="questionText"]')
+            [GROK]: () => document.querySelectorAll('div.items-end .message-bubble')
         }
     };
 
     // url里关键词与各站点的对应关系
     const keywords = {
-        "kimi": KIMI,
         "deepseek": DEEPSEEK,
+        "kimi": KIMI,
         "tongyi": TONGYI,
-        "chatgpt": CHATGPT,
-        "doubao": DOUBAO,
-        "zchat": ZCHAT,
-        "gemini": GEMINI,
         "qwen": QWEN,
+        "doubao": DOUBAO,
+        "yiyan": WENXIN,
+        "zchat": ZCHAT,
+        "chatgpt": CHATGPT,
+        "gemini": GEMINI,
+        "aistudio": STUDIO,
         "claude": CLAUDE,
-        "grok": GROK,
-        "yiyan": WENXIN
+        "grok": GROK
     };
 
     // 各家大模型的网址（新对话，历史对话的前缀）
@@ -149,12 +160,13 @@
         [TONGYI]: ["https://www.tongyi.com/", "?sessionId="],
         [CHATGPT]: ["https://chatgpt.com/", "c/"],
         [DOUBAO]: ["https://www.doubao.com/chat", "/"],
+        [WENXIN]: ["https://yiyan.baidu.com/", "chat/"],
         [ZCHAT]: ["https://chat.zchat.tech/", "c/"],
         [GEMINI]: ["https://gemini.google.com/app", "/"],
+        [STUDIO]: ["https://aistudio.google.com/", "prompts/"],
         [QWEN]: ["https://chat.qwen.ai/", "c/"],
         [CLAUDE]: ["https://claude.ai/chat", "/"],
-        [GROK]: ["https://grok.com/", "c/"],
-        [WENXIN]: ["https://yiyan.baidu.com/", "chat/"]
+        [GROK]: ["https://grok.com/", "c/"]
     };
 
     // 多选面板里，各站点的全称、简称
@@ -168,27 +180,31 @@
         { site: ZCHAT, word: 'ZCHAT-GPT', alias: 'Z' },
         { site: CHATGPT, word: 'ChatGPT', alias: 'C' },
         { site: GEMINI, word: 'Gemini', alias: 'G' },
+        { site: STUDIO, word: 'Gemini (Studio)', alias: 'S' },
         { site: CLAUDE, word: 'Claude', alias: 'Cl' },
         { site: GROK, word: 'Grok', alias: 'Gr' }
     ];
+    // 过滤掉被禁用的站点
+    wordConfig = wordConfig.filter(item => !DISABLE_SITES.includes(item.site));
 
     // （可选）隐藏输入框及周边区域，所需隐藏的元素，是输入框本体的第几层父元素？以下数字即层数（后续应改为半自动配置）
     const inputAreaHideParentLevel = {
-        [KIMI]: 4,
         [DEEPSEEK]: 5,
+        [KIMI]: 4,
         [TONGYI]: 6,
+        [QWEN]: 9,
         [DOUBAO]: 11,
+        [WENXIN]: 8,
         [ZCHAT]: 11,
         [CHATGPT]: 10,
         [GEMINI]: 9,
-        [QWEN]: 9,
+        [STUDIO]: 11,
         [CLAUDE]: 6,
-        [GROK]: 10,
-        [WENXIN]: 8
+        [GROK]: 10
     };
 
-	// 通用chatId正则：16~37位的数字、字母、短横杠、等号
-	const GENERAL_PATTERN = /[a-zA-Z0-9-=]{16,37}/;
+	// 通用chatId正则：一定长度的数字、字母、特殊字符
+	const GENERAL_PATTERN = /[a-zA-Z0-9-_=]{16,38}/;
 
     const MARKER_CHAT = "chat/";
     const MARKER_C = "c/";
@@ -268,6 +284,12 @@
             site = keywords[keyword];
             break;
         }
+    }
+
+    // 检查当前站点是否被禁用
+    if (DISABLE_SITES.includes(site)) {
+        console.log(`站点 ${site} 已被禁用，脚本完全退出`);
+        return;
     }
 
     // 面板数据常量
@@ -754,10 +776,7 @@
     function setUid(uid, question){
         let intervalId;
         let count = 0;
-        let waitTime = 15000;
-        if(site === CHATGPT){
-            waitTime *= 2;
-        }
+        let waitTime = SET_UID_WAIT_TIME;
 
         console.log("ready to setUid");
         intervalId = setInterval(function() {
@@ -995,10 +1014,11 @@
         return '';
     }
 
-    // 轮询等待masterId非空，最多等待15秒
+    // 轮询等待masterId非空
     function waitForMasterIdAndCall(question) {
         let tryCount = 0;
-        const maxTries = 15000 / checkGap; // 15秒 / 轮询间隔
+        const waitTime = site === STUDIO ? 50000 : CHAT_ID_WAIT_TIME;
+        const maxTries = waitTime / checkGap; // 轮询间隔
 
         const intervalId = setInterval(function() {
             tryCount++;
@@ -1010,7 +1030,7 @@
                 masterCheck(question);
             } else if (tryCount > maxTries) {
                 clearInterval(intervalId);
-                console.warn("等待masterId超时，15秒内未获取到");
+                console.warn("等待masterId超时，" + (waitTime / 1000) + "秒内未获取到");
             }
         }, checkGap);
     }
@@ -1079,8 +1099,20 @@
             });
 
             inputArea.addEventListener('keydown', function(event) {
-                // 单纯的 Enter 键，不带任何修饰键
-                if (event.key === 'Enter' && !hasModifierKey(event)) {
+                let isTrigger = false;
+                if (site === STUDIO) {
+                    // STUDIO: Ctrl + Enter
+                    if (event.key === 'Enter' && event.ctrlKey) {
+                        isTrigger = true;
+                    }
+                } else {
+                    // 单纯的 Enter 键，不带任何修饰键
+                    if (event.key === 'Enter' && !hasModifierKey(event)) {
+                        isTrigger = true;
+                    }
+                }
+
+                if (isTrigger) {
                     const lastestQ = getInputContent(inputArea);
                     console.log("lastestQ: "+lastestQ);
                     const questionToUse = isEmpty(lastestQ) ? cachedInputContent : lastestQ;
@@ -2470,13 +2502,27 @@
             e.preventDefault();
             // 验证元素是否存在，如果不存在则尝试重新获取
             let targetEl = el;
+            const questions = getQuestionList();
+            
             if (!targetEl || !document.body.contains(targetEl)) {
                 // 元素可能已被移除或重新渲染，尝试重新获取
-                const questions = getQuestionList();
                 if (questions && questions.length > i) {
                     targetEl = questions[i];
                 }
             }
+            
+     
+            setTimeout(function(){
+                // 检查并更新条目文字：如果当前条目内容为空而questionList里的textContent非空
+                if (questions && questions.length > i) {
+                    const currentText = textSpan.textContent.trim();
+                    const newText = questions[i].textContent.trim();
+                    if (isEmpty(currentText) && !isEmpty(newText)) {
+                        textSpan.textContent = newText;
+                        link.title = (i + 1) + '. ' + newText;
+                    }
+                }
+            }, 1000);
             
             // 如果元素存在，执行滚动
             if (targetEl && document.body.contains(targetEl)) {
@@ -2634,7 +2680,10 @@
         }
 
         const thisQuestions = Array.from(quesList);
-        if(navQuestions && thisQuestions.length === navQuestions.length && thisQuestions[0].textContent === navQuestions[0].textContent) {
+        if(navQuestions
+            && thisQuestions.length === navQuestions.length
+            && thisQuestions[0].textContent === navQuestions[0].textContent) {
+
             refreshNavBarVisibility();
             return;
         }
