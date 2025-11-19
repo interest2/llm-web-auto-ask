@@ -2769,6 +2769,12 @@
 
     disable.addEventListener('click', (e) => disableEvent(e));
 
+    // 根据word在words数组中的索引获取背景色
+    const getItemBgColor = (word) => {
+        const index = typeof word === 'number' ? word : words.indexOf(word);
+        return index < 5 ? '#f0f8ff' : '#fffcf0';
+    };
+
     // 生成单词和选择框
     let headline = document.createElement('div');
     headline.textContent = "全部模型";
@@ -2777,9 +2783,9 @@
     let sitesAndCurrent = getSitesAndCurrent();
     const items = []; // 收集所有item元素
 
-    words.forEach(word => {
+    words.forEach((word, index) => {
         const item = document.createElement('div');
-        item.style.cssText = PANEL_STYLES.item;
+        item.style.cssText = PANEL_STYLES.item + `background:${getItemBgColor(index)};`;
         item.className = 'panel-item'; // 添加类名用于识别
         item.dataset.word = word; // 添加data-word属性
 
@@ -3015,7 +3021,7 @@
 
         selectedWords.forEach(word => {
             const item = document.createElement('div');
-            item.style.cssText = PANEL_STYLES.item;
+            item.style.cssText = PANEL_STYLES.item + `background:${getItemBgColor(word)};`;
             item.dataset.word = word;
 
             const wordSpan = document.createElement('span');
