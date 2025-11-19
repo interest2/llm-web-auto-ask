@@ -56,6 +56,8 @@
     const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此阈值时，top位置抬高到5%
     const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
+    const STUDIO_CONTENT_WIDTH = "50vw"; // gemini ai studio 内容宽度占网页整体的百分比
+
     const CHAT_ID_WAIT_TIME = 20000; // 主节点等待获取对话ID的超时时间（毫秒）
     const SET_UID_WAIT_TIME = 15000;  // 从节点等待获取对话ID的超时时间（毫秒）
 
@@ -1210,7 +1212,14 @@
         let questions = getQuestionList();
         updateNavQuestions(questions);
 
-    }, 1500);
+        if(site === STUDIO){
+            let studioContent = document.querySelector('.chat-session-content');
+            if(!isEmpty(studioContent)){
+                studioContent.style.width = STUDIO_CONTENT_WIDTH;
+            }
+        }
+
+    }, 1800);
 
 
     /******************************************************************************
