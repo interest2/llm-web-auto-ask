@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.3.1
+// @version      2.3.3
 // @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -56,12 +56,12 @@
     const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此阈值时，top位置抬高到5%
     const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
-    const STUDIO_CONTENT_WIDTH = "50vw"; // gemini ai studio 内容宽度占网页整体的百分比
+    const STUDIO_CONTENT_MAX_WIDTH = "800px"; // gemini ai studio 内容最大宽度
 
     const CHAT_ID_WAIT_TIME = 20000; // 主节点等待获取对话ID的超时时间（毫秒）
     const SET_UID_WAIT_TIME = 15000;  // 从节点等待获取对话ID的超时时间（毫秒）
 
-    const version = "2.3.1";
+    const version = "2.3.3";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -313,6 +313,16 @@
             return elementsArray.filter((item, index) => index % 2 === 0);
         }
         return [];
+    };
+
+    // 标准化问题文本：移除特定站点的前缀
+    const normalizeQuestionText = (text) => {
+        if (!text) return '';
+        const trimmedText = text.trim();
+        if (site === STUDIO && trimmedText.startsWith('User')) {
+            return trimmedText.substring(4).trim();
+        }
+        return trimmedText;
     };
 
 
@@ -1215,7 +1225,7 @@
         if(site === STUDIO){
             let studioContent = document.querySelector('.chat-session-content');
             if(!isEmpty(studioContent)){
-                studioContent.style.width = STUDIO_CONTENT_WIDTH;
+                studioContent.style.maxWidth = STUDIO_CONTENT_MAX_WIDTH;
             }
         }
 
@@ -1390,7 +1400,7 @@
         navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:0 5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:90vh;overflow-y:auto;box-sizing:border-box;`,
         miniButton: `position:fixed;top:${NAV_TOP};right:15px;color:${NAV_ITEM_COLOR};border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:2147483647;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
         title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;position:sticky;top:0;background:rgba(255,255,255,0.95);z-index:10;`,
-        hideBtn: `font-weight:normal;color:#333;font-size:12px;padding:2px 6px;border:1px solid #ddd;border-radius:10px;cursor:pointer;user-select:none;`,
+        hideBtn: `font-weight:normal;color:#333;font-size:12px;padding:2px 6px;border:1px solid #aaa;border-radius:10px;cursor:pointer;user-select:none;`,
         countText: `font-weight:normal;color:#333;font-size:14px;margin-left:6px;user-select:none;`,
         linkContainer: `display:flex;align-items:center;gap:4px;width:100%;`,
         link: `width:100%;padding:4px 2px;cursor:pointer;color:#333;font-size:14px;line-height:1.5;white-space:normal;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;max-height:calc(1.9em * 2);box-sizing:border-box;`,
@@ -2503,9 +2513,10 @@
         indexSpan.style.color = NAV_ITEM_COLOR;
 
         const textSpan = document.createElement('span');
-        textSpan.textContent = el.textContent;
+        const normalizedText = normalizeQuestionText(el.textContent);
+        textSpan.textContent = normalizedText;
 
-        link.title = (i + 1) + '. ' + el.textContent;
+        link.title = (i + 1) + '. ' + normalizedText;
         link.appendChild(indexSpan);
         link.appendChild(textSpan);
 
@@ -2530,7 +2541,7 @@
                 // 检查并更新条目文字：如果当前条目内容为空而questionList里的textContent非空
                 if (questions && questions.length > i) {
                     const currentText = textSpan.textContent.trim();
-                    const newText = questions[i].textContent.trim();
+                    const newText = normalizeQuestionText(questions[i].textContent);
                     if (isEmpty(currentText) && !isEmpty(newText)) {
                         textSpan.textContent = newText;
                         link.title = (i + 1) + '. ' + newText;
@@ -2696,7 +2707,7 @@
         const thisQuestions = Array.from(quesList);
         if(navQuestions
             && thisQuestions.length === navQuestions.length
-            && thisQuestions[0].textContent === navQuestions[0].textContent) {
+            && normalizeQuestionText(thisQuestions[0].textContent) === normalizeQuestionText(navQuestions[0].textContent)) {
 
             refreshNavBarVisibility();
             return;
@@ -2859,10 +2870,25 @@
             setGV("disable", true);
             disable.textContent = ENABLE;
             contentContainer.style.color = "lightgray";
+            // 禁用状态下，缩略模式的背景色改为白色
+            if(isCompactMode){
+                const items = contentContainer.querySelectorAll('[data-word]');
+                items.forEach(item => {
+                    item.style.background = "white";
+                });
+            }
         }else{
             setGV("disable", false);
             disable.textContent = DISABLE;
             contentContainer.style.color = "black";
+            // 恢复启用状态，缩略模式的背景色恢复为彩色
+            if(isCompactMode){
+                const items = contentContainer.querySelectorAll('[data-word]');
+                items.forEach(item => {
+                    const word = item.dataset.word;
+                    item.style.background = getItemBgColor(word);
+                });
+            }
         }
     }
 
@@ -3033,9 +3059,12 @@
         hint.style.cssText = PANEL_STYLES.hint;
         contentContainer.appendChild(hint);
 
+        let isDisable = getGV("disable");
         selectedWords.forEach(word => {
             const item = document.createElement('div');
-            item.style.cssText = PANEL_STYLES.item + `background:${getItemBgColor(word)};`;
+            // 禁用状态下使用白色背景，否则使用彩色背景
+            const bgColor = isDisable ? 'white' : getItemBgColor(word);
+            item.style.cssText = PANEL_STYLES.item + `background:${bgColor};`;
             item.dataset.word = word;
 
             const wordSpan = document.createElement('span');
