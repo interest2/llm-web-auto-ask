@@ -2542,14 +2542,27 @@
             
      
             setTimeout(function(){
-                // 检查并更新条目文字：如果当前条目内容为空而questionList里的textContent非空
-                if (questions && questions.length > i) {
-                    const currentText = textSpan.textContent.trim();
-                    const newText = normalizeQuestionText(questions[i].textContent);
-                    if (isEmpty(currentText) && !isEmpty(newText)) {
-                        textSpan.textContent = newText;
-                        link.title = (i + 1) + '. ' + newText;
-                    }
+                // 遍历更新所有条目文字：如果条目内容为空而questionList里的textContent非空
+                if (questions && navLinks) {
+                    questions.forEach((question, index) => {
+                        if (index >= navLinks.length) return;
+                        
+                        const linkContainer = navLinks[index];
+                        const linkElement = linkContainer.querySelector('.tool-nav-link');
+                        if (!linkElement) return;
+                        
+                        const spans = linkElement.querySelectorAll('span');
+                        if (spans.length < 2) return;
+                        
+                        const textSpanElement = spans[1]; // 第二个span是文本span
+                        const currentText = textSpanElement.textContent.trim();
+                        const newText = normalizeQuestionText(question.textContent);
+                        
+                        if (isEmpty(currentText) && !isEmpty(newText)) {
+                            textSpanElement.textContent = newText;
+                            linkElement.title = (index + 1) + '. ' + newText;
+                        }
+                    });
                 }
             }, 500);
             
