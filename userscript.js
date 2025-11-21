@@ -100,7 +100,8 @@
 
     // 通用输入框选择器，两类：textarea标签、lexical
     const getTextareaInput = () => document.getElementsByTagName('textarea')[0];
-    const getContenteditableInput = () => document.querySelector('[contenteditable="true"]');
+    const INPUT_ATTR = '[contenteditable="true"]';
+    const getContenteditableInput = () => document.querySelector(INPUT_ATTR);
 
     // 选择器配置
     const selectors = {
@@ -1338,33 +1339,190 @@
     /**
      * 输入框的显示/隐藏切换功能
      */
-    // 切换按钮样式集中定义
-    const TOGGLE_STYLES = {
-        button: `font-size:14px;padding:3px;position:fixed;right:10px;bottom:35px;cursor:pointer;background:#ec7258;color:white;border:1px solid #ddd;border-radius:30%;box-shadow:0 4px 12px rgba(0,0,0,0.2);z-index:99999999;display:flex;align-items:center;justify-content:center;`
+    // 切换按钮相关常量
+    const TOGGLE_BUTTON_BG_SHOW = '#ec7258';
+    const TOGGLE_BUTTON_BG_HIDE = '#999';
+    const TOGGLE_BUTTON_STYLE = `font-size:14px;padding:5px;position:fixed;cursor:pointer;background:${TOGGLE_BUTTON_BG_SHOW};color:white;border:1px solid #ddd;border-radius:30%;box-shadow:0 4px 12px rgba(0,0,0,0.2);z-index:99999999;display:flex;align-items:center;justify-content:center;`;
+    
+    // 切换状态配置
+    const TOGGLE_STATES = {
+        show: {
+            text: '隐藏',
+            bg: TOGGLE_BUTTON_BG_SHOW,
+            display: 'flex'
+        },
+        hide: {
+            text: '显示',
+            bg: TOGGLE_BUTTON_BG_HIDE,
+            display: 'none'
+        }
     };
 
     const toggleButton = document.createElement('div');
-    toggleButton.style.cssText = TOGGLE_STYLES.button;
-    toggleButton.textContent = '隐藏';
+    toggleButton.style.cssText = TOGGLE_BUTTON_STYLE;
+    toggleButton.textContent = TOGGLE_STATES.show.text;
     toggleButton.title = '临时隐藏输入框获得更大的视野高度';
 
     const getNthParent = (el, n) => n > 0 ? getNthParent(el?.parentElement, n - 1) : el;
 
     // 按钮点击事件 - 切换面板显示/隐藏
     toggleButton.addEventListener('click', (e) => {
-        let inputArea = getInputArea();
-        let aroundInputArea = getNthParent(inputArea, inputAreaHideParentLevel[site]);
-
         e.stopPropagation();
-        if (aroundInputArea.style.display === 'none') {
-            aroundInputArea.style.display = 'flex';
-            toggleButton.textContent = '隐藏';
-            toggleButton.style.background = '#ec7258';
-        } else {
-            aroundInputArea.style.display = 'none';
-            toggleButton.textContent = '显示';
-            toggleButton.style.background = '#999';
+        const inputArea = getInputArea();
+        const aroundInputArea = getNthParent(inputArea, inputAreaHideParentLevel[site]);
+        const isHidden = aroundInputArea.style.display === 'none';
+        const state = isHidden ? TOGGLE_STATES.show : TOGGLE_STATES.hide;
+        
+        aroundInputArea.style.display = state.display;
+        toggleButton.textContent = state.text;
+        toggleButton.style.background = state.bg;
+        // 更新隐藏状态标记
+        isInputAreaHidden = !isHidden;
+    });
+
+    // 记录两个元素都存在时的left值
+    let savedToggleLeft = null;
+    const TOGGLE_BOTTOM_KEY = T + 'toggleBottom';
+    const TOGGLE_LEFT_KEY = T + 'toggleLeft';
+    const TOGGLE_DELTA1_KEY = T + 'toggleDelta1';
+    const TOGGLE_DELTA2_KEY = T + 'toggleDelta2';
+    const BUTTON_RIGHT_OFFSET = 20; // 按钮右边缘的偏移量
+    const DEFAULT_LEFT_OFFSET = 40; // 默认left值的偏移量
+    const MIN_RIGHT_THRESHOLD = 10; // right值的最小阈值
+    // 标记输入框是否处于隐藏状态
+    let isInputAreaHidden = false;
+
+    /**
+     * 计算bottom值
+     */
+    function calculateBottom() {
+        const savedBottom = localStorage.getItem(TOGGLE_BOTTOM_KEY);
+        if (savedBottom !== null) {
+            return parseFloat(savedBottom);
         }
+
+        const UPDATE_BOTTOM_THRESHOLD = 50;
+        const sendButton = getSendButton();
+        // 发送按钮存在 且 chatId 非空，若新 bottom < 阈值，才更新
+        if (sendButton && !isEmpty(getChatId())) {
+            const calculatedBottom = window.innerHeight - sendButton.getBoundingClientRect().bottom;
+            if (calculatedBottom < UPDATE_BOTTOM_THRESHOLD) {
+                localStorage.setItem(TOGGLE_BOTTOM_KEY, calculatedBottom.toString());
+                return calculatedBottom;
+            }
+        }
+
+        // 默认值
+        return UPDATE_BOTTOM_THRESHOLD;
+    }
+
+    /**
+     * 计算left值
+     * @param {HTMLElement} inputArea - 输入框元素
+     * @param {HTMLElement} sendButton - 发送按钮元素
+     */
+    function calculateLeft(inputArea, sendButton) {
+        let hasInputArea = !!inputArea;
+        let hasSendButton = !!sendButton;
+
+        const defaultLeft = window.innerWidth - DEFAULT_LEFT_OFFSET;
+
+        // 情况1: 输入框√，按钮√
+        if (hasInputArea && hasSendButton) {
+            const right1 = sendButton.getBoundingClientRect().right;
+            const right2 = inputArea.getBoundingClientRect().right;
+            
+            // 检查right值是否有效，无效则重置对应标志
+            hasSendButton = hasSendButton && right1 >= MIN_RIGHT_THRESHOLD;
+            hasInputArea = hasInputArea && right2 >= MIN_RIGHT_THRESHOLD;
+            
+            // 两者都有效才存储
+            if (hasInputArea && hasSendButton) {
+                const left = right1 + BUTTON_RIGHT_OFFSET;
+                const delta1 = BUTTON_RIGHT_OFFSET;
+                const delta2 = left - right2;
+
+                localStorage.setItem(TOGGLE_LEFT_KEY, left.toString());
+                localStorage.setItem(TOGGLE_DELTA1_KEY, delta1.toString());
+                localStorage.setItem(TOGGLE_DELTA2_KEY, delta2.toString());
+                return left;
+            }
+        }
+        
+        // 情况2: 输入框√，按钮×
+        if (hasInputArea && !hasSendButton) {
+            const savedDelta2 = localStorage.getItem(TOGGLE_DELTA2_KEY);
+            if (savedDelta2 !== null) {
+                const right2 = inputArea.getBoundingClientRect().right;
+                return right2 + parseFloat(savedDelta2);
+            }
+            return defaultLeft;
+        }
+        
+        // 情况3: 输入框×，按钮√
+        if (!hasInputArea && hasSendButton) {
+            const savedDelta1 = localStorage.getItem(TOGGLE_DELTA1_KEY);
+            if (savedDelta1 !== null) {
+                const right1 = sendButton.getBoundingClientRect().right;
+                return right1 + parseFloat(savedDelta1);
+            }
+            return defaultLeft;
+        }
+        
+        // 情况4: 输入框×，按钮×
+        // 如果存储有left，返回它
+        const savedLeft = localStorage.getItem(TOGGLE_LEFT_KEY);
+        if (savedLeft !== null) {
+            return parseFloat(savedLeft);
+        }
+        return defaultLeft;
+    }
+
+    /**
+     * 计算并更新toggle按钮的位置和显示状态
+     */
+    function updateToggleButtonPosition() {
+        // 如果处于隐藏状态，直接返回，不更新位置
+        if (isInputAreaHidden) {
+            return;
+        }
+        
+        const inputArea = getInputArea();
+        const sendButton = getSendButton();
+        
+        const bottom = calculateBottom();
+        const left = calculateLeft(inputArea, sendButton);
+
+        // 更新toggle按钮位置
+        toggleButton.style.left = `${left}px`;
+        toggleButton.style.bottom = `${bottom}px`;
+        toggleButton.style.display = 'flex';
+    }
+
+    /**
+     * 持续轮询更新toggle按钮的位置和显示状态
+     */
+    function pollToggleButtonPosition() {
+        const POLL_INTERVAL = 1000; // 轮询间隔1000ms
+        
+        const checkAndUpdate = () => {
+            updateToggleButtonPosition();
+            setTimeout(checkAndUpdate, POLL_INTERVAL);
+        };
+        
+        // 开始轮询
+        checkAndUpdate();
+    }
+
+    // 页面加载后开始持续轮询
+    pollToggleButtonPosition();
+
+    // 监听窗口宽度变化，更新toggle按钮的位置和显示状态
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+        // 防抖处理，避免频繁触发
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(() => updateToggleButtonPosition(), 50);
     });
 
     /******************************************************************************
