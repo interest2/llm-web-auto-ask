@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.4.1
+// @version      2.4.2
 // @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -62,7 +62,7 @@
     const CHAT_ID_WAIT_TIME = 20000; // 主节点等待获取对话ID的超时时间（毫秒）
     const SET_UID_WAIT_TIME = 15000;  // 从节点等待获取对话ID的超时时间（毫秒）
 
-    const version = "2.4.1";
+    const version = "2.4.2";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -100,8 +100,7 @@
 
     // 通用输入框选择器，两类：textarea标签、lexical
     const getTextareaInput = () => document.getElementsByTagName('textarea')[0];
-    const INPUT_ATTR = '[contenteditable="true"]';
-    const getContenteditableInput = () => document.querySelector(INPUT_ATTR);
+    const getContenteditableInput = () => document.querySelector('[contenteditable="true"]');
 
     // 选择器配置
     const selectors = {
@@ -1385,13 +1384,22 @@
     let savedToggleLeft = null;
     const TOGGLE_BOTTOM_KEY = T + 'toggleBottom';
     const TOGGLE_LEFT_KEY = T + 'toggleLeft';
+    const TOGGLE_MAX_LEFT_KEY = T + 'toggleMaxLeft';
     const TOGGLE_DELTA1_KEY = T + 'toggleDelta1';
     const TOGGLE_DELTA2_KEY = T + 'toggleDelta2';
     const BUTTON_RIGHT_OFFSET = 20; // 按钮右边缘的偏移量
     const DEFAULT_LEFT_OFFSET = 40; // 默认left值的偏移量
     const MIN_RIGHT_THRESHOLD = 10; // right值的最小阈值
+    const TOOL_PANEL_ID = 'tool-panel'; // 多选面板的ID
     // 标记输入框是否处于隐藏状态
     let isInputAreaHidden = false;
+
+    /**
+     * 判断当前是否为最大宽度
+     */
+    function isMaxWidth() {
+        return window.outerWidth >= screen.availWidth - 50;
+    }
 
     /**
      * 计算bottom值
@@ -1446,6 +1454,12 @@
                 localStorage.setItem(TOGGLE_LEFT_KEY, left.toString());
                 localStorage.setItem(TOGGLE_DELTA1_KEY, delta1.toString());
                 localStorage.setItem(TOGGLE_DELTA2_KEY, delta2.toString());
+                
+                // 如果当前是最大宽度，额外记录maxLeft
+                if (isMaxWidth()) {
+                    localStorage.setItem(TOGGLE_MAX_LEFT_KEY, left.toString());
+                }
+                
                 return left;
             }
         }
@@ -1481,24 +1495,55 @@
 
     /**
      * 计算并更新toggle按钮的位置和显示状态
+     * @param {boolean} isResizeEvent - 是否是resize事件触发
      */
-    function updateToggleButtonPosition() {
+    function updateToggleButtonPosition(isResizeEvent = false) {
         // 如果 chatId 为空，隐藏 toggleButton
         if (isEmpty(getChatId())) {
             toggleButton.style.display = 'none';
             return;
         }
 
-        // 如果处于隐藏状态，直接返回，不更新位置
-        if (isInputAreaHidden) {
+        // 如果处于隐藏状态且非resize场景，直接返回，不更新位置
+        if (isInputAreaHidden && !isResizeEvent) {
             return;
         }
 
-        const inputArea = getInputArea();
-        const sendButton = getSendButton();
-        
         const bottom = calculateBottom();
-        const left = calculateLeft(inputArea, sendButton);
+        let left;
+
+        // 如果处于隐藏状态且是resize场景
+        if (isInputAreaHidden && isResizeEvent) {
+            // 特殊情况：如果resize到最大宽度且有保存的maxLeft，优先使用maxLeft
+            if (isMaxWidth()) {
+                const savedMaxLeft = localStorage.getItem(TOGGLE_MAX_LEFT_KEY);
+                if (savedMaxLeft !== null) {
+                    left = parseFloat(savedMaxLeft);
+                } else {
+                    // 没有保存的maxLeft，跟随多选面板的位置
+                    const toolPanel = document.getElementById(TOOL_PANEL_ID);
+                    if (toolPanel) {
+                        const panelRect = toolPanel.getBoundingClientRect();
+                        left = panelRect.left;
+                    } else {
+                        left = window.innerWidth - DEFAULT_LEFT_OFFSET;
+                    }
+                }
+            } else {
+                // 非最大宽度，跟随缩略状态的多选面板的left位置
+                const toolPanel = document.getElementById(TOOL_PANEL_ID);
+                if (toolPanel) {
+                    const panelRect = toolPanel.getBoundingClientRect();
+                    left = panelRect.left;
+                } else {
+                    left = window.innerWidth - DEFAULT_LEFT_OFFSET;
+                }
+            }
+        } else {
+            const inputArea = getInputArea();
+            const sendButton = getSendButton();
+            left = calculateLeft(inputArea, sendButton);
+        }
 
         // 更新toggle按钮位置
         toggleButton.style.left = `${left}px`;
@@ -1529,7 +1574,7 @@
     window.addEventListener('resize', () => {
         // 防抖处理，避免频繁触发
         clearTimeout(resizeTimer);
-        resizeTimer = setTimeout(() => updateToggleButtonPosition(), 50);
+        resizeTimer = setTimeout(() => updateToggleButtonPosition(true), 50);
     });
 
     /******************************************************************************
@@ -2965,6 +3010,7 @@
 
     // 创建面板容器
     panel.style.cssText = PANEL_STYLES.panel;
+    panel.id = TOOL_PANEL_ID;
     let hint = document.createElement('div');
 
     const DISABLE = "禁用";
