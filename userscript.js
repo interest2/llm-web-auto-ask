@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.3.3
+// @version      2.3.4
 // @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -61,7 +61,7 @@
     const CHAT_ID_WAIT_TIME = 20000; // 主节点等待获取对话ID的超时时间（毫秒）
     const SET_UID_WAIT_TIME = 15000;  // 从节点等待获取对话ID的超时时间（毫秒）
 
-    const version = "2.3.3";
+    const version = "2.3.4";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -673,8 +673,11 @@
      * 输入框粘贴提问内容
      */
     async function pasteContent(editor, content, chatId){
+        const ONE_MINUTE_MS = 60 * 1000;
+        const imageTimestamp = getS(T + HAS_IMAGE_BEFORE_JUMP);
+        const shouldPasteImage = !isEmpty(imageTimestamp) && (Date.now() - parseInt(imageTimestamp)) <= ONE_MINUTE_MS;
 
-        if(!isEmpty(getS(T + HAS_IMAGE_BEFORE_JUMP))){
+        if(shouldPasteImage){
             console.log("有跳转前的图片待粘贴");
             // 粘贴图片到输入框，并等待完成
             await doPasteImage();
@@ -923,7 +926,7 @@
     // 其他站点粘贴图片
     async function pasteImage() {
         if(!shouldPasteImageNow()){
-            setS(T + HAS_IMAGE_BEFORE_JUMP, "1");
+            setS(T + HAS_IMAGE_BEFORE_JUMP, Date.now().toString());
             return;
         }
 
