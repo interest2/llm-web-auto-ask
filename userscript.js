@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.3.4
+// @version      2.4.0
 // @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
 // @match        https://www.tongyi.com/*
+// @match        https://www.qianwen.com/*
 // @match        https://chat.qwen.ai/*
 // @match        https://www.doubao.com/*
 // @match        https://yiyan.baidu.com/*
@@ -61,7 +62,7 @@
     const CHAT_ID_WAIT_TIME = 20000; // 主节点等待获取对话ID的超时时间（毫秒）
     const SET_UID_WAIT_TIME = 15000;  // 从节点等待获取对话ID的超时时间（毫秒）
 
-    const version = "2.3.4";
+    const version = "2.4.0";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -144,7 +145,7 @@
     const keywords = {
         "deepseek": DEEPSEEK,
         "kimi": KIMI,
-        "tongyi": TONGYI,
+        "qianwen": TONGYI,
         "qwen": QWEN,
         "doubao": DOUBAO,
         "yiyan": WENXIN,
@@ -160,7 +161,7 @@
     const webSites = {
         [KIMI]: ["https://www.kimi.com/", "chat/"],
         [DEEPSEEK]: ["https://chat.deepseek.com/", "a/chat/s/"],
-        [TONGYI]: ["https://www.tongyi.com/", "?sessionId="],
+        [TONGYI]: ["https://www.qianwen.com/", "chat/"],
         [CHATGPT]: ["https://chatgpt.com/", "c/"],
         [DOUBAO]: ["https://www.doubao.com/chat", "/"],
         [WENXIN]: ["https://yiyan.baidu.com/", "chat/"],
@@ -216,7 +217,7 @@
     // Gemini和DS暂用默认兜底规则
 	const CHAT_ID_PREFIX = {
 		[KIMI]: [MARKER_CHAT],
-		[TONGYI]: ["sessionId="],
+		[TONGYI]: [MARKER_CHAT],
 		[QWEN]: [MARKER_C],
 		[DOUBAO]: [MARKER_CHAT],
 		[CHATGPT]: [MARKER_C],
