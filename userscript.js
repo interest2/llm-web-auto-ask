@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.4.0
+// @version      2.4.1
 // @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -62,7 +62,7 @@
     const CHAT_ID_WAIT_TIME = 20000; // 主节点等待获取对话ID的超时时间（毫秒）
     const SET_UID_WAIT_TIME = 15000;  // 从节点等待获取对话ID的超时时间（毫秒）
 
-    const version = "2.4.0";
+    const version = "2.4.1";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -321,8 +321,9 @@
     const normalizeQuestionText = (text) => {
         if (!text) return '';
         const trimmedText = text.trim();
-        if (site === STUDIO && trimmedText.startsWith('User')) {
-            return trimmedText.substring(4).trim();
+        const removeWord = 'User';
+        if (site === STUDIO && trimmedText.startsWith(removeWord)) {
+            return trimmedText.substring(removeWord.length).trim();
         }
         return trimmedText;
     };
@@ -1401,7 +1402,7 @@
             return parseFloat(savedBottom);
         }
 
-        const UPDATE_BOTTOM_THRESHOLD = 50;
+        const UPDATE_BOTTOM_THRESHOLD = 45;
         const sendButton = getSendButton();
         // 发送按钮存在 且 chatId 非空，若新 bottom < 阈值，才更新
         if (sendButton && !isEmpty(getChatId())) {
@@ -1482,11 +1483,17 @@
      * 计算并更新toggle按钮的位置和显示状态
      */
     function updateToggleButtonPosition() {
+        // 如果 chatId 为空，隐藏 toggleButton
+        if (isEmpty(getChatId())) {
+            toggleButton.style.display = 'none';
+            return;
+        }
+
         // 如果处于隐藏状态，直接返回，不更新位置
         if (isInputAreaHidden) {
             return;
         }
-        
+
         const inputArea = getInputArea();
         const sendButton = getSendButton();
         
@@ -3044,6 +3051,7 @@
         if(status === true){
             setGV("disable", true);
             disable.textContent = ENABLE;
+            disable.style.background = "#f5a088";
             contentContainer.style.color = "lightgray";
             // 禁用状态下，缩略模式的背景色改为白色
             if(isCompactMode){
@@ -3055,6 +3063,7 @@
         }else{
             setGV("disable", false);
             disable.textContent = DISABLE;
+            disable.style.background = "#ec7258";
             contentContainer.style.color = "black";
             // 恢复启用状态，缩略模式的背景色恢复为彩色
             if(isCompactMode){
