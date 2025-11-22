@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.4.2
+// @version      2.4.3
 // @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -62,7 +62,7 @@
     const CHAT_ID_WAIT_TIME = 20000; // 主节点等待获取对话ID的超时时间（毫秒）
     const SET_UID_WAIT_TIME = 15000;  // 从节点等待获取对话ID的超时时间（毫秒）
 
-    const version = "2.4.2";
+    const version = "2.4.3";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -1498,10 +1498,18 @@
      * @param {boolean} isResizeEvent - 是否是resize事件触发
      */
     function updateToggleButtonPosition(isResizeEvent = false) {
-        // 如果 chatId 为空，隐藏 toggleButton
+        // 如果 chatId 为空，隐藏 toggleButton；非空则需显示
         if (isEmpty(getChatId())) {
+            if(isInputAreaHidden){
+                // 恢复输入框的显示：模拟点击按钮
+                toggleButton.click();
+            }
             toggleButton.style.display = 'none';
             return;
+        }else{
+            if(isInputAreaHidden){
+                toggleButton.style.display = 'flex';
+            }
         }
 
         // 如果处于隐藏状态且非resize场景，直接返回，不更新位置
@@ -1623,7 +1631,7 @@
         waveIconNormal: `background-color:transparent;color:#333;`,
         
         // 副目录样式
-        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${SUB_NAV_TOP};width:${SUB_NAV_WIDTH};max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${SUB_NAV_TOP};max-width:${SUB_NAV_WIDTH};min-width:200px;max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
         subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
         subNavCloseBtn: `position:absolute;top:0;right:8px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
         subNavItem: `padding:4px 2px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
