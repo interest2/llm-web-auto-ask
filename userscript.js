@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      2.4.3
+// @version      3.0.0
 // @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -58,10 +58,8 @@
 
     const STUDIO_CONTENT_MAX_WIDTH = "800px"; // gemini ai studio 内容最大宽度
 
-    const CHAT_ID_WAIT_TIME = 20000; // 主节点等待获取对话ID的超时时间（毫秒）
-    const SET_UID_WAIT_TIME = 15000;  // 从节点等待获取对话ID的超时时间（毫秒）
-
-    const version = "2.4.3";
+    const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
+    const version = "3.0.0";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -90,6 +88,9 @@
 
     // 启用 Markdown 标题识别的站点列表（性能优化：仅对需要的站点启用）
     const ENABLE_MARKDOWN_HEADING_SITES = [CLAUDE];
+
+    // 启用 副目录滚动到上一个元素的站点列表
+    const ENABLE_SCROLL_TO_PREV_ELEMENT_SITES = [CLAUDE];
 
     // 输入框类型分类
     const inputAreaTypes = {
@@ -198,7 +199,7 @@
         [QWEN]: 9,
         [DOUBAO]: 11,
 
-        [ZCHAT]: 11,
+        [ZCHAT]: 10,
         [CHATGPT]: 10,
         [GEMINI]: 9,
         [STUDIO]: 11,
@@ -206,75 +207,8 @@
         [GROK]: 10
     };
 
-	// 通用chatId正则：一定长度的数字、字母、特殊字符
-	const GENERAL_PATTERN = /[a-zA-Z0-9-_=]{16,38}/;
-
-    const MARKER_CHAT = "chat/";
-    const MARKER_C = "c/";
-
-	// （可选）各站点的chatId提取所需特征词（由于正则匹配结果可能有多个，故需精准识别）
-    // Gemini和DS暂用默认兜底规则
-	const CHAT_ID_PREFIX = {
-		[KIMI]: [MARKER_CHAT],
-		[TONGYI]: [MARKER_CHAT],
-		[QWEN]: [MARKER_C],
-		[DOUBAO]: [MARKER_CHAT],
-		[CHATGPT]: [MARKER_C],
-		[ZCHAT]: [MARKER_C],
-		[CLAUDE]: [MARKER_CHAT],
-		[GROK]: ["chat=", MARKER_C],
-		[WENXIN]: [MARKER_CHAT]
-	};
-
-	// 从url提取各大模型网站的对话唯一标识
-	function getChatId(){
-        let url = getUrl();
-        if(isEmpty(url)){
-            return "";
-        }
-        if(site === DOUBAO && url.indexOf("local") > -1){
-            return "";
-        }
-		// 特征词规则：若定义了站点规则且能提取出匹配GENERAL_PATTERN的内容，则直接返回；否则走通用匹配
-		const markers = CHAT_ID_PREFIX[site];
-		if(markers && Array.isArray(markers)){
-			// 优先选择在 URL 中出现位置更靠前且能命中的 marker
-			const candidates = markers
-				.map(m => ({ m, idx: url.indexOf(m) }))
-				.filter(x => x.idx !== -1)
-				.sort((a,b) => a.idx - b.idx);
-			for(const { m } of candidates){
-				const id = matchAfterMarker(url, m, GENERAL_PATTERN);
-				if(!isEmpty(id)){
-					return id;
-				}
-			}
-			return ""; // 指定站点但无特征词或无法匹配时视为空
-		}
-		// 其他站点：通用匹配（如有多个匹配，取最后一个，兼容性更好）
-		const globalRegex = new RegExp(GENERAL_PATTERN.source, 'g');
-		const all = url.match(globalRegex);
-		if(isEmpty(all)){
-			return "";
-		}
-		return all[all.length - 1];
-    }
-    
-	// 工具：匹配 marker 后第一个符合 pattern 的内容（捕获分组法）
-	function escapeRegex(text){
-		return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-	}
-	function matchAfterMarker(fullUrl, marker, pattern){
-		const regex = new RegExp(escapeRegex(marker) + '(' + pattern.source + ')');
-		const m = fullUrl.match(regex);
-		return (m && m[1]) ? m[1] : "";
-	}
-
     const newSites = Object.fromEntries(
         Object.entries(webSites).map(([key, [baseUrl]]) => [key, baseUrl])
-    );
-    const historySites = Object.fromEntries(
-        Object.entries(webSites).map(([key, [baseUrl, suffix]]) => [key, baseUrl + suffix])
     );
 
     // 表示当前站点的变量
@@ -348,10 +282,7 @@
     }
 
     // 系统功能配置
-    const MAX_PLAIN = 50; // localStorage存储的问题原文的最大长度。超过则存哈希
-    const HASH_LEN = 16; // 问题的哈希长度
     const checkGap = 100;
-    const HISTORY_WAIT_ROUNDS = Math.ceil(3000 / checkGap);
     const maxRetries = 200;
     const OPEN_GAP = 300; // 打开网页的间隔
     const HIBERNATE_GAP = 600; // 单位：秒
@@ -359,27 +290,20 @@
 
     // 存储时的特征词
     const T = "tool-";
-    const HAS_IMAGE_BEFORE_JUMP = "hasImageBeforeJump";
-    const QUEUE = "tool-queue";
-    const LAST_Q = "lastQ";
-    const UID_KEY = "uid";
     const UID_KEY_PREFIX = "uid-";
     const HEART_KEY_PREFIX ="lastHeartbeat-";
 
     let DOMAIN = "https://www.ratetend.com:5001";
     let testDOMAIN = "http://localhost:8002";
     const DEVELOPER_USERID = "7bca846c-be51-4c49-ba2b6"
-    const TEST_KIMI_WIDTH = "90%";
 
     let userid = getGV("userid");
     if(isEmpty(userid)){
         userid = guid();
         setGV("userid", userid);
-
-        // 本地调试用，连接本地服务器
     }else{
+        // 本地调试用，连接本地服务器
         if(userid === DEVELOPER_USERID){
-            MAX_QUEUE = 15;
             if(testLocalFlag === 1){
                 DOMAIN = testDOMAIN;
             }
@@ -388,7 +312,7 @@
 
     setTimeout(developTest, 2000);
     function developTest(){
-        // kimi表格太窄，脚本作者自测调大用
+        // kimi 表格太窄，自测调大用
         if(DEVELOPER_USERID === userid && site === KIMI){
             // let kimiPage = document.getElementsByClassName("chat-content-list")[0];
             // kimiPage.style.maxWidth = TEST_KIMI_WIDTH;
@@ -435,13 +359,6 @@
     // 页面加载时，向本地存储发送一次心跳
     setGV(HEART_KEY_PREFIX + site, Date.now());
 
-    let questionBeforeJump = getS("questionBeforeJump");
-    if(!isEmpty(questionBeforeJump)){
-        console.log("页面刚打开，处理跳转信息");
-        receiveNew();
-    }
-
-    // 发送端
     function masterCheck(lastestQ){
         if(sendLock){
             return;
@@ -449,44 +366,13 @@
         if(isEmpty(lastestQ)){
             return;
         }
-        let masterId = getChatId();
-        let lastQuestion = hgetS(T + masterId, LAST_Q);
-
-        if(!isEmpty(lastQuestion) && isEqual(lastestQ, lastQuestion)){
-            return;
-        }
-        masterHandle(masterId, lastestQ);
-    };
-
-    function masterHandle(masterId, lastestQ){
-        let uid = hgetS(T + masterId, UID_KEY);
-        if(isEmpty(uid)){
-            uid = guid();
-            hsetS(T + masterId, UID_KEY, uid);
-        }
 
         let msg = {
-            uid: uid,
             question: lastestQ,
             date: Date.now()
         };
         console.log(msg);
         setGV("msg", msg);
-        hsetS(T + masterId, LAST_Q, getQuesOrHash(lastestQ));
-
-        let uidJson = getGV(uid);
-        // 若json非空，则其中一定有首次提问的主节点的信息；
-        // 故json若空则必为首次，只有首次会走如下逻辑
-        if(isEmpty(uidJson)){
-            uidJson = {};
-            uidJson[site] = masterId;
-            console.log("master print uidJson: "+JSON.stringify(uidJson));
-            setGV(uid, uidJson);
-
-            // 存储管理（删除与添加）
-            dequeue();
-            enqueue(masterId);
-        }
 
         addCurrentToStorage();
 
@@ -494,7 +380,6 @@
         if(isDisable){
             return;
         }
-
         let remoteUrl = DOMAIN + "/masterQ";
         let sites = getSitesExcludeCurrent();
         let data = {
@@ -503,18 +388,15 @@
         };
         remoteHttp(remoteUrl, data);
 
-        let openCount = 0;
         sites.forEach(site => {
             let lastHeartbeat = getGV(HEART_KEY_PREFIX + site);
             // 如果从节点 xx 秒没有更新心跳时刻，则认为已经关闭，需打开
             if(isEmpty(lastHeartbeat) || Date.now() - lastHeartbeat > 1000 * HIBERNATE_GAP){
-                openCount++;
                 setTimeout(function(){
                     window.open(newSites[site], '_blank');
                 }, OPEN_GAP);
             }
         });
-
     }
 
     // 监听是否有新的提问
@@ -528,107 +410,16 @@
 
         let sites = getSitesOfStorage();
         if(sites.includes(site)){
-            // 假定新的提问出现时，上次的提问已经发送出去，故sendLock是已解锁，可执行receiveNew
-            receiveNew();
+            // 假定新的提问出现时，上次的提问已经发送出去，故sendLock是已解锁
+            if(sendLock){
+                return;
+            }
+            let msg = getGV("msg");
+            let question = msg.question;
+
+            sendQuestion(question);
         }
     });
-
-    function receiveNew(){
-        if(sendLock){
-            return;
-        }
-        let msg = getGV("msg");
-        let curSlaveId = getChatId();
-
-        let questionBeforeJump = getS("questionBeforeJump");
-
-        // 如果是经跳转而来，无需处理主节点信息，直接从缓存取对话内容
-        if(!isEmpty(questionBeforeJump)){
-            console.log("questionBeforeJump: " + questionBeforeJump);
-            questionBeforeJump = JSON.parse(questionBeforeJump);
-            let cachedQuestion = questionBeforeJump[0];
-            let cachedUid = questionBeforeJump[1];
-
-            let cachedSlaveId = "";
-            if(!isEmpty(curSlaveId)){
-                cachedSlaveId = questionBeforeJump[2];
-                if(curSlaveId !== cachedSlaveId){
-                    setS("questionBeforeJump", "");
-                    return;
-                }
-                hsetS(T + curSlaveId, LAST_Q, getQuesOrHash(cachedQuestion));
-            }
-
-            // 清空跳转用的缓存
-            setS("questionBeforeJump", "");
-            console.log(curDate() + "h1 send");
-            sendQuestion(cachedQuestion, cachedSlaveId);
-
-            if(isEmpty(curSlaveId)){
-                setUid(cachedUid, cachedQuestion);
-            }
-            return;
-        }
-
-        let uid = msg.uid;
-        let targetUrl = "";
-        let slaveIdFlag = false;
-        let slaveId = "";
-        let uidJson = getGV(uid);
-        let lastQuestionOfComingSlaveId = "";
-
-        let question = msg.question;
-        // 来者消息的uid，是否关联了从节点的chatId？
-        if(!isEmpty(uidJson)){
-            slaveId = uidJson[site];
-            if(!isEmpty(slaveId)){
-                lastQuestionOfComingSlaveId = hgetS(T + slaveId, LAST_Q);
-                // console.log("lastQuestionOfComingSlaveId "+lastQuestionOfComingSlaveId);
-
-                if(isEqual(question, lastQuestionOfComingSlaveId)){
-                    return;
-                }
-                slaveIdFlag = true;
-            }
-        }
-
-        let curIdFlag = !isEmpty(curSlaveId);
-        // 从节点已进行过来者的uid对应的对话
-        if(slaveIdFlag){
-            // 当前页面有chatId
-            if(curIdFlag){
-                // chatId相同则对话，不同则跳转
-                if(curSlaveId === slaveId){
-                    console.log("h2 send", curDate());
-                    hsetS(T + curSlaveId, LAST_Q, getQuesOrHash(question));
-                    sendQuestion(question, curSlaveId);
-                }else{
-                    targetUrl = historySites[site] + slaveId;
-                }
-            // 当前页面是空白，需跳转
-            }else{
-                targetUrl = historySites[site] + slaveId;
-            }
-            // 对从节点而言是新对话
-        }else{
-            // 当前页面有chatId，则跳转空白页
-            if(curIdFlag){
-                // setS("gotoNewPage-"+curSlaveId, JSON.stringify(uidJson));
-                targetUrl = newSites[site];
-                // 当前页面已经是空白页
-            }else{
-                console.log("h3 send", curDate());
-                sendQuestion(question, "");
-                setUid(uid, question);
-            }
-        }
-        if(!isEmpty(targetUrl)){
-            let jumpArray = [question, uid, slaveId];
-            setS("questionBeforeJump", JSON.stringify(jumpArray));
-            window.location.href = targetUrl;
-        }
-    }
-
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -642,224 +433,133 @@
      * 发送提问内容
      * 整体涉及这些轮询检查：① 输入框的存在 ② 发送按钮的存在 ③ 输入框的清空
      */
-    function sendQuestion(content, chatId){
-        updateBoxFromStorage();
 
-        let intervalId;
-        let count = 0;
+    /**
+     * 发送问题的主流程
+     */
+    async function sendQuestion(content) {
+        updateBoxFromStorage();
         sendLock = true;
 
-        intervalId = setInterval(function() {
-            count ++;
-            if(count > 10000 / checkGap){
-                console.log("监测输入框存在超时");
-                clearInterval(intervalId);
-            }
-            const inputArea = getInputArea();
-            // 输入框元素存在
-            if (!isEmpty(inputArea)) {
-                let noChatId = isEmpty(chatId);
-                // 要求是新空白对话，或者 非新但问题列表非空（或超时）
-                const questionReady = !isEmpty(getQuestionList());
-                const waitTimeout = count >= HISTORY_WAIT_ROUNDS;
-                if(noChatId || (!noChatId && (questionReady || waitTimeout)) ){
-                    clearInterval(intervalId);
-                    pasteContent(inputArea, content, chatId);
+        try {
+            // 步骤1: 等待输入框出现（使用 MutationObserver）
+            const inputArea = await waitForElement(
+                () => getInputArea(),
+                {timeout: 10000, timeoutMsg: "监测输入框存在超时"}
+            );
+            // 步骤2、3: 粘贴内容到输入框、等待发送按钮出现并点击
+            await pasteContent(inputArea, content);
+            await waitAndClickSendButton();
+
+        } catch (error) {
+            console.error("发送问题失败:", error);
+            sendLock = false;
+        }
+    }
+
+    /**
+     * 等待发送按钮出现并执行发送流程
+     */
+    async function waitAndClickSendButton() {
+        console.log(curDate() + "h1 等待发送按钮");
+
+        try {
+            // 等待发送按钮出现（使用 MutationObserver）
+            const sendBtn = await waitForElement(
+                () => getSendButton(),
+                {timeout: maxRetries * checkGap, timeoutMsg: "发送按钮未找到"}
+            );
+
+            // 点击页面空白处，然后点击发送按钮
+            await new Promise((resolve) => {
+                setTimeout(() => {
+                    document.body.click();
+                    setTimeout(() => {
+                        console.log(curDate() + "h2 点击发送按钮");
+                        sendBtn.click();
+                        resolve();
+                    }, 200);
+                }, 200);
+            });
+
+            // 验证发送成功
+            await verifySendSuccess(sendBtn);
+
+        } catch (error) {
+            console.error("发送失败:", error);
+            sendLock = false;
+            throw error;
+        }
+    }
+
+    /**
+     * 验证发送成功（输入框内容清空）
+     */
+    async function verifySendSuccess(sendBtn) {
+        const pollInterval = checkGap * 2;
+        const maxPollTime = maxRetries * checkGap - 2000;
+        const startTime = Date.now();
+
+        return new Promise((resolve) => {
+            function checkInputArea() {
+                const elapsed = Date.now() - startTime;
+                const inputArea = getInputArea();
+                const areaContent = getInputContent(inputArea);
+
+                // 输入框为空，表明发送成功
+                if (!areaContent || areaContent.trim() === '') {
+                    sendLock = false;
+                    resolve();
+                    return;
                 }
+
+                // 超时，解锁并返回
+                if (elapsed >= maxPollTime) {
+                    console.warn("发送验证超时，但可能已经成功发送");
+                    sendLock = false;
+                    resolve();
+                    return;
+                }
+
+                // 输入框仍有内容，继续点击发送按钮
+                console.log(curDate() + "h3 重试发送");
+                sendBtn.click();
+                setTimeout(checkInputArea, pollInterval);
             }
-        }, checkGap);
+
+            setTimeout(checkInputArea, pollInterval);
+        });
     }
 
     /**
      * 输入框粘贴提问内容
      */
-    async function pasteContent(editor, content, chatId){
-        const ONE_MINUTE_MS = 60 * 1000;
-        const imageTimestamp = getS(T + HAS_IMAGE_BEFORE_JUMP);
-        const shouldPasteImage = !isEmpty(imageTimestamp) && (Date.now() - parseInt(imageTimestamp)) <= ONE_MINUTE_MS;
-
-        if(shouldPasteImage){
-            console.log("有跳转前的图片待粘贴");
-            // 粘贴图片到输入框，并等待完成
-            await doPasteImage();
-            console.log("粘贴完成");
-            setS(T + HAS_IMAGE_BEFORE_JUMP, "");
-        }else{
-            console.log("无需粘贴图片");
-        }
-
-        // 当豆包是新对话，元素不可见会异常，故适当延迟
-        let pasteDelay = (site === DOUBAO && isEmpty(chatId)) ? 1500 : 100;
-        setTimeout(function(){
-            // 输入框粘贴文字，大致分两类处理。其中第一类里 kimi 特殊处理
-            //  第一类（lexical）
-            if(inputAreaTypes.lexical.includes(site)){
-                if([KIMI, WENXIN].includes(site)){
-                    editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: content }));
-                }else {
-                    const pTag = editor.querySelector('p');
-                    pTag.textContent = content;
-                }
-                //  第二类（textarea 标签）
-            }else if(inputAreaTypes.textarea.includes(site)){
-                const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-                    window.HTMLTextAreaElement.prototype,
-                    'value'
-                ).set;
-                nativeInputValueSetter.call(editor, content);
-                // 触发 input 事件
-                editor.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-            // 点击发送
-            sendAndCheck();
-        }, pasteDelay);
-    }
-
-    /**
-     * 等待发送按钮出现，并执行发送动作
-     */
-    function sendAndCheck() {
-        let tryCount = 0;
-        console.log(curDate() + "h1 click");
-        const pollInterval = checkGap;
-
-        const checkBtnInterval = setInterval(() => {
-            const sendBtn = getSendButton();
-            if (!isEmpty(sendBtn)) {
-                clearInterval(checkBtnInterval);
-                
-                // 执行发送动作：点击页面空白处，然后点击发送按钮
-                setTimeout(() => {
-                    document.body.click();
-                    setTimeout(() => {
-                        console.log(curDate() + "h2 click");
-                        sendBtn.click();
-                        // 轮询是否发送成功
-                        pollSendStatus(sendBtn);
-                    }, 300);
-                }, 200);
-            } else {
-                tryCount++;
-                if (tryCount > maxRetries) {
-                    clearInterval(checkBtnInterval);
-                    sendLock = false;
-                    console.log("tryCount " + tryCount + " sendBtn " + isEmpty(sendBtn));
-                    console.warn("sendBtn未找到或未发送成功，超时");
-                }
-            }
-        }, pollInterval);
-    }
-
-    /**
-     * 轮询检查输入框是否已清空（发送成功）
-     * 如果输入框仍有内容，则继续点击发送按钮
-     */
-    function pollSendStatus(sendBtn) {
-        const maxPollTime = maxRetries * checkGap - 2000;
-        const pollInterval = checkGap * 2;
-        const startTime = Date.now();
-        let pollTryCount = 0;
-
-        function checkInputArea() {
-            const elapsed = Date.now() - startTime;
-            pollTryCount++;
-            const inputArea = getInputArea();
-            const areaContent = getInputContent(inputArea);
-
-            // 输入框为空，表明发送成功
-            if (isEmpty(areaContent)) {
-                sendLock = false;
-                return;
-            }
-
-            // 超时，解锁并返回
-            if (elapsed >= maxPollTime || pollTryCount > maxRetries) {
-                console.log("tryCount " + pollTryCount);
-                console.warn("未符合判据，超时");
-                sendLock = false;
-                return;
-            }
-
-            // 输入框仍有内容，继续点击发送按钮
-            console.log(curDate() + "h3 click");
-            console.log(sendBtn);
-            sendBtn.click();
-            setTimeout(checkInputArea, pollInterval);
-        }
-
-        setTimeout(checkInputArea, pollInterval);
-    }
-
-    /**
-     * 设置uid
-     */
-    function setUid(uid, question){
-        let intervalId;
-        let count = 0;
-        let waitTime = site === STUDIO ? 40000 : SET_UID_WAIT_TIME;
-
-
-        console.log("ready to setUid");
-        intervalId = setInterval(function() {
-            count ++;
-            if(count > waitTime / checkGap){
-                console.log("setUid超时");
-                sendLock = false;
-                clearInterval(intervalId);
-                return;
-            }
-            let chatId = getChatId();
-            if (!isEmpty(chatId)) {
-
-                let uidInterval;
-                let innerCount = 0;
-
-                uidInterval = setInterval(function() {
-                    innerCount ++;
-                    if(innerCount > 5000 / checkGap){
-                        clearInterval(uidInterval);
-                        return;
+    async function pasteContent(editor, content) {
+        return new Promise((resolve) => {
+            setTimeout(() => {
+                // 输入框粘贴文字，大致分两类处理。其中第一类里 kimi 特殊处理
+                //  第一类（lexical）
+                if (inputAreaTypes.lexical.includes(site)) {
+                    if ([KIMI].includes(site)) {
+                        editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: content }));
+                    } else {
+                        const pTag = editor.querySelector('p');
+                        pTag.textContent = content;
                     }
-                    let uidLock = getGV("uidLock");
-                    if(isEmpty(uidLock) || uidLock === false){
-                        clearInterval(uidInterval);
-
-                        // 读取uidJson前加锁
-                        setGV("uidLock", true);
-                        let uidJson = getGV(uid);
-                        if(!isEmpty(uidJson)){
-                            if(isEmpty(uidJson[site])){
-                                uidJson[site] = chatId;
-                            }
-                        }else{
-                            uidJson = {};
-                            uidJson[site] = chatId;
-                        }
-                        // 更新完uidJson才能解锁
-                        setGV(uid, uidJson);
-                        setGV("uidLock", false);
-                        setS(UID_KEY_PREFIX + uid, JSON.stringify(uidJson));
-                    }else{
-                        console.log("uidLock已存在，稍后重试");
-                    }
-                }, checkGap);
-
-                // 照理说下面的逻辑应在上面的setGV成功后再执行，但这样得写两遍，且理论上一定成功，故放这。
-                hsetS(T + chatId, LAST_Q, getQuesOrHash(question));
-                hsetS(T + chatId, UID_KEY, uid);
-
-                sendLock = false;
-                console.log("setUid finish", curDate());
-
-                // 存储管理（删除与添加）
-                dequeue();
-                enqueue(chatId);
-
-                clearInterval(intervalId);
-            }
-        }, checkGap);
+                    //  第二类（textarea 标签）
+                } else if (inputAreaTypes.textarea.includes(site)) {
+                    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                        window.HTMLTextAreaElement.prototype,
+                        'value'
+                    ).set;
+                    nativeInputValueSetter.call(editor, content);
+                    // 触发 input 事件
+                    editor.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                resolve();
+            }, 100);
+        });
     }
-
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -889,17 +589,6 @@
     const currentAskHasImage = "currentAskHasImage";
 
     document.addEventListener('paste', async (e) => {
-        // 仅当输入框处于聚焦状态时才继续处理
-        const inputArea = getInputArea();
-        if (!inputArea) return;
-        const activeElement = document.activeElement;
-        // gemini, grok检测的activeElement为空，不支持聚焦判断
-        if(![GEMINI, GROK].includes(site)){
-            if (activeElement !== inputArea && !inputArea.contains(activeElement)) {
-                return;
-            }
-        }
-
         const items = e.clipboardData?.items;
         if (!items) return;
 
@@ -912,10 +601,6 @@
                 // 转为 Base64
                 const base64 = await blobToBase64(blob);
 
-                // 时序注意：先设置 chatId 和 site，最后设置 image 来触发监听器
-                let thisChatId = getChatId();
-                GM_setValue(imageKey + "-chatId", thisChatId);
-                GM_setValue(imageKey + "-site", site);
                 GM_setValue(imageKey, base64);
                 setS(T + currentAskHasImage, "1");
 
@@ -924,41 +609,8 @@
         }
     });
 
-    // 其他站点粘贴图片
-    async function pasteImage() {
-        if(!shouldPasteImageNow()){
-            setS(T + HAS_IMAGE_BEFORE_JUMP, Date.now().toString());
-            return;
-        }
-
-        return doPasteImage();
-    }
-
-    // 判断当前页面是否应当处理粘贴的图片（基于 chatId 绑定关系）
-    function shouldPasteImageNow(){
-        const sourceSite = GM_getValue(imageKey + "-site");
-        const masterChatId = GM_getValue(imageKey + "-chatId");
-        const curChatId = getChatId();
-
-        const empty1 = isEmpty(masterChatId);
-        const empty2 = isEmpty(curChatId);
-        const bothEmpty = empty1 && empty2;
-
-        let pairdChatId = false;
-        const uid = hgetS(T + curChatId, UID_KEY);
-        const uidJson = getGV(uid);
-        if(!isEmpty(uidJson)){
-            const expectedChatId = uidJson[sourceSite];
-            if(!empty1 && !empty2 && expectedChatId === masterChatId){
-                pairdChatId = true;
-            }
-        }
-
-        return bothEmpty || pairdChatId;
-    }
-
     // 模拟将 base64 图片粘贴到输入框（返回在实际触发粘贴后才 resolve）
-    function doPasteImage() {
+    async function pasteImage() {
         const base64 = GM_getValue(imageKey);
         if (!base64) {
             console.error('未找到指定的图片');
@@ -1035,33 +687,11 @@
         return '';
     }
 
-    // 轮询等待masterId非空
-    function waitForMasterIdAndCall(question) {
-        let tryCount = 0;
-        const waitTime = site === STUDIO ? 50000 : CHAT_ID_WAIT_TIME;
-        const maxTries = waitTime / checkGap; // 轮询间隔
-
-        const intervalId = setInterval(function() {
-            tryCount++;
-            const masterId = getChatId();
-
-            if (!isEmpty(masterId)) {
-                clearInterval(intervalId);
-                console.log("masterId已获取: " + masterId);
-                masterCheck(question);
-            } else if (tryCount > maxTries) {
-                clearInterval(intervalId);
-                console.warn("等待masterId超时，" + (waitTime / 1000) + "秒内未获取到");
-            }
-        }, checkGap);
-    }
-
     // 监听发送按钮点击事件和回车键
     let sendBtnListenerAdded = false;
     let inputAreaListenerAdded = false;
     let pendingQuestion = null; // 临时存储按下时的问题
-    let lastUrl = window.location.href; // 记录上次的URL
-    let lastChatId = getChatId(); // 记录上次的chatId
+    let lastUrl = getUrl(); // 记录上次的URL
     let cachedInputContent = ""; // 缓存的输入框内容
 
     function addSendButtonListener() {
@@ -1095,12 +725,13 @@
 
             // 鼠标释放（发送提问）
             sendBtn.addEventListener('mouseup', function() {
+
                 if (!isEmpty(pendingQuestion)) {
                     const questionToSend = pendingQuestion;
                     pendingQuestion = null; // 清空临时变量
 
                     setTimeout(function() {
-                        waitForMasterIdAndCall(questionToSend);
+                        masterCheck(questionToSend);
                     }, 100);
                 }
             });
@@ -1139,7 +770,7 @@
                     const questionToUse = isEmpty(lastestQ) ? cachedInputContent : lastestQ;
                     if (!isEmpty(questionToUse)) {
                         setTimeout(function() {
-                            waitForMasterIdAndCall(questionToUse);
+                            masterCheck(questionToUse);
                         }, 100);
                     }
                 }
@@ -1182,31 +813,40 @@
             setTimeout(addSendButtonListener, 1000);
         }
     }
+    // 标记输入框是否处于隐藏状态
+    let isInputAreaHidden = false;
 
     // 监听URL变化，重新添加监听器
     function checkUrlChange() {
-        const currentUrl = window.location.href;
-        const currentChatId = getChatId();
+        const currentUrl = getUrl();
 
         if (currentUrl !== lastUrl) {
-            // 如果之前chatId为空，现在非空，说明是在同一页面生成了chatId，不需要重新添加
-            if (isEmpty(lastChatId) && !isEmpty(currentChatId)) {
-                console.log("chatId从空变为非空，无需重新添加监听器");
-                lastUrl = currentUrl;
-                lastChatId = currentChatId;
-                return;
-            }
-
             console.log("URL已变化，重新添加监听器");
             lastUrl = currentUrl;
-            lastChatId = currentChatId;
+
+            let nthInputArea = getNthInputArea();
+            if(site === GEMINI){
+                // gemini 打开新对话的情况
+                if(isInputAreaHidden && nthInputArea.style.display === 'none' && getQuestionList().length === 0){
+                    nthInputArea.style.display = 'flex';
+                    isInputAreaHidden = false;
+                }
+            }
+            // 如果打开新对话，可能导致 display 值清空，此时输入框并未隐藏
+            if(nthInputArea.style.display === ''){
+                toggleBtnStatus(true);
+                isInputAreaHidden = false;
+            }
+
             sendBtnListenerAdded = false;
             inputAreaListenerAdded = false;
             pendingQuestion = null;
+
             // URL 变化时隐藏副目录
             if (typeof hideSubNavBar === 'function') {
                 hideSubNavBar();
             }
+
             setTimeout(addSendButtonListener, 500);
         }
     }
@@ -1217,11 +857,6 @@
         checkUrlChange();
         checkListenerIntegrity();
         setGV(HEART_KEY_PREFIX + site, Date.now());
-
-        if(isEmpty(getChatId())){
-            updateNavQuestions();
-            return;
-        }
 
         let questions = getQuestionList();
         updateNavQuestions(questions);
@@ -1275,7 +910,7 @@
             element.replaceChildren();
             return;
         }
-        
+
         try {
             const trustedHTML = makeHTML(html);
             element.innerHTML = trustedHTML;
@@ -1314,12 +949,7 @@
             if(isEmpty(getGV(FIRST_RUN_KEY))){
                 setGV(FIRST_RUN_KEY, 1);
                 let updateHint = "脚本使用提示：\n网页右下角的多选面板可勾选提问范围，\n点击\"禁用\"可一键关闭同步提问";
-                
-                // if(!isEmpty(getGV("notice4"))){
-                //     setGV("notice4", "");
-                //     updateHint = "脚本近期更新：\n支持带图片（粘贴方式）提问的自动同步；\n进一步降低核心功能对官网样式的依赖";
-                // }
-                
+
                 alert(updateHint);
             } else {
                 // 非首次运行，检查版本更新
@@ -1351,7 +981,7 @@
     const TOGGLE_BUTTON_BG_SHOW = '#ec7258';
     const TOGGLE_BUTTON_BG_HIDE = '#999';
     const TOGGLE_BUTTON_STYLE = `font-size:14px;padding:5px;position:fixed;cursor:pointer;background:${TOGGLE_BUTTON_BG_SHOW};color:white;border:1px solid #ddd;border-radius:30%;box-shadow:0 4px 12px rgba(0,0,0,0.2);z-index:99999999;display:flex;align-items:center;justify-content:center;`;
-    
+
     // 切换状态配置
     const TOGGLE_STATES = {
         show: {
@@ -1373,20 +1003,34 @@
 
     const getNthParent = (el, n) => n > 0 ? getNthParent(el?.parentElement, n - 1) : el;
 
+    function getNthInputArea(){
+        const inputArea = getInputArea();
+        return getNthParent(inputArea, inputAreaHideParentLevel[site]);
+    }
+
     // 按钮点击事件 - 切换面板显示/隐藏
     toggleButton.addEventListener('click', (e) => {
         e.stopPropagation();
-        const inputArea = getInputArea();
-        const aroundInputArea = getNthParent(inputArea, inputAreaHideParentLevel[site]);
+        toggleInput();
+    });
+
+    function toggleInput(){
+        const aroundInputArea = getNthInputArea();
+        // 如果输入框是被用户隐藏的，则切换输入框、按钮状态
         const isHidden = aroundInputArea.style.display === 'none';
-        const state = isHidden ? TOGGLE_STATES.show : TOGGLE_STATES.hide;
-        
-        aroundInputArea.style.display = state.display;
-        toggleButton.textContent = state.text;
-        toggleButton.style.background = state.bg;
         // 更新隐藏状态标记
         isInputAreaHidden = !isHidden;
-    });
+
+        const state = isHidden ? TOGGLE_STATES.show : TOGGLE_STATES.hide;
+        toggleBtnStatus(isHidden);
+        aroundInputArea.style.display = state.display;
+    }
+
+    function toggleBtnStatus(isHidden){
+        const state = isHidden ? TOGGLE_STATES.show : TOGGLE_STATES.hide;
+        toggleButton.textContent = state.text;
+        toggleButton.style.background = state.bg;
+    }
 
     // 存储的key
     const TOGGLE_BOTTOM_KEY = T + 'toggleBottom';
@@ -1399,8 +1043,6 @@
     const DEFAULT_LEFT_OFFSET = 40; // 默认left值的偏移量
     const MIN_RIGHT_THRESHOLD = 10; // right值的最小阈值
     const TOOL_PANEL_ID = 'tool-panel'; // 多选面板的ID
-    // 标记输入框是否处于隐藏状态
-    let isInputAreaHidden = false;
 
     /**
      * 计算bottom值
@@ -1413,11 +1055,11 @@
 
         const UPDATE_BOTTOM_THRESHOLD = 45;
         const sendButton = getSendButton();
-        // 发送按钮存在 且 chatId 非空，若新 bottom < 阈值，才更新
-        if (sendButton && !isEmpty(getChatId())) {
+        // 发送按钮存在，若新 bottom < 阈值，才更新
+        if (sendButton) {
             const calculatedBottom = window.innerHeight - sendButton.getBoundingClientRect().bottom;
             if (calculatedBottom < UPDATE_BOTTOM_THRESHOLD) {
-                localStorage.setItem(TOGGLE_BOTTOM_KEY, calculatedBottom.toString());
+                setS(TOGGLE_BOTTOM_KEY, calculatedBottom.toString());
                 return calculatedBottom;
             }
         }
@@ -1441,30 +1083,30 @@
         if (hasInputArea && hasSendButton) {
             const right1 = sendButton.getBoundingClientRect().right;
             const right2 = inputArea.getBoundingClientRect().right;
-            
+
             // 检查right值是否有效，无效则重置对应标志
             hasSendButton = hasSendButton && right1 >= MIN_RIGHT_THRESHOLD;
             hasInputArea = hasInputArea && right2 >= MIN_RIGHT_THRESHOLD;
-            
+
             // 两者都有效才存储
             if (hasInputArea && hasSendButton) {
                 const left = right1 + BUTTON_RIGHT_OFFSET;
                 const delta1 = BUTTON_RIGHT_OFFSET;
                 const delta2 = left - right2;
 
-                localStorage.setItem(TOGGLE_LEFT_KEY, left.toString());
-                localStorage.setItem(TOGGLE_DELTA1_KEY, delta1.toString());
-                localStorage.setItem(TOGGLE_DELTA2_KEY, delta2.toString());
-                
+                setS(TOGGLE_LEFT_KEY, left.toString());
+                setS(TOGGLE_DELTA1_KEY, delta1.toString());
+                setS(TOGGLE_DELTA2_KEY, delta2.toString());
+
                 // 如果当前是最大宽度，额外记录maxLeft
                 if (isMaxWidth()) {
-                    localStorage.setItem(TOGGLE_MAX_LEFT_KEY, left.toString());
+                    setS(TOGGLE_MAX_LEFT_KEY, left.toString());
                 }
-                
+
                 return left;
             }
         }
-        
+
         // 情况2: 输入框√，按钮×。等于 输入框右边缘 + delta
         if (hasInputArea && !hasSendButton) {
             const savedDelta2 = localStorage.getItem(TOGGLE_DELTA2_KEY);
@@ -1474,7 +1116,7 @@
             }
             return defaultLeft;
         }
-        
+
         // 情况3: 输入框×，按钮√。等于 按钮右边缘 + delta
         if (!hasInputArea && hasSendButton) {
             const savedDelta1 = localStorage.getItem(TOGGLE_DELTA1_KEY);
@@ -1484,7 +1126,7 @@
             }
             return defaultLeft;
         }
-        
+
         // 情况4: 输入框×，按钮×。用存储的 left
         const savedLeft = localStorage.getItem(TOGGLE_LEFT_KEY);
         if (savedLeft !== null) {
@@ -1498,20 +1140,6 @@
      * @param {boolean} isResizeEvent - 是否是resize事件触发
      */
     function updateToggleButtonPosition(isResizeEvent = false) {
-        // 如果 chatId 为空，隐藏 toggleButton；非空则需显示
-        if (isEmpty(getChatId())) {
-            if(isInputAreaHidden){
-                // 恢复输入框的显示(模拟点击按钮)
-                toggleButton.click();
-            }
-            toggleButton.style.display = 'none';
-            return;
-        }else{
-            if(isInputAreaHidden){
-                toggleButton.style.display = 'flex';
-            }
-        }
-
         // 如果处于隐藏状态且非resize场景，直接返回，不更新位置
         if (isInputAreaHidden && !isResizeEvent) {
             return;
@@ -1556,7 +1184,6 @@
         // 更新toggle按钮位置
         toggleButton.style.left = `${left}px`;
         toggleButton.style.bottom = `${bottom}px`;
-        toggleButton.style.display = 'flex';
     }
 
     /**
@@ -1564,12 +1191,12 @@
      */
     function pollToggleButtonPosition() {
         const POLL_INTERVAL = 1000; // 轮询间隔1000ms
-        
+
         const checkAndUpdate = () => {
             updateToggleButtonPosition();
             setTimeout(checkAndUpdate, POLL_INTERVAL);
         };
-        
+
         // 开始轮询
         checkAndUpdate();
     }
@@ -1592,7 +1219,7 @@
      * ║                                                                      ║
      * ═══════════════════════════════════════════════════════════════════════
      ******************************************************************************/
-        
+
     // 查找回答内容区域的查找限制（用于性能优化）
     const FIND_ANSWER_SIBLING_LIMIT = 20; // 兄弟元素查找上限（原30，已优化）
     const FIND_ANSWER_MIDDLE_SIBLING_LIMIT = 30; // 中间问题查找时的兄弟元素上限（原50，已优化）
@@ -1629,9 +1256,9 @@
         waveIcon: `font-size:12px;cursor:pointer;color:#333;padding:0;border-radius:3px;user-select:none;flex-shrink:0;transition:background-color 0.2s;`,
         waveIconHover: `background-color:#f0f0f0;color:#0066cc;`,
         waveIconNormal: `background-color:transparent;color:#333;`,
-        
+
         // 副目录样式
-        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${SUB_NAV_TOP};max-width:${SUB_NAV_WIDTH};min-width:200px;max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${SUB_NAV_TOP};max-width:${SUB_NAV_WIDTH};min-width:220px;max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
         subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
         subNavCloseBtn: `position:absolute;top:0;right:8px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
         subNavItem: `padding:4px 2px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
@@ -1644,7 +1271,7 @@
         levelBtnActive: `background:#0066cc;color:#fff;border-color:#0066cc;`,
         levelBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
         levelBtnLeave: `background-color:#fff;border-color:#ddd;color:#333;`,
-       
+
         subNavPositionBtn: `position:absolute;top:0;right:32px;font-size:12px;cursor:pointer;color:#111;width:40px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
         subNavPositionBtnHover: `background-color:#f0f0f0;`,
         subNavPositionBtnNormal: `background-color:transparent;`,
@@ -1675,7 +1302,7 @@
     // 设置副目录的left值到localStorage
     const setSubNavLeft = (left) => {
         const key = getSubNavLeftKey();
-        localStorage.setItem(key, left);
+        setS(key, left);
     };
 
     // 创建副目录栏元素
@@ -1702,7 +1329,7 @@
     const setLinkStyle = (linkContainer, isActive) => {
         if(!linkContainer) return;
         // 如果是 linkContainer，从中查找 link 元素
-        const link = linkContainer.classList?.contains('tool-nav-link-container') 
+        const link = linkContainer.classList?.contains('tool-nav-link-container')
             ? linkContainer.querySelector('.tool-nav-link')
             : linkContainer;
         if(!link) return;
@@ -1748,9 +1375,9 @@
     // 更新主目录条数显示
     const updateNavCount = () => {
         if (!navCountText) return;
-        
+
         const linkCount = navBar.querySelectorAll('.tool-nav-link').length;
-        
+
         // 如果条数超过阈值，显示"共xx条"
         if (linkCount > NAV_COUNT_THRESHOLD) {
             navCountText.textContent = `共${linkCount}条`;
@@ -1783,7 +1410,7 @@
             navBar.style.top = navTop;
             navMiniButton.style.top = navTop;
         }
-        
+
         // 更新条数显示
         updateNavCount();
 
@@ -1800,7 +1427,7 @@
     // 设置导航栏的最小化状态
     const setNavMinimized = (min) => {
         navMinimized = min === true;
-        localStorage.setItem(T + 'navMinimized', navMinimized.toString());
+        setS(T + 'navMinimized', navMinimized.toString());
         refreshNavBarVisibility();
     };
 
@@ -1896,11 +1523,11 @@
     // 查找问题对应的回答内容区域
     const findAnswerContent = (questionEl) => {
         if (!questionEl) return null;
-        
+
         // 获取所有问题元素，用于确定回答区域的边界
         const allQuestions = getQuestionList();
         if (!allQuestions || allQuestions.length === 0) return null;
-        
+
         const questionIndex = Array.from(allQuestions).indexOf(questionEl);
         if (questionIndex < 0) {
             // 问题不在列表中，尝试直接查找
@@ -1919,7 +1546,7 @@
             }
             return null;
         }
-        
+
         if (questionIndex >= allQuestions.length - 1) {
             // 如果是最后一个问题，查找它之后的所有内容
             let current = questionEl;
@@ -1928,7 +1555,7 @@
                 // 查找当前元素的父元素
                 let parent = current.parentElement;
                 if (!parent) break;
-                
+
                 // 查找父元素的兄弟元素
                 let sibling = parent.nextElementSibling;
                 let checkedCount = 0;
@@ -1944,7 +1571,7 @@
                     sibling = sibling.nextElementSibling;
                     checkedCount++;
                 }
-                
+
                 // 向上查找
                 current = parent;
                 depth++;
@@ -1953,7 +1580,7 @@
             // 如果不是最后一个问题，查找当前问题和下一个问题之间的内容
             const nextQuestion = allQuestions[questionIndex + 1];
             if (!nextQuestion) return null;
-            
+
             // 查找问题元素和下一个问题元素之间的所有元素
             let current = questionEl;
             let depth = 0;
@@ -1961,7 +1588,7 @@
                 // 查找当前元素的父元素
                 let parent = current.parentElement;
                 if (!parent) break;
-                
+
                 // 查找父元素的兄弟元素，直到找到下一个问题
                 let sibling = parent.nextElementSibling;
                 let checkedCount = 0;
@@ -1970,28 +1597,28 @@
                     if (sibling.contains(nextQuestion) || sibling === nextQuestion) {
                         break;
                     }
-                    
+
                     // 查找包含h2~h4的元素
                     const headings = sibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
                     if (headings.length > 0) {
                         return sibling;
                     }
-                    
+
                     // 检查当前元素本身是否是h2~h4
                     if (sibling.tagName && SUB_NAV_HEADING_TAGS.includes(sibling.tagName)) {
                         return sibling.parentElement;
                     }
-                    
+
                     sibling = sibling.nextElementSibling;
                     checkedCount++;
                 }
-                
+
                 // 向上查找
                 current = parent;
                 depth++;
             }
         }
-        
+
         // 如果以上方法都没找到，尝试在问题元素之后直接查找
         let nextSibling = questionEl.nextElementSibling;
         let checkedCount = 0;
@@ -2006,20 +1633,20 @@
             nextSibling = nextSibling.nextElementSibling;
             checkedCount++;
         }
-        
+
         return null;
     };
 
     // 规范化标题文本（移除 emoji、空格、冒号等，但保留数字编号）
     const normalizeHeadingText = (text) => {
         if (!text) return '';
-        
+
         let normalized = text.trim();
-        
+
         // 移除开头的空格和 emoji，但保留数字编号
         // 先移除开头的连续空格
         normalized = normalized.replace(/^\s+/, '');
-        
+
         // 关键优化：先检查第一个字符是否是数字，避免某些环境将数字误识别为 emoji
         const firstChar = normalized.charAt(0);
         if (/[0-9]/.test(firstChar)) {
@@ -2041,10 +1668,10 @@
                 // 如果第一个字符是数字，说明被误识别为 emoji，不做处理
             }
         }
-        
+
         // 移除末尾的冒号（中英文）
         normalized = normalized.replace(/[:：]+$/, '');
-        
+
         return normalized;
     };
 
@@ -2065,27 +1692,27 @@
             null,
             false
         );
-        
+
         let textNode;
         let domOrder = startDomOrder; // 继续使用传入的domOrder，保持顺序连续
         while (textNode = walker.nextNode()) {
             const text = textNode.textContent;
             if (!text) continue;
-            
+
             // 兼容代码块未正确闭合的情况：不跳过代码块内的文本节点，识别所有标题
             const lines = text.split(/\n|\r\n?/);
             for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
                 const line = lines[lineIndex];
                 const trimmedLine = line.trim();
-                
+
                 // 对每一行，检查所有 markdown 标题模式
                 markdownHeadingPatterns.forEach(({ level, prefix }) => {
                     if (!SUB_NAV_HEADING_LEVELS.includes(level)) return;
-                    
+
                     if (trimmedLine.startsWith(prefix)) {
                         const titleText = trimmedLine.substring(prefix.length).trim();
                         if (!titleText) return;
-                        
+
                         // 找到包含该文本的可见父元素
                         // 兼容代码块未正确闭合的情况：即使父元素在代码块内，也识别为标题
                         let parentEl = textNode.parentElement;
@@ -2093,12 +1720,12 @@
                             const rect = parentEl.getBoundingClientRect();
                             if (rect.width > 0 && rect.height > 0) {
                                 // 检查是否已经存在相同文本和级别的标题（避免重复）
-                                const exists = headingList.some(h => 
-                                    h.text === titleText && 
+                                const exists = headingList.some(h =>
+                                    h.text === titleText &&
                                     h.level === level &&
                                     Math.abs(h.position - rect.top) < 30
                                 );
-                                
+
                                 if (!exists) {
                                     headingList.push({
                                         element: parentEl,
@@ -2118,16 +1745,16 @@
                 });
             }
         }
-        
+
         return domOrder; // 返回更新后的domOrder
     };
 
     // 在回答内容区域中查找所有配置的标题级别
     const findHeadingsInContent = (contentEl) => {
         if (!contentEl) return [];
-        
+
         const headingList = [];
-        
+
         // 1. 查找现有的 h2~h4 标签标题
         let domOrder = 0; // 初始化DOM顺序计数器（HTML标签标题和Markdown标题共用）
         const headings = contentEl.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
@@ -2138,10 +1765,10 @@
             // 确保标题级别在配置的范围内
             const level = parseInt(h.tagName.substring(1));
             if (!SUB_NAV_HEADING_LEVELS.includes(level)) return;
-            
+
             // 规范化标题文本
             const text = normalizeHeadingText(h.textContent);
-            
+
             headingList.push({
                 element: h,
                 tagName: h.tagName,
@@ -2151,17 +1778,17 @@
                 domOrder: domOrder++ // 为HTML标签标题也添加domOrder，确保排序正确
             });
         });
-        
+
         // 2. 查找文本中以 "## " 或 "### " 开头的 Markdown 标题
         // 性能优化：仅对配置的站点启用此功能，避免对其他站点造成性能占用
         if (ENABLE_MARKDOWN_HEADING_SITES.includes(site)) {
             domOrder = findMarkdownHeadings(contentEl, headingList, domOrder);
         }
-        
+
         // 3. 去重并排序（按DOM顺序，保持文档中的原始顺序）
         const uniqueHeadings = [];
         const seenKeys = new Set();
-        
+
         // 按DOM顺序排序（TreeWalker遍历的顺序）
         // 如果domOrder不存在，使用position作为备选排序依据
         headingList.sort((a, b) => {
@@ -2173,13 +1800,13 @@
             // 如果某个标题没有domOrder，使用position排序
             return a.position - b.position;
         });
-        
+
         headingList.forEach(heading => {
             // 使用文本、级别和更精确的位置作为唯一标识，避免重复
             // 使用更小的位置区间（5像素）来区分不同的标题
             const positionKey = Math.floor(heading.position / 5);
             const key = `${heading.text}_${heading.level}_${positionKey}`;
-            
+
             if (!seenKeys.has(key)) {
                 seenKeys.add(key);
                 uniqueHeadings.push({
@@ -2190,8 +1817,55 @@
                 });
             }
         });
-        
+
         return uniqueHeadings;
+    };
+
+    const SUB_NAV_SCROLL_MAX_HEIGHT_DIFF = 120; // 副目录滚动时，上一个元素最大高度差（超过此值则不滚动）
+    const SUB_NAV_SCROLL_MIN_HEIGHT_DIFF = 50; // 副目录滚动时，上一个元素最小高度差（小于此值则再往前找一个元素）
+
+    // 滚动到目标元素，并可选择性地滚动到上一个元素
+    const scrollToTargetWithPrevElement = (targetElement) => {
+        if (!targetElement || !document.body.contains(targetElement)) {
+            console.warn('标题元素不存在，无法跳转');
+            return;
+        }
+
+        targetElement.scrollIntoView({ block: 'start' });
+
+        // 如果当前站点启用了滚动到上一个元素功能
+        if (ENABLE_SCROLL_TO_PREV_ELEMENT_SITES.includes(site)) {
+            setTimeout(() => {
+                // 找到targetElement的上一个相邻元素
+                let previousElement = targetElement.previousElementSibling;
+                if (previousElement) {
+                    // 检测上一个元素的位置是否比目标高出超过阈值
+                    const targetRect = targetElement.getBoundingClientRect();
+                    let prevRect = previousElement.getBoundingClientRect();
+                    let heightDiff = targetRect.top - prevRect.top;
+                    
+                    if (heightDiff > SUB_NAV_SCROLL_MAX_HEIGHT_DIFF) {
+                        console.log('上一个元素位置过高，不进行滚动');
+                    } else if (heightDiff <= SUB_NAV_SCROLL_MIN_HEIGHT_DIFF) {
+                        // 如果高度不超过最小阈值，再往前找一个元素
+                        const prevPrevElement = previousElement.previousElementSibling;
+                        if (prevPrevElement) {
+                            const prevPrevRect = prevPrevElement.getBoundingClientRect();
+                            const prevPrevHeightDiff = targetRect.top - prevPrevRect.top;
+                            if (prevPrevHeightDiff <= SUB_NAV_SCROLL_MAX_HEIGHT_DIFF) {
+                                previousElement = prevPrevElement;
+                                console.log('使用前前一个元素');
+                            }
+                        }
+                        previousElement.scrollIntoView({ block: 'start' });
+                    } else {
+                        previousElement.scrollIntoView({ block: 'start' });
+                    }
+                } else {
+                    console.log('没有找到上一个相邻元素');
+                }
+            }, 0);
+        }
     };
 
     // 渲染副目录项（根据当前选择的层级过滤）
@@ -2199,14 +1873,14 @@
         // 获取标题容器后的所有元素
         const titleContainer = subNavBar.querySelector('.sub-nav-title-container');
         if (!titleContainer) return;
-        
+
         // 移除所有标题项（保留标题容器）
         const items = subNavBar.querySelectorAll('.sub-nav-item');
         items.forEach(item => item.remove());
-        
+
         // 根据当前选择的层级过滤标题
         const filteredHeadings = currentSubNavHeadings.filter(h => h.level <= currentSubNavLevel);
-        
+
         // 创建标题级别样式映射
         const headingStyleMap = {
             1: NAV_STYLES.subNavItemH1,
@@ -2214,13 +1888,13 @@
             3: NAV_STYLES.subNavItemH3,
             4: NAV_STYLES.subNavItemH4
         };
-        
+
         // 添加过滤后的标题
         filteredHeadings.forEach((heading, index) => {
             const item = document.createElement('div');
             item.className = 'sub-nav-item';
             let itemStyle = NAV_STYLES.subNavItem;
-            
+
             // 根据标题级别设置不同的缩进（如果配置中包含该级别）
             if (SUB_NAV_HEADING_LEVELS.includes(heading.level) && headingStyleMap[heading.level]) {
                 itemStyle += headingStyleMap[heading.level];
@@ -2229,11 +1903,11 @@
                 const paddingLeft = heading.level * 8;
                 itemStyle += `padding-left:${paddingLeft}px;`;
             }
-            
+
             item.style.cssText = itemStyle;
             item.textContent = heading.text;
             item.title = heading.text;
-            
+
             // 鼠标悬停效果
             item.addEventListener('mouseenter', () => {
                 item.style.backgroundColor = SUB_NAV_ITEM_HOVER_BG;
@@ -2243,15 +1917,15 @@
                 item.style.backgroundColor = SUB_NAV_ITEM_NORMAL_BG;
                 item.style.color = SUB_NAV_ITEM_NORMAL_COLOR;
             });
-            
+
             // 点击跳转
             item.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                
+
                 // 先尝试使用保存的元素引用
                 let targetElement = heading.element;
-                
+
                 // 如果元素引用失效，重新查找对应的标题元素
                 if (!targetElement || !document.body.contains(targetElement)) {
                     // 获取当前问题索引
@@ -2265,7 +1939,7 @@
                                 // 重新查找所有标题
                                 const headings = findHeadingsInContent(answerContent);
                                 // 查找匹配的标题（通过文本和级别）
-                                const matchedHeading = headings.find(h => 
+                                const matchedHeading = headings.find(h =>
                                     h.text === heading.text && h.level === heading.level
                                 );
                                 if (matchedHeading && matchedHeading.element) {
@@ -2275,14 +1949,10 @@
                         }
                     }
                 }
-                
-                if (targetElement && document.body.contains(targetElement)) {
-                    targetElement.scrollIntoView({ block: 'start' });
-                } else {
-                    console.warn('标题元素不存在，无法跳转');
-                }
+
+                scrollToTargetWithPrevElement(targetElement);
             });
-            
+
             subNavBar.appendChild(item);
         });
     };
@@ -2303,17 +1973,17 @@
         if (isSubNavClosed()) {
             return;
         }
-        
+
         if (!headings || headings.length === 0) {
             console.log('未找到标题');
             return;
         }
-        
+
         // 检测标题总条数，超过指定数量才显示副目录
         if (headings.length <= SUB_NAV_MIN_ITEMS) {
             return;
         }
-        
+
         // 轮询时的优化：如果当前已有标题且新标题数量少于或等于现有标题数量，可能是DOM还没完全加载
         // 只有在标题数量增加时才更新（保留更完整的数据）
         if (isPolling && currentSubNavHeadings.length > 0) {
@@ -2325,26 +1995,26 @@
             // 如果标题数量相同，检查是否有实际变化（避免不必要的重建）
             if (headings.length === currentSubNavHeadings.length) {
                 // 检查标题列表是否完全相同（通过比较标题文本和位置的hash）
-                const existingKeys = new Set(currentSubNavHeadings.map(h => 
+                const existingKeys = new Set(currentSubNavHeadings.map(h =>
                     `${h.text}_${h.level}_${Math.floor(h.position / 5)}`
                 ));
-                const newKeys = new Set(headings.map(h => 
+                const newKeys = new Set(headings.map(h =>
                     `${h.text}_${h.level}_${Math.floor(h.position / 5)}`
                 ));
                 // 如果标题完全相同，不更新
-                if (existingKeys.size === newKeys.size && 
+                if (existingKeys.size === newKeys.size &&
                     [...existingKeys].every(k => newKeys.has(k))) {
                     return;
                 }
             }
         }
-        
+
         // 保存标题数据和状态
         currentSubNavHeadings = headings;
-        
+
         // 获取实际存在的标题层级（从高到低：h4, h3, h2）
         const existingLevels = [...new Set(headings.map(h => h.level))].sort((a, b) => b - a);
-        
+
         // 检查是否是同一个问题且用户已手动选择层级
         const isSameQuestion = questionIndex === currentSubNavQuestionIndex;
         if (isSameQuestion && isSubNavLevelManuallySet) {
@@ -2354,7 +2024,7 @@
             // 如果是新问题或用户未手动选择，重新计算层级
             currentSubNavQuestionIndex = questionIndex;
             isSubNavLevelManuallySet = false; // 重置手动选择标志
-            
+
             // 设置默认层级
             if (existingLevels.length > 0) {
                 const highestLevel = existingLevels[0]; // 最高层级（数字最大，如h4=4）
@@ -2370,47 +2040,47 @@
                 }
             }
         }
-        
+
         // 清空副目录栏
         subNavBar.replaceChildren();
-        
+
         // 创建标题容器（相对定位，用于放置关闭按钮）
         const titleContainer = document.createElement('div');
         titleContainer.style.cssText = 'position:relative;padding-right:24px;padding-bottom:6px;border-bottom:1px solid #eaeaea;margin-bottom:6px;';
         titleContainer.className = 'sub-nav-title-container';
-        
+
         // 创建标题行容器
         const titleRow = document.createElement('div');
         titleRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
-        
+
         // 创建标题文本和按钮组容器
         const titleLeft = document.createElement('div');
         titleLeft.style.cssText = 'display:flex;align-items:center;gap:8px;flex:1;';
-        
+
         // 创建标题文本
         const titleText = document.createElement('span');
         titleText.style.cssText = 'font-weight:bold;color:#333;font-size:14px;';
         // 如果主目录只有一项，不显示序号；否则显示序号
         const totalQuestions = navQuestions ? navQuestions.length : 0;
         titleText.textContent = totalQuestions <= 1 ? '副目录' : `副目录 ${questionIndex + 1}`;
-        
+
         // 创建层级按钮组
         const levelBtnGroup = document.createElement('div');
         levelBtnGroup.style.cssText = NAV_STYLES.levelBtnGroup;
-        
+
         // 创建层级按钮（只显示实际存在的层级，按钮显示顺序为 h2, h3, h4，从高到低）
         existingLevels.slice().reverse().forEach(level => {
             const btn = document.createElement('div');
             btn.textContent = `h${level}`;
             btn.dataset.level = level;
-            
+
             // 设置按钮样式
             let btnStyle = NAV_STYLES.levelBtn;
             if (level === currentSubNavLevel) {
                 btnStyle += NAV_STYLES.levelBtnActive;
             }
             btn.style.cssText = btnStyle;
-            
+
             // 鼠标悬停效果
             btn.addEventListener('mouseenter', () => {
                 if (level !== currentSubNavLevel) {
@@ -2422,17 +2092,17 @@
                     btn.style.cssText = btnStyle + NAV_STYLES.levelBtnLeave;
                 }
             });
-            
+
             // 点击切换层级
             btn.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                
+
                 // 更新当前层级
                 currentSubNavLevel = level;
                 // 标记用户已手动选择层级
                 isSubNavLevelManuallySet = true;
-                
+
                 // 更新所有按钮的样式
                 levelBtnGroup.querySelectorAll('[data-level]').forEach(b => {
                     if (parseInt(b.dataset.level) === level) {
@@ -2441,23 +2111,23 @@
                         b.style.cssText = NAV_STYLES.levelBtn;
                     }
                 });
-                
+
                 // 重新渲染标题项
                 renderSubNavItems();
-                
+
                 // 根据副目录条目数量动态设置top位置
                 updateSubNavTop();
             });
-            
+
             levelBtnGroup.appendChild(btn);
         });
-        
+
         // 组装左侧（标题和按钮组）
         titleLeft.appendChild(titleText);
         titleLeft.appendChild(levelBtnGroup);
         titleRow.appendChild(titleLeft);
         titleContainer.appendChild(titleRow);
-        
+
         // 创建位置按钮
         const positionBtn = document.createElement('div');
         positionBtn.style.cssText = NAV_STYLES.subNavPositionBtn;
@@ -2471,19 +2141,19 @@
         });
         positionBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            
+
             // 创建输入框
             const input = document.createElement('input');
             input.type = 'text';
             input.value = getSubNavLeft();
             input.style.cssText = NAV_STYLES.subNavPositionInput;
-            
+
             // 替换按钮为输入框
             positionBtn.style.display = 'none';
             titleContainer.appendChild(input);
             input.focus();
             input.select();
-            
+
             // blur事件：保存值并更新位置
             input.addEventListener('blur', () => {
                 const newLeft = input.value.trim();
@@ -2504,7 +2174,7 @@
                 input.remove();
                 positionBtn.style.display = 'flex';
             });
-            
+
             // Enter键也触发blur
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
@@ -2513,7 +2183,7 @@
             });
         });
         titleContainer.appendChild(positionBtn);
-        
+
         // 创建关闭按钮
         const closeBtn = document.createElement('div');
         closeBtn.style.cssText = NAV_STYLES.subNavCloseBtn;
@@ -2527,7 +2197,7 @@
         });
         closeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            
+
             // 检查是否是首次点击（用GM存储标记状态）
             const firstCloseKey = `${T}subNavFirstCloseShown`;
             const hasShownFirstClose = GM_getValue(firstCloseKey, false);
@@ -2535,29 +2205,29 @@
                 alert("这家大模型将不再显示副目录；\n若需恢复，点击主目录每条提问前的小图标即可");
                 GM_setValue(firstCloseKey, true);
             }
-            
+
             // 记录关闭状态
             setSubNavClosed(true);
-            
+
             hideSubNavBar();
         });
         titleContainer.appendChild(closeBtn);
-        
+
         // 添加到副目录栏
         subNavBar.appendChild(titleContainer);
-        
+
         // 渲染标题项
         renderSubNavItems();
-        
+
         // 根据副目录条目数量动态设置top位置
         updateSubNavTop();
-        
+
         // 确保使用最新的left值（从localStorage读取）
         subNavBar.style.left = getSubNavLeft();
-        
+
         // 显示副目录栏
         subNavBar.style.display = 'block';
-        
+
         // 启动轮询更新，每10秒检查一次是否需要更新副目录
         startSubNavObserver(questionIndex);
     };
@@ -2577,7 +2247,7 @@
     const setSubNavClosed = (closed) => {
         const key = getSubNavClosedKey();
         if (closed) {
-            localStorage.setItem(key, 'true');
+            setS(key, 'true');
         } else {
             localStorage.removeItem(key);
         }
@@ -2587,17 +2257,17 @@
     const startSubNavObserver = (questionIndex) => {
         // 先停止之前的轮询
         stopSubNavObserver();
-        
+
         if (questionIndex < 0 || !navQuestions || questionIndex >= navQuestions.length) {
             return;
         }
-        
+
         // 保存问题索引，供轮询函数使用
         const pollQuestionIndex = questionIndex;
-        
+
         // 轮询间隔
         const POLL_INTERVAL = 6000;
-        
+
         // 启动轮询定时器，复用 autoShowSubNav 实现更新
         subNavPollInterval = setInterval(() => {
             // 检查副目录是否还在显示或已关闭
@@ -2605,12 +2275,12 @@
                 stopSubNavObserver();
                 return;
             }
-            
+
             // 复用 autoShowSubNav 实现更新
             autoShowSubNav(pollQuestionIndex);
         }, POLL_INTERVAL);
     };
-    
+
     // 停止副目录轮询更新
     const stopSubNavObserver = () => {
         if (subNavPollInterval) {
@@ -2618,7 +2288,7 @@
             subNavPollInterval = null;
         }
     };
-    
+
     // 隐藏副目录栏
     const hideSubNavBar = () => {
         subNavBar.style.display = 'none';
@@ -2632,32 +2302,32 @@
         if (questionIndex < 0 || !navQuestions || questionIndex >= navQuestions.length) {
             return;
         }
-        
+
         // 如果已关闭，则不加载
         if (isSubNavClosed()) {
             return;
         }
-        
+
         const targetEl = navQuestions[questionIndex];
         if (!targetEl || !document.body.contains(targetEl)) {
             return;
         }
-        
+
         // 查找回答内容区域
         const answerContent = findAnswerContent(targetEl);
         if (!answerContent) {
             return;
         }
-        
+
         // 查找标题
         const headings = findHeadingsInContent(answerContent);
         if (headings.length === 0) {
             return;
         }
-        
+
         // 显示副目录栏
         // 检查是否是轮询调用（通过检查副目录栏是否已显示来判断）
-        const isPolling = subNavBar.style.display === 'block' && 
+        const isPolling = subNavBar.style.display === 'block' &&
                          currentSubNavQuestionIndex === questionIndex;
         showSubNavBar(questionIndex, headings, isPolling);
     };
@@ -2669,27 +2339,27 @@
         linkContainer.className = 'tool-nav-link-container';
         linkContainer.style.cssText = NAV_STYLES.linkContainer;
 
-        // 创建波浪图标
-        const waveIcon = document.createElement('span');
-        waveIcon.textContent = '📖';
-        waveIcon.style.cssText = NAV_STYLES.waveIcon;
-        waveIcon.title = '显示副目录';
-        waveIcon.addEventListener('mouseenter', () => {
-            waveIcon.style.cssText = NAV_STYLES.waveIcon + NAV_STYLES.waveIconHover;
+        // 创建副目录小图标
+        const subNavIcon = document.createElement('span');
+        subNavIcon.textContent = '📖';
+        subNavIcon.style.cssText = NAV_STYLES.waveIcon;
+        subNavIcon.title = '显示副目录';
+        subNavIcon.addEventListener('mouseenter', () => {
+            subNavIcon.style.cssText = NAV_STYLES.waveIcon + NAV_STYLES.waveIconHover;
         });
-        waveIcon.addEventListener('mouseleave', () => {
-            waveIcon.style.cssText = NAV_STYLES.waveIcon + NAV_STYLES.waveIconNormal;
+        subNavIcon.addEventListener('mouseleave', () => {
+            subNavIcon.style.cssText = NAV_STYLES.waveIcon + NAV_STYLES.waveIconNormal;
         });
-        waveIcon.addEventListener('click', (e) => {
+        subNavIcon.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            
+
             // 如果当前已经显示该问题的副目录，则隐藏
             if (currentSubNavQuestionIndex === i && subNavBar.style.display === 'block') {
                 hideSubNavBar();
                 return;
             }
-            
+
             // 查找问题对应的回答内容区域
             let targetEl = el;
             if (!targetEl || !document.body.contains(targetEl)) {
@@ -2698,29 +2368,29 @@
                     targetEl = questions[i];
                 }
             }
-            
+
             if (!targetEl) {
                 console.warn('问题元素不存在');
                 return;
             }
-            
+
             // 查找回答内容区域
             const answerContent = findAnswerContent(targetEl);
             if (!answerContent) {
                 console.log('未找到回答内容区域');
                 return;
             }
-            
+
             // 查找标题
             const headings = findHeadingsInContent(answerContent);
             if (headings.length === 0) {
                 console.log('未找到h2~h4标题');
                 return;
             }
-            
+
             // 清除关闭状态（恢复副目录）
             setSubNavClosed(false);
-            
+
             // 显示副目录栏
             showSubNavBar(i, headings);
         });
@@ -2750,32 +2420,32 @@
             // 验证元素是否存在，如果不存在则尝试重新获取
             let targetEl = el;
             const questions = getQuestionList();
-            
+
             if (!targetEl || !document.body.contains(targetEl)) {
                 // 元素可能已被移除或重新渲染，尝试重新获取
                 if (questions && questions.length > i) {
                     targetEl = questions[i];
                 }
             }
-            
-     
+
+
             setTimeout(function(){
                 // 遍历更新所有条目文字：如果条目内容为空而questionList里的textContent非空
                 if (questions && navLinks) {
                     questions.forEach((question, index) => {
                         if (index >= navLinks.length) return;
-                        
+
                         const linkContainer = navLinks[index];
                         const linkElement = linkContainer.querySelector('.tool-nav-link');
                         if (!linkElement) return;
-                        
+
                         const spans = linkElement.querySelectorAll('span');
                         if (spans.length < 2) return;
-                        
+
                         const textSpanElement = spans[1]; // 第二个span是文本span
                         const currentText = textSpanElement.textContent.trim();
                         const newText = normalizeQuestionText(question.textContent);
-                        
+
                         if (isEmpty(currentText) && !isEmpty(newText)) {
                             textSpanElement.textContent = newText;
                             linkElement.title = (index + 1) + '. ' + newText;
@@ -2783,7 +2453,7 @@
                     });
                 }
             }, 500);
-            
+
             // 如果元素存在，执行滚动
             if (targetEl && document.body.contains(targetEl)) {
                 targetEl.scrollIntoView({block: 'start'});
@@ -2832,7 +2502,7 @@
         });
 
         // 组装链接容器
-        linkContainer.appendChild(waveIcon);
+        linkContainer.appendChild(subNavIcon);
         linkContainer.appendChild(link);
 
         return linkContainer;
@@ -3327,7 +2997,7 @@
             const checkbox = document.getElementById(`word-${word}`);
             if (checkbox) {
                 checkbox.addEventListener('change', () => updateStorageSites(word));
-                
+
                 // 重新绑定item的点击事件
                 const item = checkbox.closest('.panel-item');
                 if (item) {
@@ -3390,11 +3060,60 @@
      * ═══════════════════════════════════════════════════════════════════════
      ******************************************************************************/
 
+    /**
+     * 使用 MutationObserver 监测元素出现（更优雅的方式）
+     * @param {Function} selectorFn - 获取元素的函数
+     */
+    function waitForElement(selectorFn, options = {}) {
+        const {
+            timeout = DEFAULT_WAIT_ELEMENT_TIME,
+            root = document.body,
+            timeoutMsg = "等待元素出现超时"
+        } = options;
+
+        return new Promise((resolve, reject) => {
+            // 先检查元素是否已经存在
+            const element = selectorFn();
+            if (element) {
+                resolve(element);
+                return;
+            }
+
+            let timeoutId;
+            let observer;
+
+            // 设置超时
+            timeoutId = setTimeout(() => {
+                if (observer) observer.disconnect();
+                console.warn(timeoutMsg);
+                reject(new Error(timeoutMsg));
+            }, timeout);
+
+            // 创建 MutationObserver 监听 DOM 变化
+            observer = new MutationObserver((mutations) => {
+                const element = selectorFn();
+                if (element) {
+                    clearTimeout(timeoutId);
+                    observer.disconnect();
+                    resolve(element);
+                }
+            });
+
+            // 开始观察
+            observer.observe(root, {
+                childList: true,      // 监听子节点的添加/删除
+                subtree: true,        // 监听所有后代节点
+                attributes: false,    // 不监听属性变化（性能优化）
+                characterData: false  // 不监听文本内容变化（性能优化）
+            });
+        });
+    }
+
     // 获取当前URL
     function getUrl(){
         return window.location.href;
     }
-    
+
     /**
      * 判断当前是否为最大宽度
      */
@@ -3423,36 +3142,6 @@
     /**
      * 存储管理
      */
-
-    // 队列头部添加元素
-    function enqueue(element) {
-        let queue = JSON.parse(localStorage.getItem(QUEUE) || "[]");
-        if (queue.length > 0 && queue[0] === element) {
-            return;
-        }
-        queue.unshift(element);
-        localStorage.setItem(QUEUE, JSON.stringify(queue));
-    }
-
-    // 当队列长度超过阈值，删除队尾元素
-    function dequeue() {
-        let queue = JSON.parse(localStorage.getItem(QUEUE) || "[]");
-        let len = queue.length;
-        if(len > MAX_QUEUE){
-
-            let chatIdKey = T + queue[len - 1];
-            let valJson = JSON.parse(getS(chatIdKey));
-            if(!isEmpty(valJson)){
-                let uid = valJson.uid;
-                localStorage.removeItem(UID_KEY_PREFIX + uid);
-                GM_deleteValue(uid);
-            }
-
-            localStorage.removeItem(chatIdKey);
-            queue.pop();
-            localStorage.setItem(QUEUE, JSON.stringify(queue));
-        }
-    }
 
     // Blob --> Base64
     function blobToBase64(blob) {
@@ -3483,21 +3172,6 @@
         return new Blob([ab], { type: mimeType });
     }
 
-    // localStorage 读写json（hashMap）
-    function hgetS(key, jsonKey){
-        let json = localStorage.getItem(key);
-        if(isEmpty(json)){
-            return "";
-        }
-        json = JSON.parse(json);
-        return json[jsonKey];
-    }
-    function hsetS(key, jsonKey, val){
-        let json = JSON.parse(localStorage.getItem(key) || "{}");
-        json[jsonKey] = val;
-        localStorage.setItem(key, JSON.stringify(json));
-    }
-
     function getS(key){
         return localStorage.getItem(key);
     }
@@ -3513,28 +3187,6 @@
         return GM_getValue(key);
     }
 
-    function isEqual(latestQ, lastQ){
-        // 提问内容相同，如果带图片则允许继续，不带图则终止。且注意清除缓存标记。
-        let currentHasImageflag = getS(T + currentAskHasImage);
-        if(!isEmpty(currentHasImageflag)){
-            setS(T + currentAskHasImage, "");
-            return false;
-        }
-
-        if(latestQ.length > MAX_PLAIN){
-            if(lastQ.length === HASH_LEN){
-                return dHash(latestQ) === lastQ;
-            }else{
-                return false;
-            }
-        }else{
-            return latestQ === lastQ;
-        }
-    }
-
-    function getQuesOrHash(ques){
-        return ques.length > MAX_PLAIN ? dHash(ques) : ques;
-    }
 
     // 通用判空函数
     function isEmpty(item){
@@ -3545,42 +3197,6 @@
         }
     }
 
-
-    // 自定义哈希
-    function dHash(str, length = HASH_LEN) {
-        let hash = 5381;
-        for (let i = 0; i < str.length; i++) {
-            hash = (hash * 33) ^ str.charCodeAt(i);
-        }
-
-        const chars = '0123456789abcdefghijklmnopqrstuvwxyz';
-        let result = '';
-        let h = hash >>> 0; // 转为无符号整数
-
-        // 简单的伪随机数生成器（带种子）
-        function pseudoRandom(seed) {
-            let value = seed;
-            return () => {
-                value = (value * 1664525 + 1013904223) >>> 0; // 常见的 LCG 参数
-                return value / 4294967296; // 返回 [0,1) 的浮点数
-            };
-        }
-
-        const rand = pseudoRandom(hash); // 使用 hash 作为种子
-
-        for (let i = 0; i < length; i++) {
-            if (h > 0) {
-                result += chars[h % chars.length];
-                h = Math.floor(h / chars.length);
-            } else {
-                // 使用伪随机数生成字符
-                const randomIndex = Math.floor(rand() * chars.length);
-                result += chars[randomIndex];
-            }
-        }
-
-        return result;
-    }
 
     function guid() {
         return 'xxxxxxxx-xxxx-4xxx-yxxxx'.replace(/[xy]/g, function (c) {
