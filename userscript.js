@@ -10,7 +10,6 @@
 // @match        https://www.qianwen.com/*
 // @match        https://chat.qwen.ai/*
 // @match        https://www.doubao.com/*
-// @match        https://yiyan.baidu.com/*
 // @match        https://chat.zchat.tech/*
 // @match        https://chatgpt.com/*
 // @match        https://gemini.google.com/*
@@ -73,21 +72,21 @@
      ******************************************************************************/
 
     // 定义站点常量
-    const KIMI = 0;
-    const DEEPSEEK = 1;
+    const DEEPSEEK = 0;
+    const KIMI = 1;
     const TONGYI = 2;
-    const CHATGPT = 3;
+    const QWEN = 3;
     const DOUBAO = 4;
-    const ZCHAT = 5;
-    const GEMINI = 6;
-    const QWEN = 7;
-    const CLAUDE = 8;
-    const GROK = 9;
-    const WENXIN = 10;
-    const STUDIO = 11;
+
+    const ZCHAT = 10;
+    const CHATGPT = 11;
+    const GEMINI = 12;
+    const STUDIO = 13;
+    const CLAUDE = 14;
+    const GROK = 15;
 
     // 默认不启用的站点列表，移除元素可启用对应站点
-    const DISABLE_SITES = [WENXIN];
+    const DISABLE_SITES = [];
 
     // 启用 Markdown 标题识别的站点列表（性能优化：仅对需要的站点启用）
     const ENABLE_MARKDOWN_HEADING_SITES = [CLAUDE];
@@ -95,7 +94,7 @@
     // 输入框类型分类
     const inputAreaTypes = {
         textarea: [DEEPSEEK, TONGYI, DOUBAO, QWEN, STUDIO],
-        lexical: [KIMI, WENXIN, CHATGPT, ZCHAT, GEMINI, CLAUDE, GROK]
+        lexical: [KIMI, CHATGPT, ZCHAT, GEMINI, CLAUDE, GROK]
     };
 
     // 通用输入框选择器，两类：textarea标签、lexical
@@ -116,7 +115,7 @@
             [TONGYI]: () => document.querySelector('[class^="operateBtn-"], [class*=" operateBtn-"]'),
             [QWEN]: () => document.getElementById('send-message-button'),
             [DOUBAO]: () => document.getElementById('flow-end-msg-send'),
-            [WENXIN]: () => document.querySelector('[class^="sendInner"]'),
+
             [ZCHAT]: () => document.getElementById('composer-submit-button'),
             [CHATGPT]: () => document.getElementById('composer-submit-button'),
             [GEMINI]: () => document.querySelector('button.send-button'),
@@ -131,7 +130,7 @@
             [TONGYI]: () => document.querySelectorAll('[class^="bubble-"]'),
             [QWEN]: () => document.getElementsByClassName("user-message-content"),
             [DOUBAO]: () => Array.from(document.querySelectorAll('[data-testid="message_text_content"]')).filter(el => !el.children || el.children.length === 0),
-            [WENXIN]: () => document.querySelectorAll('[class^="questionText"]'),
+
             [ZCHAT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
             [CHATGPT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
             [GEMINI]: () => document.getElementsByTagName('user-query'),
@@ -148,7 +147,7 @@
         "qianwen": TONGYI,
         "qwen": QWEN,
         "doubao": DOUBAO,
-        "yiyan": WENXIN,
+
         "zchat": ZCHAT,
         "chatgpt": CHATGPT,
         "gemini": GEMINI,
@@ -164,7 +163,7 @@
         [TONGYI]: ["https://www.qianwen.com/", "chat/"],
         [CHATGPT]: ["https://chatgpt.com/", "c/"],
         [DOUBAO]: ["https://www.doubao.com/chat", "/"],
-        [WENXIN]: ["https://yiyan.baidu.com/", "chat/"],
+
         [ZCHAT]: ["https://chat.zchat.tech/", "c/"],
         [GEMINI]: ["https://gemini.google.com/app", "/"],
         [STUDIO]: ["https://aistudio.google.com/", "prompts/"],
@@ -180,7 +179,7 @@
         { site: TONGYI, word: '千问', alias: '千' },
         { site: QWEN, word: 'Qwen', alias: 'Q' },
         { site: DOUBAO, word: '豆包', alias: '豆' },
-        { site: WENXIN, word: '文心一言', alias: '文' },
+
         { site: ZCHAT, word: 'ZCHAT-GPT', alias: 'Z' },
         { site: CHATGPT, word: 'ChatGPT', alias: 'C' },
         { site: GEMINI, word: 'Gemini', alias: 'G' },
@@ -198,7 +197,7 @@
         [TONGYI]: 6,
         [QWEN]: 9,
         [DOUBAO]: 11,
-        [WENXIN]: 8,
+
         [ZCHAT]: 11,
         [CHATGPT]: 10,
         [GEMINI]: 9,
