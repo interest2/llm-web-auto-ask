@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      3.0.0
-// @description  输入一次问题，就能自动同步在各家大模型官网提问；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
+// @version      3.1.0
+// @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -10,6 +10,7 @@
 // @match        https://www.qianwen.com/*
 // @match        https://chat.qwen.ai/*
 // @match        https://www.doubao.com/*
+// @match        https://yuanbao.tencent.com/*
 // @match        https://chat.zchat.tech/*
 // @match        https://chatgpt.com/*
 // @match        https://gemini.google.com/*
@@ -42,8 +43,6 @@
     /**
      * 可自行修改的简单变量
      * */
-    let MAX_QUEUE = 20; // 历史对话的记忆数量
-
     const NAV_MAX_WIDTH = "230px";  // 主目录的最大宽度
     const NAV_TOP = "20%";          // 主目录的默认 top 位置
     const NAV_TOP_THRESHOLD = 7;    // 主目录条目超过此阈值时，top位置抬高到5%
@@ -59,7 +58,7 @@
     const STUDIO_CONTENT_MAX_WIDTH = "800px"; // gemini ai studio 内容最大宽度
 
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
-    const version = "3.0.0";
+    const version = "3.1.0";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -75,6 +74,7 @@
     const TONGYI = 2;
     const QWEN = 3;
     const DOUBAO = 4;
+    const YUANBAO = 5;
 
     const ZCHAT = 10;
     const CHATGPT = 11;
@@ -95,7 +95,7 @@
     // 输入框类型分类
     const inputAreaTypes = {
         textarea: [DEEPSEEK, TONGYI, DOUBAO, QWEN, STUDIO],
-        lexical: [KIMI, CHATGPT, ZCHAT, GEMINI, CLAUDE, GROK]
+        lexical: [KIMI, CHATGPT, ZCHAT, GEMINI, CLAUDE, GROK, YUANBAO]
     };
 
     // 通用输入框选择器，两类：textarea标签、lexical
@@ -116,6 +116,7 @@
             [TONGYI]: () => document.querySelector('[class^="operateBtn-"], [class*=" operateBtn-"]'),
             [QWEN]: () => document.getElementById('send-message-button'),
             [DOUBAO]: () => document.getElementById('flow-end-msg-send'),
+            [YUANBAO]: () => document.getElementById('yuanbao-send-btn'),
 
             [ZCHAT]: () => document.getElementById('composer-submit-button'),
             [CHATGPT]: () => document.getElementById('composer-submit-button'),
@@ -131,6 +132,7 @@
             [TONGYI]: () => document.querySelectorAll('[class^="bubble-"]'),
             [QWEN]: () => document.getElementsByClassName("user-message-content"),
             [DOUBAO]: () => Array.from(document.querySelectorAll('[data-testid="message_text_content"]')).filter(el => !el.children || el.children.length === 0),
+            [YUANBAO]: () => document.querySelectorAll(".hyc-content-text"),
 
             [ZCHAT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
             [CHATGPT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
@@ -148,6 +150,7 @@
         "qianwen": TONGYI,
         "qwen": QWEN,
         "doubao": DOUBAO,
+        "yuanbao": YUANBAO,
 
         "zchat": ZCHAT,
         "chatgpt": CHATGPT,
@@ -159,18 +162,19 @@
 
     // 各家大模型的网址（新对话，历史对话的前缀）
     const webSites = {
-        [KIMI]: ["https://www.kimi.com/", "chat/"],
-        [DEEPSEEK]: ["https://chat.deepseek.com/", "a/chat/s/"],
-        [TONGYI]: ["https://www.qianwen.com/", "chat/"],
-        [CHATGPT]: ["https://chatgpt.com/", "c/"],
-        [DOUBAO]: ["https://www.doubao.com/chat", "/"],
+        [KIMI]: ["https://www.kimi.com/"],
+        [DEEPSEEK]: ["https://chat.deepseek.com/"],
+        [TONGYI]: ["https://www.qianwen.com/"],
+        [CHATGPT]: ["https://chatgpt.com/"],
+        [DOUBAO]: ["https://www.doubao.com/chat"],
+        [YUANBAO]: ["https://yuanbao.tencent.com"],
 
-        [ZCHAT]: ["https://chat.zchat.tech/", "c/"],
-        [GEMINI]: ["https://gemini.google.com/app", "/"],
-        [STUDIO]: ["https://aistudio.google.com/", "prompts/"],
-        [QWEN]: ["https://chat.qwen.ai/", "c/"],
-        [CLAUDE]: ["https://claude.ai/chat", "/"],
-        [GROK]: ["https://grok.com/", "c/"]
+        [ZCHAT]: ["https://chat.zchat.tech/"],
+        [GEMINI]: ["https://gemini.google.com/app"],
+        [STUDIO]: ["https://aistudio.google.com/"],
+        [QWEN]: ["https://chat.qwen.ai/"],
+        [CLAUDE]: ["https://claude.ai/chat"],
+        [GROK]: ["https://grok.com/"]
     };
 
     // 多选面板里，各站点的全称、简称
@@ -180,6 +184,7 @@
         { site: TONGYI, word: '千问', alias: '千' },
         { site: QWEN, word: 'Qwen', alias: 'Q' },
         { site: DOUBAO, word: '豆包', alias: '豆' },
+        { site: YUANBAO, word: '元宝', alias: '元' },
 
         { site: ZCHAT, word: 'ZCHAT-GPT', alias: 'Z' },
         { site: CHATGPT, word: 'ChatGPT', alias: 'C' },
@@ -198,6 +203,7 @@
         [TONGYI]: 6,
         [QWEN]: 9,
         [DOUBAO]: 11,
+        [YUANBAO]: 10,
 
         [ZCHAT]: 10,
         [CHATGPT]: 10,
@@ -399,6 +405,8 @@
         });
     }
 
+    let lastQuestion = "";
+
     // 监听是否有新的提问
     GM_addValueChangeListener('msg', function(name, oldValue, msg, remote) {
         if(!remote){
@@ -416,7 +424,10 @@
             }
             let msg = getGV("msg");
             let question = msg.question;
-
+            // 避免重复发送
+            if(question === lastQuestion){
+                return;
+            }
             sendQuestion(question);
         }
     });
@@ -440,6 +451,7 @@
     async function sendQuestion(content) {
         updateBoxFromStorage();
         sendLock = true;
+        lastQuestion = content;
 
         try {
             // 步骤1: 等待输入框出现（使用 MutationObserver）
@@ -496,9 +508,12 @@
      * 验证发送成功（输入框内容清空）
      */
     async function verifySendSuccess(sendBtn) {
-        const pollInterval = checkGap * 2;
-        const maxPollTime = maxRetries * checkGap - 2000;
+        const pollInterval = 500;
+        const maxPollTime = 20000;
         const startTime = Date.now();
+        if(site === YUANBAO){
+            pollInterval = 2000;
+        }
 
         return new Promise((resolve) => {
             function checkInputArea() {
@@ -521,9 +536,11 @@
                     return;
                 }
 
+
                 // 输入框仍有内容，继续点击发送按钮
                 console.log(curDate() + "h3 重试发送");
                 sendBtn.click();
+
                 setTimeout(checkInputArea, pollInterval);
             }
 
@@ -1246,8 +1263,8 @@
     // 样式常量
     const NAV_STYLES = {
         // 主目录样式
-        navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:0 5px;z-index:2147483647;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:90vh;overflow-y:auto;box-sizing:border-box;`,
-        miniButton: `position:fixed;top:${NAV_TOP};right:15px;color:${NAV_ITEM_COLOR};border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:2147483647;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
+        navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:0 5px;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:90vh;overflow-y:auto;box-sizing:border-box;`,
+        miniButton: `position:fixed;top:${NAV_TOP};right:15px;color:${NAV_ITEM_COLOR};border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:99999;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
         title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;position:sticky;top:0;background:rgba(255,255,255,0.95);z-index:10;`,
         hideBtn: `font-weight:normal;color:#333;font-size:12px;padding:2px 6px;border:1px solid #aaa;border-radius:10px;cursor:pointer;user-select:none;`,
         countText: `font-weight:normal;color:#333;font-size:14px;margin-left:6px;user-select:none;`,
@@ -2670,7 +2687,7 @@
 
     // 面板样式集中定义
     const PANEL_STYLES = {
-        panel: `cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:400px;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:99999999;overflow-y:auto;padding:2px;display:flex;flex-direction:column;`,
+        panel: `z-index:9999;cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:400px;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:99999999;overflow-y:auto;padding:2px;display:flex;flex-direction:column;`,
         panelCompact: `min-width:120px;`,
         disable: `background:#ec7258;color:white;border-radius:6px;padding:2px 1px;`,
         item: `display:flex;align-items:center;padding:3px 0 3px 3px;border-bottom:1px solid #eee;`,
@@ -2703,7 +2720,7 @@
     // 根据word在words数组中的索引获取背景色
     const getItemBgColor = (word) => {
         const index = typeof word === 'number' ? word : words.indexOf(word);
-        return index < 5 ? '#f0f8ff' : '#fffcf0';
+        return index < 6 ? '#f0f8ff' : '#fffcf0';
     };
 
     // 生成单词和选择框
