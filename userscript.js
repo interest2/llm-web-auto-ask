@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      3.1.0
-// @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供便捷的目录导航（同一页面的历次提问 & 同一回答的分段章节）。支持范围：DS，Kimi，千问，豆包，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
+// @version      3.1.1
+// @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
@@ -58,7 +58,7 @@
     const STUDIO_CONTENT_MAX_WIDTH = "800px"; // gemini ai studio 内容最大宽度
 
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
-    const version = "3.1.0";
+    const version = "3.1.1";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -189,7 +189,7 @@
         { site: ZCHAT, word: 'ZCHAT-GPT', alias: 'Z' },
         { site: CHATGPT, word: 'ChatGPT', alias: 'C' },
         { site: GEMINI, word: 'Gemini', alias: 'G' },
-        { site: STUDIO, word: 'Gemini (Studio)', alias: 'S' },
+        { site: STUDIO, word: 'AI Studio', alias: 'A' },
         { site: CLAUDE, word: 'Claude', alias: 'Cl' },
         { site: GROK, word: 'Grok', alias: 'Gr' }
     ];
@@ -2687,7 +2687,7 @@
 
     // 面板样式集中定义
     const PANEL_STYLES = {
-        panel: `z-index:9999;cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:400px;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);z-index:99999999;overflow-y:auto;padding:2px;display:flex;flex-direction:column;`,
+        panel: `z-index:9999;cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:400px;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);overflow-y:auto;padding:2px;display:flex;flex-direction:column;`,
         panelCompact: `min-width:120px;`,
         disable: `background:#ec7258;color:white;border-radius:6px;padding:2px 1px;`,
         item: `display:flex;align-items:center;padding:3px 0 3px 3px;border-bottom:1px solid #eee;`,
