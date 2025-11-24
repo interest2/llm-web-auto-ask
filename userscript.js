@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      3.1.1
+// @version      3.1.2
 // @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -55,10 +55,10 @@
     const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此阈值时，top位置抬高到5%
     const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
-    const STUDIO_CONTENT_MAX_WIDTH = "800px"; // gemini ai studio 内容最大宽度
+    const STUDIO_CONTENT_MAX_WIDTH = "800px"; // ai studio 内容最大宽度
 
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
-    const version = "3.1.1";
+    const version = "3.1.2";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -770,8 +770,8 @@
             inputArea.addEventListener('keydown', function(event) {
                 let isTrigger = false;
                 if (site === STUDIO) {
-                    // STUDIO: Ctrl + Enter
-                    if (event.key === 'Enter' && event.ctrlKey) {
+                    // STUDIO: Ctrl + Enter (Windows) or Command + Enter (macOS)
+                    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
                         isTrigger = true;
                     }
                 } else {
