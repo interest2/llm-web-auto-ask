@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      3.1.2
+// @version      3.2.0
 // @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -45,12 +45,12 @@
      * */
     const NAV_MAX_WIDTH = "230px";  // 主目录的最大宽度
     const NAV_TOP = "20%";          // 主目录的默认 top 位置
-    const NAV_TOP_THRESHOLD = 7;    // 主目录条目超过此阈值时，top位置抬高到5%
+    const NAV_TOP_THRESHOLD = 7;    // 主目录条目超过此阈值时，top位置抬高
     const NAV_COUNT_THRESHOLD = 12; // 主目录条数超过此阈值时，会显示"共xx条"
 
     let SUB_NAV_TOP = "20%";          // 副目录的默认 top 位置
     const SUB_NAV_LEFT = "270px";     // 副目录的水平位置（距离屏幕左侧）
-    const SUB_NAV_WIDTH = "270px";    // 副目录的宽度
+    const SUB_NAV_MAX_WIDTH = "260px";    // 副目录的最大宽度
     const SUB_NAV_MIN_ITEMS = 2;      // 副目录标题总条数超过此阈值才显示
     const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此阈值时，top位置抬高到5%
     const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
@@ -58,7 +58,7 @@
     const STUDIO_CONTENT_MAX_WIDTH = "800px"; // ai studio 内容最大宽度
 
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
-    const version = "3.1.2";
+    const version = "3.2.0";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -100,7 +100,7 @@
 
     // 通用输入框选择器，两类：textarea标签、lexical
     const getTextareaInput = () => document.getElementsByTagName('textarea')[0];
-    const getContenteditableInput = () => document.querySelector('[contenteditable="true"]');
+    const getContenteditableInput = () => document.querySelector('[contenteditable="true"]:has(p)');
 
     // 选择器配置
     const selectors = {
@@ -296,7 +296,6 @@
 
     // 存储时的特征词
     const T = "tool-";
-    const UID_KEY_PREFIX = "uid-";
     const HEART_KEY_PREFIX ="lastHeartbeat-";
 
     let DOMAIN = "https://www.ratetend.com:5001";
@@ -560,8 +559,7 @@
                     if ([KIMI].includes(site)) {
                         editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: content }));
                     } else {
-                        const pTag = editor.querySelector('p');
-                        pTag.textContent = content;
+                        editor.textContent = content;
                     }
                     //  第二类（textarea 标签）
                 } else if (inputAreaTypes.textarea.includes(site)) {
@@ -878,12 +876,33 @@
         let questions = getQuestionList();
         updateNavQuestions(questions);
 
+        // 单独适配：gemini的表格宽度、studio的内容宽度
+        if(site === GEMINI){
+            const EXPAND_MAX_WIDTH = "800px";
+            const ADAPTIVE_WIDTH = window.outerWidth * 0.8 + "px";
+            let tables = document.querySelectorAll('.horizontal-scroll-wrapper');
+            if(tables.length > 0){
+                tables.forEach((element, index) => {
+                    element.style.maxWidth = EXPAND_MAX_WIDTH;
+                    element.style.width = ADAPTIVE_WIDTH;
+                });
+            }
+            let graphs = document.querySelectorAll('.code-block');
+            if(graphs.length > 0){
+                graphs.forEach((element, index) => {
+                    element.style.maxWidth = EXPAND_MAX_WIDTH;
+                    element.style.width = ADAPTIVE_WIDTH;
+                });
+            }
+
+        }
         if(site === STUDIO){
             let studioContent = document.querySelector('.chat-session-content');
             if(!isEmpty(studioContent)){
                 studioContent.style.maxWidth = STUDIO_CONTENT_MAX_WIDTH;
             }
         }
+
 
     }, 1800);
 
@@ -1022,7 +1041,11 @@
 
     function getNthInputArea(){
         const inputArea = getInputArea();
-        return getNthParent(inputArea, inputAreaHideParentLevel[site]);
+        let level = inputAreaHideParentLevel[site];
+        if(site === CHATGPT && getUrl().indexOf("/g/") > -1){
+            level = level - 2;
+        }
+        return getNthParent(inputArea, level);
     }
 
     // 按钮点击事件 - 切换面板显示/隐藏
@@ -1259,6 +1282,7 @@
     const SUB_NAV_HEADING_LEVELS = [4, 3, 2, 1]; // 支持 h4, h3, h2, h1（顺序从低到高）
     const SUB_NAV_HEADING_SELECTOR = SUB_NAV_HEADING_LEVELS.map(level => `h${level}`).join(', '); // 生成选择器字符串，如 "h1, h2, h3, h4"
     const SUB_NAV_HEADING_TAGS = SUB_NAV_HEADING_LEVELS.map(level => `H${level}`); // 生成标签数组，如 ["H1", "H2", "H3", "H4"]
+    const SUB_POS_RIGHT = "25px";
 
     // 样式常量
     const NAV_STYLES = {
@@ -1275,24 +1299,26 @@
         waveIconNormal: `background-color:transparent;color:#333;`,
 
         // 副目录样式
-        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${SUB_NAV_TOP};max-width:${SUB_NAV_WIDTH};min-width:220px;max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${SUB_NAV_TOP};max-width:${SUB_NAV_MAX_WIDTH};min-width:220px;max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
         subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
-        subNavCloseBtn: `position:absolute;top:0;right:8px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+        subNavCloseBtn: `position:absolute;top:0;right:5px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+
         subNavItem: `padding:4px 2px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
         subNavItemH1: `padding-left:0px;font-weight:700;`,
         subNavItemH2: `padding-left:2px;font-weight:600;`,
-        subNavItemH3: `padding-left:10px;font-weight:500;`,
-        subNavItemH4: `padding-left:18px;font-weight:400;`,
+        subNavItemH3: `padding-left:8px;font-weight:500;`,
+        subNavItemH4: `padding-left:14px;font-weight:400;`,
+
         levelBtnGroup: `display:flex;gap:4px;align-items:center;`,
-        levelBtn: `padding:2px 8px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;transition:all 0.2s;user-select:none;`,
+        levelBtn: `padding:2px 4px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;transition:all 0.2s;user-select:none;`,
         levelBtnActive: `background:#0066cc;color:#fff;border-color:#0066cc;`,
         levelBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
         levelBtnLeave: `background-color:#fff;border-color:#ddd;color:#333;`,
 
-        subNavPositionBtn: `position:absolute;top:0;right:32px;font-size:12px;cursor:pointer;color:#111;width:40px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+        subNavPositionBtn: `position:absolute;top:0;right:${SUB_POS_RIGHT};font-size:12px;cursor:pointer;color:#111;width:36px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
         subNavPositionBtnHover: `background-color:#f0f0f0;`,
         subNavPositionBtnNormal: `background-color:transparent;`,
-        subNavPositionInput: `position:absolute;top:0;right:32px;width:60px;height:18px;padding:0 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;`
+        subNavPositionInput: `position:absolute;top:0;right:${SUB_POS_RIGHT};width:45px;height:20px;padding:0 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;`
     };
 
     // 创建导航元素
@@ -1416,10 +1442,10 @@
             return;
         }
 
-        // 如果条目数量超过指定阈值，则将navBar的top改为5%
+        // 如果条目数量超过指定阈值，则将navBar的top抬高
         let navTop;
         if(linkCount > NAV_TOP_THRESHOLD) {
-            navTop = "5%";
+            navTop = "7%";
             navBar.style.top = navTop;
             navMiniButton.style.top = navTop;
         } else {
@@ -1860,7 +1886,7 @@
                     const targetRect = targetElement.getBoundingClientRect();
                     let prevRect = previousElement.getBoundingClientRect();
                     let heightDiff = targetRect.top - prevRect.top;
-                    
+
                     if (heightDiff > SUB_NAV_SCROLL_MAX_HEIGHT_DIFF) {
                         console.log('上一个元素位置过高，不进行滚动');
                     } else if (heightDiff <= SUB_NAV_SCROLL_MIN_HEIGHT_DIFF) {
@@ -2283,7 +2309,7 @@
         const pollQuestionIndex = questionIndex;
 
         // 轮询间隔
-        const POLL_INTERVAL = 6000;
+        const POLL_INTERVAL = 8000;
 
         // 启动轮询定时器，复用 autoShowSubNav 实现更新
         subNavPollInterval = setInterval(() => {
@@ -2710,11 +2736,12 @@
 
     const DISABLE = "禁用";
     const ENABLE = "开启";
+    
+    // 创建禁用按钮
     let disable = document.createElement('div');
     disable.id = "tool-disable";
     disable.textContent = DISABLE;
     disable.style = PANEL_STYLES.disable;
-
     disable.addEventListener('click', (e) => disableEvent(e));
 
     // 根据word在words数组中的索引获取背景色
@@ -3043,7 +3070,10 @@
         e.stopPropagation();
 
         // 如果点击的是复选框、按钮或者panel-item，不切换模式
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.closest('.panel-item')) {
+        if (e.target.tagName === 'INPUT' || 
+            e.target.tagName === 'BUTTON' || 
+            e.target.id === 'tool-disable' || 
+            e.target.closest('.panel-item')) {
             return;
         }
 
