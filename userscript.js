@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      3.2.0
+// @version      4.0.0
 // @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -40,29 +40,14 @@
 
     console.log("ai script, start");
 
-    /**
-     * 可自行修改的简单变量
-     * */
-    const NAV_MAX_WIDTH = "230px";  // 主目录的最大宽度
-    const NAV_TOP = "20%";          // 主目录的默认 top 位置
-    const NAV_TOP_THRESHOLD = 7;    // 主目录条目超过此阈值时，top位置抬高
-    const NAV_COUNT_THRESHOLD = 12; // 主目录条数超过此阈值时，会显示"共xx条"
-
-    let SUB_NAV_TOP = "20%";          // 副目录的默认 top 位置
-    const SUB_NAV_LEFT = "270px";     // 副目录的水平位置（距离屏幕左侧）
-    const SUB_NAV_MAX_WIDTH = "260px";    // 副目录的最大宽度
-    const SUB_NAV_MIN_ITEMS = 2;      // 副目录标题总条数超过此阈值才显示
-    const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此阈值时，top位置抬高到5%
-    const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
-
     const STUDIO_CONTENT_MAX_WIDTH = "800px"; // ai studio 内容最大宽度
 
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
-    const version = "3.2.0";
+    const version = "4.0.0";
 
     // 弹窗样式常量
     const POPUP_CONTAINER_STYLE = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center';
-    const POPUP_CONTENT_BASE_STYLE = 'min-width:500px;background:white;border-radius:12px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.3)';
+    const POPUP_CONTENT_BASE_STYLE = 'min-width:400px;background:white;border-radius:12px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.3)';
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -238,6 +223,16 @@
 
     // 面板数据常量
     const CHOSEN_SITE = "chosenSite";
+    
+    // 按钮显示状态存储键名（GM存储，所有站点共享）
+    const SHOW_TOGGLE_BUTTON_KEY = "showToggleButton";
+    const SHOW_BOOKMARK_BUTTON_KEY = "showBookmarkButton"; // 同时控制"书签"和"历史"两个按钮
+    
+    // 多选面板可见模型列表存储键名（GM存储，所有站点共享）
+    const VISIBLE_MODELS_KEY = "visibleModels";
+    
+    // 输入框隐藏层级自定义配置存储键名（GM存储，所有站点共享）
+    const INPUT_AREA_HIDE_PARENT_LEVEL_KEY = "inputAreaHideParentLevel";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -284,9 +279,7 @@
         return selector ? selector() : null;
     }
 
-    if(site === STUDIO) {
-        SUB_NAV_TOP = "35%";
-    }
+    // STUDIO站点的特殊处理已移到getSubNavTop函数中
 
     // 系统功能配置
     const checkGap = 100;
@@ -976,6 +969,7 @@
     setTimeout(function(){
         appendSeveral(document.body, panel, toggleButton, subNavBar);
         reloadDisableStatus();
+        updateButtonVisibility(); // 根据设置更新按钮显示状态
 
         // 添加发送按钮监听
         setTimeout(addSendButtonListener, 1000);
@@ -1039,7 +1033,9 @@
 
     function getNthInputArea(){
         const inputArea = getInputArea();
-        let level = inputAreaHideParentLevel[site];
+        // 优先使用用户自定义的层级值
+        const customLevels = getGV(INPUT_AREA_HIDE_PARENT_LEVEL_KEY) || {};
+        let level = customLevels[site] !== undefined ? customLevels[site] : inputAreaHideParentLevel[site];
         if(site === CHATGPT && getUrl().indexOf("/g/") > -1){
             level = level - 2;
         }
@@ -1258,8 +1254,54 @@
      * ═══════════════════════════════════════════════════════════════════════
      ******************************************************************************/
 
+    // 导航变量默认值
+    const DEFAULT_NAV_MAX_WIDTH = "230px";
+    const DEFAULT_NAV_TOP = "20%";
+    const DEFAULT_NAV_TOP_OVERFLOW = "7%";
+    const DEFAULT_SUB_NAV_MAX_WIDTH = "260px";
+    const DEFAULT_SUB_NAV_TOP = "20%";
+    
+    // 存储键名
+    const NAV_MAX_WIDTH_KEY = "navMaxWidth";
+    const SUB_NAV_MAX_WIDTH_KEY = "subNavMaxWidth";
+    const NAV_TOP_KEY = "navTop";
+    const NAV_TOP_OVERFLOW_KEY = "navTopOverflow";
+    const SUB_NAV_TOP_KEY = "subNavTop";
+    
+    // 从GM存储读取导航变量，如果没有则使用默认值
+    const getNavMaxWidth = () => {
+        return getGV(NAV_MAX_WIDTH_KEY) || DEFAULT_NAV_MAX_WIDTH;
+    };
+    
+    const getNavTop = () => {
+        return getGV(NAV_TOP_KEY) || DEFAULT_NAV_TOP;
+    };
+    
+    const getNavTopOverflow = () => {
+        return getGV(NAV_TOP_OVERFLOW_KEY) || DEFAULT_NAV_TOP_OVERFLOW;
+    };
+    
+    const getSubNavMaxWidth = () => {
+        return getGV(SUB_NAV_MAX_WIDTH_KEY) || DEFAULT_SUB_NAV_MAX_WIDTH;
+    };
+    
+    const getSubNavTop = () => {
+        const saved = getGV(SUB_NAV_TOP_KEY);
+        if (saved) {
+            return saved;
+        }
+        return site === STUDIO ? "35%" : DEFAULT_SUB_NAV_TOP;
+    };
+    
+    const NAV_TOP_THRESHOLD = 7;    // 主目录条目超过此阈值时，top位置抬高
+    const NAV_COUNT_THRESHOLD = 12; // 主目录条数超过此阈值时，会显示"共xx条"
+
+    const SUB_NAV_LEFT = "270px";     // 副目录的水平位置（距离屏幕左侧）
+    const SUB_NAV_MIN_ITEMS = 2;      // 副目录标题总条数超过此阈值才显示
+    const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此阈值时，top位置抬高到5%
+    const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
+
     // 查找回答内容区域的查找限制（用于性能优化）
-    const FIND_ANSWER_SIBLING_LIMIT = 20; // 兄弟元素查找上限（原30，已优化）
     const FIND_ANSWER_MIDDLE_SIBLING_LIMIT = 30; // 中间问题查找时的兄弟元素上限（原50，已优化）
     const FIND_ANSWER_LAST_SIBLING_LIMIT = 15; // 最后一个问题查找时的兄弟元素上限（原20，已优化）
     const FIND_ANSWER_PARENT_DEPTH_LIMIT = 10// 向上查找父元素的最大深度（原10，已优化）
@@ -1285,48 +1327,81 @@
     const SUB_NAV_HEADING_TAGS = SUB_NAV_HEADING_LEVELS.map(level => `H${level}`); // 生成标签数组，如 ["H1", "H2", "H3", "H4"]
     const SUB_POS_RIGHT = "25px";
 
-    // 样式常量
-    const NAV_STYLES = {
-        // 主目录样式
-        navBar: `position:fixed;visibility:hidden;top:${NAV_TOP};right:15px;max-width:${NAV_MAX_WIDTH};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:0 5px;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:90vh;overflow-y:auto;box-sizing:border-box;`,
-        miniButton: `position:fixed;top:${NAV_TOP};right:15px;color:${NAV_ITEM_COLOR};border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:99999;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
-        title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;position:sticky;top:0;background:rgba(255,255,255,0.95);z-index:10;`,
-        hideBtn: `font-weight:normal;color:#333;font-size:12px;padding:2px 6px;border:1px solid #aaa;border-radius:10px;cursor:pointer;user-select:none;`,
-        countText: `font-weight:normal;color:#333;font-size:14px;margin-left:6px;user-select:none;`,
-        linkContainer: `display:flex;align-items:center;gap:4px;width:100%;`,
-        link: `width:100%;padding:4px 2px;cursor:pointer;color:#333;font-size:14px;line-height:1.5;white-space:normal;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;max-height:calc(1.9em * 2);box-sizing:border-box;`,
-        waveIcon: `font-size:12px;cursor:pointer;color:#333;padding:0;border-radius:3px;user-select:none;flex-shrink:0;transition:background-color 0.2s;`,
-        waveIconHover: `background-color:#f0f0f0;color:#0066cc;`,
-        waveIconNormal: `background-color:transparent;color:#333;`,
+    // 获取导航样式（动态生成，支持运行时修改变量）
+    const getNavStyles = () => {
+        const navTop = getNavTop();
+        const navMaxWidth = getNavMaxWidth();
+        const subNavTop = getSubNavTop();
+        const subNavMaxWidth = getSubNavMaxWidth();
+        
+        return {
+            // 主目录样式
+            navBar: `position:fixed;visibility:hidden;top:${navTop};right:15px;max-width:${navMaxWidth};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:0 5px;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:90vh;overflow-y:auto;box-sizing:border-box;`,
+            miniButton: `position:fixed;top:${navTop};right:15px;color:${NAV_ITEM_COLOR};border:1px solid #ddd;border-radius:8px;padding:2px 8px;font-size:14px;font-weight: bold;cursor:pointer;z-index:99999;visibility:hidden;box-shadow:0 2px 6px rgba(0,0,0,0.15);user-select:none;`,
+            title: `display:flex;align-items:center;justify-content:flex-start;gap:6px;font-weight:bold;color:#333;padding:4px 5px;border-bottom:1px solid #eaeaea;margin-bottom:4px;position:sticky;top:0;background:rgba(255,255,255,0.95);z-index:10;`,
+            hideBtn: `font-weight:normal;color:#333;font-size:12px;padding:2px 6px;border:1px solid #aaa;border-radius:10px;cursor:pointer;user-select:none;`,
+            countText: `font-weight:normal;color:#333;font-size:14px;margin-left:6px;user-select:none;`,
+            linkContainer: `display:flex;align-items:center;gap:4px;width:100%;`,
+            link: `width:100%;padding:4px 2px;cursor:pointer;color:#333;font-size:14px;line-height:1.5;white-space:normal;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;word-break:break-word;max-height:calc(1.9em * 2);box-sizing:border-box;`,
+            waveIcon: `font-size:12px;cursor:pointer;color:#333;padding:0;border-radius:3px;user-select:none;flex-shrink:0;transition:background-color 0.2s;`,
+            waveIconHover: `background-color:#f0f0f0;color:#0066cc;`,
+            waveIconNormal: `background-color:transparent;color:#333;`,
 
-        // 副目录样式
-        subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${SUB_NAV_TOP};max-width:${SUB_NAV_MAX_WIDTH};min-width:220px;max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
-        subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
-        subNavCloseBtn: `position:absolute;top:0;right:5px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+            // 副目录样式
+            subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${subNavTop};max-width:${subNavMaxWidth};min-width:220px;max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+            subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
+            subNavCloseBtn: `position:absolute;top:0;right:5px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
 
-        subNavItem: `padding:4px 2px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
-        subNavItemH1: `padding-left:0px;font-weight:700;`,
-        subNavItemH2: `padding-left:2px;font-weight:600;`,
-        subNavItemH3: `padding-left:8px;font-weight:500;`,
-        subNavItemH4: `padding-left:14px;font-weight:400;`,
+            subNavItem: `padding:4px 2px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
+            subNavItemH1: `padding-left:0px;font-weight:700;`,
+            subNavItemH2: `padding-left:2px;font-weight:600;`,
+            subNavItemH3: `padding-left:8px;font-weight:500;`,
+            subNavItemH4: `padding-left:14px;font-weight:400;`,
 
-        levelBtnGroup: `display:flex;gap:4px;align-items:center;`,
-        levelBtn: `padding:2px 4px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;transition:all 0.2s;user-select:none;`,
-        levelBtnActive: `background:#0066cc;color:#fff;border-color:#0066cc;`,
-        levelBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
-        levelBtnLeave: `background-color:#fff;border-color:#ddd;color:#333;`,
+            levelBtnGroup: `display:flex;gap:4px;align-items:center;`,
+            levelBtn: `padding:2px 4px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;transition:all 0.2s;user-select:none;`,
+            levelBtnActive: `background:#0066cc;color:#fff;border-color:#0066cc;`,
+            levelBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
+            levelBtnLeave: `background-color:#fff;border-color:#ddd;color:#333;`,
 
-        subNavPositionBtn: `position:absolute;top:0;right:${SUB_POS_RIGHT};font-size:12px;cursor:pointer;color:#111;width:36px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
-        subNavPositionBtnHover: `background-color:#f0f0f0;`,
-        subNavPositionBtnNormal: `background-color:transparent;`,
-        subNavPositionInput: `position:absolute;top:0;right:${SUB_POS_RIGHT};width:45px;height:20px;padding:0 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;`
+            subNavPositionBtn: `position:absolute;top:0;right:${SUB_POS_RIGHT};font-size:12px;cursor:pointer;color:#111;width:36px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+            subNavPositionBtnHover: `background-color:#f0f0f0;`,
+            subNavPositionBtnNormal: `background-color:transparent;`,
+            subNavPositionInput: `position:absolute;top:0;right:${SUB_POS_RIGHT};width:45px;height:20px;padding:0 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;`
+        };
     };
+    
+    // 样式常量（向后兼容，使用函数生成）
+    const NAV_STYLES = getNavStyles();
 
     // 创建导航元素
     const navBar = createTag('div', "", NAV_STYLES.navBar);
     navBar.id = "tool-nav-bar";
 
     const navMiniButton = createTag('div', '目录', NAV_STYLES.miniButton);
+    
+    // 更新导航栏样式的函数（当变量改变时调用）
+    const updateNavStyles = () => {
+        const styles = getNavStyles();
+        if (navBar) {
+            navBar.style.top = getNavTop();
+            navBar.style.maxWidth = getNavMaxWidth();
+        }
+        if (navMiniButton) {
+            navMiniButton.style.top = getNavTop();
+        }
+        if (subNavBar) {
+            subNavBar.style.top = getSubNavTop();
+            subNavBar.style.maxWidth = getSubNavMaxWidth();
+        }
+        // 刷新导航栏显示状态以应用新的top值
+        if (typeof refreshNavBarVisibility === 'function') {
+            refreshNavBarVisibility();
+        }
+        if (typeof updateSubNavTop === 'function') {
+            updateSubNavTop();
+        }
+    };
 
     // 获取副目录left位置的key
     const getSubNavLeftKey = () => {
@@ -1436,7 +1511,7 @@
         }
 
         // 如果条目数量超过指定阈值，则将navBar的top抬高
-        let navTop = linkCount > NAV_TOP_THRESHOLD ? "7%" : NAV_TOP;
+        let navTop = linkCount > NAV_TOP_THRESHOLD ? getNavTopOverflow() : getNavTop();
         navBar.style.top = navTop;
         navMiniButton.style.top = navTop;
 
@@ -1788,7 +1863,7 @@
     // 根据副目录条目数量动态设置top位置
     const updateSubNavTop = () => {
         const subNavItemCount = subNavBar.querySelectorAll('.sub-nav-item').length;
-        subNavBar.style.top = subNavItemCount > SUB_NAV_TOP_THRESHOLD ? "7%" : SUB_NAV_TOP;
+        subNavBar.style.top = subNavItemCount > SUB_NAV_TOP_THRESHOLD ? "7%" : getSubNavTop();
     };
 
     // 更新副目录状态
@@ -2464,7 +2539,8 @@
         checkbox: `margin-right:1px;font-size:20px;`,
         emptyMessage: `padding:1px;text-align:center;color:#888;font-size:14px;`,
         headline: `font-weight:bold;`,
-        hint: `color:#275fe6;width:0;height:0;padding-left:3px;margin-top:5px;margin-bottom:5px;border-top:8px solid transparent;border-right:8px solid #3498db;border-bottom:8px solid transparent;`
+        hint: `color:#275fe6;width:0;height:0;padding-left:3px;margin-top:5px;margin-bottom:5px;border-top:8px solid transparent;border-right:8px solid #3498db;border-bottom:8px solid transparent;`,
+        settingsBtn: `background:#667eea;color:white;border:none;border-radius:4px;padding:4px 8px;font-size:12px;cursor:pointer;margin-bottom:4px;width:100%;`
     };
 
     // 面板数据
@@ -2491,46 +2567,69 @@
         return index < 6 ? '#f0f8ff' : '#fffcf0';
     };
 
-    // 生成单词和选择框
-    let headline = createTag('div', "全部模型", PANEL_STYLES.headline);
-
-    let sitesAndCurrent = getSitesAndCurrent();
-    const items = []; // 收集所有item元素
-
-    words.forEach((word, index) => {
-        const item = createTag('div', "", PANEL_STYLES.item + `background:${getItemBgColor(index)};`);
-        item.className = 'panel-item'; // 添加类名用于识别
-        item.dataset.word = word; // 添加data-word属性
+    /**
+     * 创建单个面板项
+     */
+    function createPanelItem(word, selectedSites) {
+        const originalIndex = words.indexOf(word);
+        const item = createTag('div', "", PANEL_STYLES.item + `background:${getItemBgColor(originalIndex)};`);
+        item.className = 'panel-item';
+        item.dataset.word = word;
 
         const wordSpan = createTag('span', word, PANEL_STYLES.wordSpan);
 
-        const checkbox = document.createElement('input');
+        const checkbox = createTag('input', "", PANEL_STYLES.checkbox);
         checkbox.type = 'checkbox';
         checkbox.id = `word-${word}`;
-        checkbox.style.cssText = PANEL_STYLES.checkbox;
+        checkbox.checked = selectedSites.includes(wordToSite[word]);
 
-        checkbox.checked = sitesAndCurrent.includes(wordToSite[word]);
-
-        // 添加点击事件
         checkbox.addEventListener('change', () => updateStorageSites(word));
 
-        // 点击整个item div也能切换checkbox状态
         item.addEventListener('click', (e) => {
-            // 如果点击的是checkbox本身，不重复处理
             if (e.target.tagName === 'INPUT') {
                 return;
             }
-            e.stopPropagation(); // 阻止冒泡到panel
+            e.stopPropagation();
             checkbox.checked = !checkbox.checked;
             updateStorageSites(word);
         });
 
         appendSeveral(item, wordSpan, checkbox);
-        items.push(item); // 收集item，稍后统一添加
-    });
+        return item;
+    }
 
-    // 集中DOM操作：一次性添加所有元素到 contentContainer, panel
-    appendSeveral(contentContainer, headline, ...items);
+    /**
+     * 创建设置按钮
+     */
+    function createSettingsButton() {
+        const btn = createTag('button', '设置', PANEL_STYLES.settingsBtn);
+        btn.id = 'tool-settings';
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showSettingsPopup();
+        });
+        btn.addEventListener('mouseenter', () => btn.style.opacity = '0.85');
+        btn.addEventListener('mouseleave', () => btn.style.opacity = '1');
+        return btn;
+    }
+
+    /**
+     * 渲染面板内容（公共函数，用于初始化和刷新）
+     */
+    function renderPanelContent() {
+        const selectedSites = getSitesAndCurrent();
+        const visibleWords = getVisibleModels();
+        const items = visibleWords.map(word => createPanelItem(word, selectedSites));
+
+        const settingsBtn = createSettingsButton();
+        const headline = createTag('div', "全部模型", PANEL_STYLES.headline);
+
+        appendSeveral(contentContainer, settingsBtn, headline, ...items);
+        originalHTML = contentContainer.innerHTML;
+    }
+
+    // 初始化面板内容
+    renderPanelContent();
     appendSeveral(panel, disable, contentContainer);
 
     // 首次加载多选面板 是展开状态，后续刷新网页默认缩略状态
@@ -2630,7 +2729,8 @@
         // 只要有勾选动作，就关闭禁用模式
         changeDisable(false);
 
-        const selectedSites = words
+        const visibleWords = getVisibleModels();
+        const selectedSites = visibleWords
             .filter(word => document.getElementById(`word-${word}`)?.checked)
             .map(word => wordToSite[word]);
 
@@ -2657,7 +2757,8 @@
         const selectedSites = getSitesAndCurrent();
         // console.log('Syncing checkboxes from stoage:', selectedSites);
 
-        words.forEach(word => {
+        const visibleWords = getVisibleModels();
+        visibleWords.forEach(word => {
             const checkbox = document.getElementById(`word-${word}`);
             if (checkbox) {
                 checkbox.checked = selectedSites.includes(wordToSite[word]);
@@ -2690,8 +2791,9 @@
 
         let selectedSites = getSitesAndCurrent();
         let selectedWords = selectedSites.map(site => siteToWord[site]).filter(word => word);
-        // 按照 wordConfig 的顺序排序
-        selectedWords = words.filter(word => selectedWords.includes(word));
+        // 按照可见模型列表的顺序排序
+        const visibleWords = getVisibleModels();
+        selectedWords = visibleWords.filter(word => selectedWords.includes(word));
         drawCompactPanel(selectedWords);
 
         reloadDisableStatus();
@@ -2712,7 +2814,8 @@
         originalHTML = contentContainer.innerHTML;
 
         // 记录选中的项：优先从DOM读取，如果读取不到则从存储读取
-        let selectedWords = words.filter(word =>
+        const visibleWords = getVisibleModels();
+        let selectedWords = visibleWords.filter(word =>
             document.getElementById(`word-${word}`)?.checked
         );
 
@@ -2720,8 +2823,8 @@
         if (selectedWords.length === 0) {
             const selectedSites = getSitesAndCurrent();
             let wordsFromStorage = selectedSites.map(site => siteToWord[site]).filter(word => word);
-            // 按照 wordConfig 的顺序排序
-            selectedWords = words.filter(word => wordsFromStorage.includes(word));
+            // 按照可见模型列表的顺序排序
+            selectedWords = visibleWords.filter(word => wordsFromStorage.includes(word));
         }
 
         if (selectedWords.length === 0) {
@@ -2757,35 +2860,18 @@
         });
     }
 
+    // 刷新多选面板（重新生成面板内容）
+    function refreshPanel() {
+        contentContainer.replaceChildren();
+        renderPanelContent();
+    }
+
     // 切换到原始模式
     function switchToOriginalMode() {
         if (!isCompactMode) return;
 
-        // 恢复原始内容
-        setInnerHTML(contentContainer, originalHTML);
-
-        // 重新绑定事件
-        words.forEach(word => {
-            const checkbox = document.getElementById(`word-${word}`);
-            if (checkbox) {
-                checkbox.addEventListener('change', () => updateStorageSites(word));
-
-                // 重新绑定item的点击事件
-                const item = checkbox.closest('.panel-item');
-                if (item) {
-                    item.addEventListener('click', (e) => {
-                        if (e.target.tagName === 'INPUT') {
-                            return;
-                        }
-                        e.stopPropagation();
-                        checkbox.checked = !checkbox.checked;
-                        updateStorageSites(word);
-                    });
-                }
-            }
-        });
-
-        // 从存储更新面板选中状态
+        contentContainer.replaceChildren();
+        renderPanelContent();
         updateBoxFromStorage();
 
         isCompactMode = false;
@@ -2801,6 +2887,7 @@
         if (e.target.tagName === 'INPUT' || 
             e.target.tagName === 'BUTTON' || 
             e.target.id === 'tool-disable' || 
+            e.target.id === 'tool-settings' ||
             e.target.closest('.panel-item')) {
             return;
         }
@@ -2986,6 +3073,26 @@
         return GM_getValue(key);
     }
 
+    // 获取可见模型列表
+    function getVisibleModels() {
+        const stored = getGV(VISIBLE_MODELS_KEY);
+        if (stored && Array.isArray(stored) && stored.length > 0) {
+            // 验证存储的模型是否仍然有效（未被禁用）
+            return stored.filter(word => words.includes(word));
+        }
+        // 默认返回所有模型的 word 列表
+        return words.slice(); // 返回副本
+    }
+
+    // 设置可见模型列表
+    function setVisibleModels(visibleWords) {
+        // 验证：至少保留一个
+        if (!visibleWords || visibleWords.length === 0) {
+            return false;
+        }
+        setGV(VISIBLE_MODELS_KEY, visibleWords);
+        return true;
+    }
 
     // 通用判空函数
     function isEmpty(item){
@@ -3022,10 +3129,58 @@
         return `【${hour}:${minute}:${second}】`;
     }
 
+    /**
+     * 创建弹窗基础结构
+     */
+    function createPopupBase(popupId, contentExtraStyle = '') {
+        // 移除已有弹窗
+        const existingPopup = document.getElementById(popupId);
+        if (existingPopup) existingPopup.remove();
+
+        // 创建弹窗容器
+        const popup = createTag('div', "", POPUP_CONTAINER_STYLE);
+        popup.id = popupId;
+
+        // 创建弹窗内容
+        const content = createTag('div', "", POPUP_CONTENT_BASE_STYLE + contentExtraStyle);
+
+        popup.appendChild(content);
+        popup.onclick = (e) => { if (e.target === popup) popup.remove(); };
+        document.body.appendChild(popup);
+
+        return { popup, content };
+    }
+
+    /**
+     * 创建主按钮（渐变紫色）
+     */
+    function createPrimaryButton(text, onClick) {
+        const btn = createTag('button', text, 'padding:10px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px');
+        btn.onclick = onClick;
+        btn.addEventListener('mouseenter', () => btn.style.opacity = '0.85');
+        btn.addEventListener('mouseleave', () => btn.style.opacity = '1');
+        return btn;
+    }
+
+    /**
+     * 显示提示弹窗
+     */
+    function showMessagePopup(message) {
+        const { popup, content } = createPopupBase('message-popup', ';max-width:400px');
+
+        // 消息内容
+        const messageDiv = createTag('div', message, 'color:#333;font-size:14px;line-height:1.6;white-space:pre-line;margin-bottom:15px');
+
+        // 确定按钮
+        const confirmBtn = createPrimaryButton('确定', () => popup.remove());
+        confirmBtn.style.width = '100%';
+        appendSeveral(content, messageDiv, confirmBtn);
+    }
+
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
      * ║                                                                      ║
-     * ║  🔖 同步书签功能  🔖                                                  ║
+     * ║  🔖 12、同步书签功能  🔖                                                  ║
      * ║                                                                      ║
      * ═══════════════════════════════════════════════════════════════════════
      ******************************************************************************/
@@ -3140,102 +3295,444 @@
         console.log(curDate() + `书签: 已发送一键跳转信号`);
     }
 
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  ⚙️ 13、设置弹窗功能  ⚙️                                                   ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
+
     /**
-     * 创建弹窗基础结构
+     * 更新按钮显示状态
      */
-    function createPopupBase(popupId, contentExtraStyle = '') {
-        // 移除已有弹窗
-        const existingPopup = document.getElementById(popupId);
-        if (existingPopup) existingPopup.remove();
+    function updateButtonVisibility() {
+        const showToggle = getGV(SHOW_TOGGLE_BUTTON_KEY) !== false; // 默认true（显示）
+        const showBookmark = getGV(SHOW_BOOKMARK_BUTTON_KEY) !== false; // 默认true（显示），同时控制书签和历史按钮
 
-        // 创建弹窗容器
-        const popup = createTag('div', "", POPUP_CONTAINER_STYLE);
-        popup.id = popupId;
+        // 更新隐藏（输入框）按钮
+        if (toggleButton) {
+            toggleButton.style.display = showToggle ? 'flex' : 'none';
+        }
 
-        // 创建弹窗内容
-        const content = createTag('div', "", POPUP_CONTENT_BASE_STYLE + contentExtraStyle);
+        // 更新书签按钮
+        const bookmarkBtn = document.getElementById('bookmark-btn');
+        if (bookmarkBtn) {
+            bookmarkBtn.style.display = showBookmark ? 'flex' : 'none';
+        }
 
-        popup.appendChild(content);
-        popup.onclick = (e) => { if (e.target === popup) popup.remove(); };
-        document.body.appendChild(popup);
-
-        return { popup, content };
+        // 更新历史（书签）按钮（与书签按钮使用同一个设置）
+        const bookmarkViewBtn = document.getElementById('bookmark-view-btn');
+        if (bookmarkViewBtn) {
+            bookmarkViewBtn.style.display = showBookmark ? 'flex' : 'none';
+        }
     }
 
     /**
-     * 创建主按钮（渐变紫色）
+     * 创建苹果风格开关
      */
-    function createPrimaryButton(text, onClick) {
-        const btn = createTag('button', text, 'padding:10px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px');
-        btn.onclick = onClick;
-        btn.addEventListener('mouseenter', () => btn.style.opacity = '0.85');
-        btn.addEventListener('mouseleave', () => btn.style.opacity = '1');
-        return btn;
+    function createToggleSwitch(label, checked, onChange) {
+        const container = createTag('div', '', 'display:flex;justify-content:flex-start;align-items:center;padding:6px 0;border-bottom:1px solid #f0f0f0');
+        
+        const labelDiv = createTag('div', label, 'font-size:14px;color:#333;flex:1');
+        
+        const switchContainer = createTag('label', '', 'position:relative;display:inline-block;width:44px;height:26px;cursor:pointer;flex-shrink:0');
+        switchContainer.style.cssText += 'margin-left:15px;';
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = checked;
+        checkbox.style.cssText = 'opacity:0;width:0;height:0;position:absolute;';
+        
+        const slider = createTag('span', '', 'position:absolute;top:0;left:0;right:0;bottom:0;background-color:' + (checked ? '#34c759' : '#ccc') + ';transition:0.3s;border-radius:26px;');
+        slider.style.cssText += 'cursor:pointer;';
+        
+        const sliderCircle = createTag('span', '', 'position:absolute;content:"";height:20px;width:20px;left:' + (checked ? '21px' : '3px') + ';bottom:3px;background-color:white;transition:0.3s;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,0.2);');
+        sliderCircle.style.cssText += 'cursor:pointer;';
+        
+        checkbox.addEventListener('change', function() {
+            const isChecked = checkbox.checked;
+            slider.style.backgroundColor = isChecked ? '#34c759' : '#ccc';
+            sliderCircle.style.left = isChecked ? '21px' : '3px';
+            onChange(isChecked);
+        });
+        
+        appendSeveral(switchContainer, checkbox, slider, sliderCircle);
+        appendSeveral(container, labelDiv, switchContainer);
+        
+        return container;
     }
 
     /**
-     * 显示提示弹窗
+     * 创建 Tab 1: 多选面板自定义
      */
-    function showMessagePopup(message) {
-        const { popup, content } = createPopupBase('message-popup', ';max-width:400px');
-
-        // 消息内容
-        const messageDiv = createTag('div', message, 'color:#333;font-size:14px;line-height:1.6;white-space:pre-line;margin-bottom:15px');
-
-        // 确定按钮
-        const confirmBtn = createPrimaryButton('确定', () => popup.remove());
-        confirmBtn.style.width = '100%';
-        appendSeveral(content, messageDiv, confirmBtn);
+    function createModelSelectionTab(checkboxes) {
+        const tab = createTag('div', '多选面板自定义', 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid #667eea;color:#667eea;font-weight:bold;font-size:14px;background:#e8f0fe;');
+        const tabContent = createTag('div', '', '');
+        
+        // 创建说明文字
+        const tipText = createTag('div', '仅勾选的大模型将出现在多选面板上', 'color:#333;font-size:14px;margin-bottom:15px;line-height:1.5');
+        appendSeveral(tabContent, tipText);
+        
+        // 读取当前可见模型列表
+        const visibleModels = getVisibleModels();
+        
+        // 创建两列容器
+        const columnsContainer = createTag('div', '', 'display:flex;gap:12px;margin-bottom:15px');
+        const leftColumn = createTag('div', '', 'flex:1');
+        const rightColumn = createTag('div', '', 'flex:1');
+        
+        // 将 wordConfig 分为前6个和后6个
+        const firstHalf = wordConfig.slice(0, 6);
+        const secondHalf = wordConfig.slice(6);
+        
+        // 创建复选框函数
+        function createModelCheckbox(config) {
+            const { word } = config;
+            const isVisible = visibleModels.includes(word);
+            
+            const checkboxContainer = createTag('div', '', 'display:flex;align-items:center;padding:8px 0;border-bottom:1px solid #f0f0f0');
+            
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = isVisible;
+            checkbox.style.cssText = 'margin-right:8px;width:16px;height:16px;cursor:pointer;';
+            
+            // 立即保存功能：复选框改变时立即生效
+            checkbox.addEventListener('change', () => {
+                const newVisibleModels = wordConfig
+                    .filter(config => checkboxes[config.word]?.checked)
+                    .map(config => config.word);
+                
+                if (newVisibleModels.length === 0) {
+                    checkbox.checked = true; // 恢复选中，至少保留一个
+                    showMessagePopup('至少需要保留一个模型可见');
+                    return;
+                }
+                
+                // 保存配置，退出弹窗后再刷新面板
+                setVisibleModels(newVisibleModels);
+            });
+            
+            const label = createTag('label', word, 'font-size:14px;color:#333;cursor:pointer;flex:1;');
+            label.style.cssText += 'user-select:none;';
+            label.onclick = () => checkbox.click();
+            
+            checkboxes[word] = checkbox;
+            
+            appendSeveral(checkboxContainer, checkbox, label);
+            return checkboxContainer;
+        }
+        
+        // 添加前6个到左列
+        firstHalf.forEach(config => {
+            leftColumn.appendChild(createModelCheckbox(config));
+        });
+        
+        // 添加后6个到右列
+        secondHalf.forEach(config => {
+            rightColumn.appendChild(createModelCheckbox(config));
+        });
+        
+        appendSeveral(columnsContainer, leftColumn, rightColumn);
+        appendSeveral(tabContent, columnsContainer);
+        
+        return { tab, tabContent };
     }
 
     /**
-     * 显示书签重命名输入弹窗
+     * 创建 Tab 2: 按钮显示设置
      */
-    function showBookmarkRenamePopup(originalQuestion, onConfirm, hasConflict = false) {
-        const { popup, content } = createPopupBase('bookmark-rename-popup', ';max-width:500px');
+    function createButtonDisplayTab() {
+        const tab = createTag('div', '按钮显示', 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid transparent;color:#666;font-size:14px;background:#f5f5f5;');
+        const tabContent = createTag('div', '', 'display:none;');
+        
+        // 读取当前设置（默认true，即显示）
+        const showToggle = getGV(SHOW_TOGGLE_BUTTON_KEY) !== false;
+        const showBookmark = getGV(SHOW_BOOKMARK_BUTTON_KEY) !== false;
 
-        // 标题
-        const title = createTag('div', '创建书签', 'color:#333;font-size:16px;font-weight:bold;margin-bottom:15px');
+        // 创建两个开关
+        const toggleSwitch1 = createToggleSwitch('隐藏输入框的按钮，是否展示', showToggle, (checked) => {
+            setGV(SHOW_TOGGLE_BUTTON_KEY, checked);
+            updateButtonVisibility();
+        });
 
-        // 提示信息
-        const tipText = hasConflict
-            ? '该提问内容与已有书签冲突，请输入新的提问内容（或使用原内容创建不同URL的书签）：'
-            : '请输入提问内容（可修改）：';
-        const tip = createTag('div', tipText, 'color:#666;font-size:12px;margin-bottom:10px');
+        const toggleSwitch2 = createToggleSwitch('书签的两个按钮，是否展示', showBookmark, (checked) => {
+            setGV(SHOW_BOOKMARK_BUTTON_KEY, checked);
+            updateButtonVisibility();
+        });
 
-        // 输入框
-        const input = document.createElement('textarea');
-        input.value = originalQuestion;
-        input.style.cssText = 'width:100%;min-height:80px;padding:10px;border:1px solid #ddd;border-radius:4px;font-size:14px;font-family:inherit;resize:vertical;box-sizing:border-box;margin-bottom:15px';
-        input.placeholder = '请输入新的提问内容';
-        appendSeveral(content, title, tip, input);
+        appendSeveral(tabContent, toggleSwitch1, toggleSwitch2);
+        
+        return { tab, tabContent };
+    }
 
-        // 按钮容器
-        const buttonContainer = createTag('div', "", 'display:flex;gap:10px');
+    /**
+     * 创建 Tab 3: 导航变量设置
+     */
+    function createNavVarsTab() {
+        const tab = createTag('div', '导航变量设置', 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid transparent;color:#666;font-size:14px;background:#f5f5f5;');
+        const tabContent = createTag('div', '', 'display:none;');
+        
+        // 读取当前导航变量设置
+        const navMaxWidthValue = getGV(NAV_MAX_WIDTH_KEY) || DEFAULT_NAV_MAX_WIDTH;
+        const subNavMaxWidthValue = getGV(SUB_NAV_MAX_WIDTH_KEY) || DEFAULT_SUB_NAV_MAX_WIDTH;
+        const navTopValue = getGV(NAV_TOP_KEY) || DEFAULT_NAV_TOP;
+        const navTopOverflowValue = getGV(NAV_TOP_OVERFLOW_KEY) || DEFAULT_NAV_TOP_OVERFLOW;
+        
+        // 创建说明文字
+        const tipText = createTag('div', '', 'color:#333;font-size:14px;margin-bottom:15px;line-height:1.5');
+        tipText.innerHTML = '修改后立即生效。';
+        appendSeveral(tabContent, tipText);
+        
+        // 创建输入框容器
+        const configContainer = createTag('div', '', 'display:flex;flex-direction:column;gap:12px');
+        const inputCss = 'margin:auto 20px;flex:1;padding:6px 10px;border:1px solid #ddd;border-radius:4px;font-size:14px;';
+        const itemContainerCss = 'display:flex;align-items:center;padding:10px 0;border-bottom:1px solid #f0f0f0';
+        const labelCss = 'font-size:14px;color:#333;min-width:160px;flex-shrink:0;user-select:none;';
+        const defaultLabelCss = 'font-size:13px;color:#666;margin-left:10px;';
 
-        // 取消按钮
-        const cancelBtn = createTag('button', '取消', 'flex:1;padding:10px;background:#f5f5f5;color:#666;border:none;border-radius:4px;cursor:pointer;font-size:14px');
-        cancelBtn.onclick = () => popup.remove();
-        cancelBtn.addEventListener('mouseenter', () => cancelBtn.style.background = '#e5e5e5');
-        cancelBtn.addEventListener('mouseleave', () => cancelBtn.style.background = '#f5f5f5');
-        // 确定按钮
-        const confirmBtn = createPrimaryButton('确定', () => {
-            const newQuestion = input.value.trim();
-            if (!newQuestion) {
-                showMessagePopup('提问内容不能为空');
+        // 导航变量配置
+        const navConfigs = [
+            { label: '主目录最大宽度', value: navMaxWidthValue, placeholder: DEFAULT_NAV_MAX_WIDTH, key: NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_NAV_MAX_WIDTH },
+            { label: '副目录最大宽度', value: subNavMaxWidthValue, placeholder: DEFAULT_SUB_NAV_MAX_WIDTH, key: SUB_NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_SUB_NAV_MAX_WIDTH },
+            { label: '主目录（默认）垂直位置', value: navTopValue, placeholder: DEFAULT_NAV_TOP, key: NAV_TOP_KEY, defaultVal: DEFAULT_NAV_TOP },
+            { label: '主目录（条数较多时）垂直位置', value: navTopOverflowValue, placeholder: DEFAULT_NAV_TOP_OVERFLOW, key: NAV_TOP_OVERFLOW_KEY, defaultVal: DEFAULT_NAV_TOP_OVERFLOW }
+        ];
+
+        // 创建输入框项的函数
+        function createNavInputItem(config) {
+            const item = createTag('div', '', itemContainerCss);
+            const label = createTag('label', config.label, labelCss);
+            const input = createTag('input', "", inputCss);
+            input.type = 'text';
+            input.value = config.value;
+            input.placeholder = config.placeholder;
+            const defaultLabel = createTag('span', `(默认: ${config.defaultVal})`, defaultLabelCss);
+            appendSeveral(item, label, input, defaultLabel);
+            return { item, input };
+        }
+
+        // 批量创建输入框
+        const navInputs = navConfigs.map(createNavInputItem);
+        const navInputItems = navInputs.map(nav => nav.item);
+        const inputElements = navInputs.map(nav => nav.input);
+
+        // 立即保存导航变量配置的函数
+        function saveNavVarsImmediately() {
+            navConfigs.forEach((config, index) => {
+                const inputVal = inputElements[index].value.trim();
+                if (inputVal && inputVal !== config.defaultVal) {
+                    setGV(config.key, inputVal);
+                } else {
+                    GM_deleteValue(config.key);
+                }
+            });
+            updateNavStyles();
+        }
+        
+        // 批量添加输入框事件监听
+        inputElements.forEach(input => {
+            input.addEventListener('change', saveNavVarsImmediately);
+            input.addEventListener('blur', saveNavVarsImmediately);
+        });
+        
+        appendSeveral(configContainer, ...navInputItems);
+        appendSeveral(tabContent, configContainer);
+        
+        return { tab, tabContent };
+    }
+
+    /**
+     * 创建 Tab 4: 输入框隐藏范围设置
+     */
+    function createInputAreaHideLevelTab() {
+        const tab = createTag('div', '输入框隐藏范围设置', 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid transparent;color:#666;font-size:14px;background:#f5f5f5;');
+        const tabContent = createTag('div', '', 'display:none;');
+        
+        // 读取用户自定义的层级配置
+        const customLevels = getGV(INPUT_AREA_HIDE_PARENT_LEVEL_KEY) || {};
+        const levelInputs = {};
+        
+        // 创建说明文字
+        const tipText = createTag('div', '', 'color:#333;font-size:14px;margin-bottom:15px;line-height:1.5');
+        tipText.innerHTML = '隐藏输入框的按钮，如果隐藏的范围不合适，可尝试修改数值。<br>数值越大，则页面隐藏的内容范围越大，反之越小。';
+        appendSeveral(tabContent, tipText);
+        
+        // 创建两列容器
+        const columnsContainer = createTag('div', '', 'display:flex;gap:12px;margin-bottom:15px');
+        const leftColumn = createTag('div', '', 'flex:1');
+        const rightColumn = createTag('div', '', 'flex:1');
+        
+        // 将 wordConfig 分为前6个和后6个
+        const firstHalf = wordConfig.slice(0, 6);
+        const secondHalf = wordConfig.slice(6);
+        
+        // 立即保存层级配置的函数
+        function saveLevelsImmediately() {
+            const newLevels = {};
+            let hasInvalid = false;
+            
+            // 收集所有输入框的值
+            wordConfig.forEach(config => {
+                const { site: siteId } = config;
+                const input = levelInputs[siteId];
+                const value = parseInt(input.value, 10);
+                
+                if (isNaN(value) || value < 0) {
+                    hasInvalid = true;
+                    input.style.borderColor = '#ff4444';
+                    setTimeout(() => {
+                        input.style.borderColor = '#ddd';
+                    }, 2000);
+                } else {
+                    input.style.borderColor = '#ddd';
+                    const defaultLevel = inputAreaHideParentLevel[siteId];
+                    // 如果与默认值相同，则不保存（使用默认值）
+                    if (value !== defaultLevel) {
+                        newLevels[siteId] = value;
+                    }
+                }
+            });
+            
+            if (hasInvalid) {
                 return;
             }
-            popup.remove();
-            onConfirm(newQuestion);
+            
+            // 保存配置
+            if (Object.keys(newLevels).length === 0) {
+                // 如果所有值都是默认值，删除存储的配置
+                GM_deleteValue(INPUT_AREA_HIDE_PARENT_LEVEL_KEY);
+            } else {
+                setGV(INPUT_AREA_HIDE_PARENT_LEVEL_KEY, newLevels);
+            }
+        }
+        
+        // 创建配置项的函数
+        function createLevelConfigItem(config) {
+            const { site: siteId, word } = config;
+            const defaultLevel = inputAreaHideParentLevel[siteId];
+            const currentLevel = customLevels[siteId] !== undefined ? customLevels[siteId] : defaultLevel;
+            
+            const itemContainer = createTag('div', '', 'display:flex;align-items:center;padding:10px 0;border-bottom:1px solid #f0f0f0');
+            
+            const label = createTag('label', word, 'font-size:14px;color:#333;min-width:82px;flex-shrink:0;');
+            label.style.cssText += 'user-select:none;';
+            
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.value = currentLevel;
+            input.min = '0';
+            input.style.cssText = 'width:45px;padding:6px 2px;border:1px solid #ddd;border-radius:4px;font-size:14px;text-align:center;';
+            
+            // 立即保存功能：输入框值改变时立即生效
+            input.addEventListener('change', () => {
+                saveLevelsImmediately();
+            });
+            input.addEventListener('blur', () => {
+                saveLevelsImmediately();
+            });
+            
+            const defaultLabel = createTag('span', `(默认: ${defaultLevel})`, 'font-size:13px;color:#666;margin:auto 10px;');
+            
+            levelInputs[siteId] = input;
+            
+            appendSeveral(itemContainer, label, input, defaultLabel);
+            return itemContainer;
+        }
+        
+        // 添加前6个到左列
+        firstHalf.forEach(config => {
+            leftColumn.appendChild(createLevelConfigItem(config));
         });
-        confirmBtn.style.flex = '1';
-        appendSeveral(buttonContainer, cancelBtn, confirmBtn);
-        content.appendChild(buttonContainer);
-
-        // 自动聚焦输入框并选中全部内容
-        input.focus();
-        input.select();
+        
+        // 添加后6个到右列
+        secondHalf.forEach(config => {
+            rightColumn.appendChild(createLevelConfigItem(config));
+        });
+        
+        appendSeveral(columnsContainer, leftColumn, rightColumn);
+        appendSeveral(tabContent, columnsContainer);
+        
+        return { tab, tabContent };
     }
+
+    /**
+     * 显示设置弹窗
+     */
+    function showSettingsPopup() {
+        const { popup, content } = createPopupBase('settings-popup', '');
+
+        // 标题
+        const title = createTag('div', '设置', 'font-size:18px;font-weight:bold;margin-bottom:20px;color:#333');
+
+        // Tab 切换容器
+        const tabContainer = createTag('div', '', 'display:flex;border-bottom:2px solid #e0e0e0;margin-bottom:20px;width:fit-content;');
+        
+        // Tab 内容容器
+        const tabContentContainer = createTag('div', '', 'min-height:200px;min-width:300px;');
+        
+        // 存储所有复选框的引用（用于多选面板设置）
+        const checkboxes = {};
+        
+        // 创建各个Tab
+        const { tab: tab1, tabContent: tab1Content } = createModelSelectionTab(checkboxes);
+        const { tab: tab2, tabContent: tab2Content } = createButtonDisplayTab();
+        const { tab: tab3, tabContent: tab3Content } = createNavVarsTab();
+        const { tab: tab4, tabContent: tab4Content } = createInputAreaHideLevelTab();
+        
+        // Tab 切换函数（支持多个tab）
+        const tabs = [tab1, tab2, tab3, tab4];
+        const tabContents = [tab1Content, tab2Content, tab3Content, tab4Content];
+        
+        function switchTab(activeIndex) {
+            tabs.forEach((tab, index) => {
+                if (index === activeIndex) {
+                    tab.style.cssText = 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid #667eea;color:#667eea;font-weight:bold;font-size:14px;background:#e8f0fe;';
+                    tabContents[index].style.display = '';
+                } else {
+                    tab.style.cssText = 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid transparent;color:#666;font-size:14px;background:#f5f5f5;';
+                    tabContents[index].style.display = 'none';
+                }
+            });
+        }
+        
+        // Tab 点击事件
+        tab1.onclick = () => switchTab(0);
+        tab2.onclick = () => switchTab(1);
+        tab3.onclick = () => switchTab(2);
+        tab4.onclick = () => switchTab(3);
+        
+        appendSeveral(tabContainer, tab1, tab2, tab3, tab4);
+        appendSeveral(tabContentContainer, tab1Content, tab2Content, tab3Content, tab4Content);
+        
+        // 关闭弹窗的函数，关闭时刷新多选面板
+        const closePopup = () => {
+            popup.remove();
+            refreshPanel();
+        };
+        
+        // 关闭按钮
+        const closeBtn = createTag('span', '✕', 'cursor:pointer;font-size:20px;color:#999;padding:5px;position:absolute;top:15px;right:15px');
+        closeBtn.onclick = closePopup;
+        
+        // 点击背景关闭时也刷新面板
+        popup.onclick = (e) => {
+            if (e.target === popup) {
+                closePopup();
+            }
+        };
+        
+        appendSeveral(content, closeBtn, title, tabContainer, tabContentContainer);
+    }
+
+    /******************************************************************************
+     * ═══════════════════════════════════════════════════════════════════════
+     * ║                                                                      ║
+     * ║  📚 14、书签相关功能  📚                                                   ║
+     * ║                                                                      ║
+     * ═══════════════════════════════════════════════════════════════════════
+     ******************************************************************************/
 
     /**
      * 创建书签（内部函数）
@@ -3518,8 +4015,8 @@
     function createBookmarkButton() {
         const btn = document.createElement('div');
         btn.id = 'bookmark-btn';
-        btn.innerHTML = '书签';
-        btn.title = '创建同步书签：记录当前勾选站点的URL';
+        btn.innerHTML = '加书签';
+        btn.title = '本地一键保存多选提问的各家页面网址，后续方便查找';
         btn.style.cssText = BOOKMARK_BTN_STYLE;
 
         btn.addEventListener('mouseenter', () => {
@@ -3541,8 +4038,8 @@
     function createBookmarkViewButton() {
         const btn = document.createElement('div');
         btn.id = 'bookmark-view-btn';
-        btn.innerHTML = '历史';
-        btn.title = '查看所有同步书签';
+        btn.innerHTML = '列表';
+        btn.title = '书签列表';
         btn.style.cssText = BOOKMARK_VIEW_BTN_STYLE;
 
         btn.addEventListener('mouseenter', () => {
@@ -3562,6 +4059,7 @@
     setTimeout(() => {
         createBookmarkButton();
         createBookmarkViewButton();
+        updateButtonVisibility(); // 根据设置更新按钮显示状态
     }, 1000);
 
 })();
