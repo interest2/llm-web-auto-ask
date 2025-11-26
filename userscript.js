@@ -60,6 +60,10 @@
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
     const version = "3.2.0";
 
+    // 弹窗样式常量
+    const POPUP_CONTAINER_STYLE = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center';
+    const POPUP_CONTENT_BASE_STYLE = 'background:white;border-radius:12px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.3)';
+
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
      * ║                                                                      ║
@@ -85,9 +89,6 @@
 
     // 默认不启用的站点列表，移除元素可启用对应站点
     const DISABLE_SITES = [];
-
-    // 启用 Markdown 标题识别的站点列表（性能优化：仅对需要的站点启用）
-    const ENABLE_MARKDOWN_HEADING_SITES = [CLAUDE];
 
     // 启用 副目录滚动到上一个元素的站点列表
     const ENABLE_SCROLL_TO_PREV_ELEMENT_SITES = [CLAUDE];
@@ -298,21 +299,21 @@
     const T = "tool-";
     const HEART_KEY_PREFIX ="lastHeartbeat-";
 
+    // 同步书签相关常量
+    const BOOKMARK_PREFIX = "bookmark-";           // 书签存储key前缀
+    const CURRENT_BOOKMARK_KEY = "currentBookmarkKey"; // 当前书签key
+    const BOOKMARK_KEY_LIST = "bookmarkKeyList";   // 书签key列表
+    const BOOKMARK_DELETE_CONFIRMED = "bookmarkDeleteConfirmed"; // 是否已首次确认删除
+    const BOOKMARK_BTN_STYLE = "position:fixed;right:0;top:50%;transform:translateY(-50%);background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:10000;border-radius:6px 0 0 6px;box-shadow:-2px 2px 8px rgba(0,0,0,0.2);transition:all 0.2s ease;user-select:none;padding:4px";
+    const BOOKMARK_VIEW_BTN_STYLE = "position:fixed;right:0;top:calc(50% + 50px);transform:translateY(-50%);background:linear-gradient(135deg,#11998e 0%,#38ef7d 100%);color:white;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:10000;border-radius:6px 0 0 6px;box-shadow:-2px 2px 8px rgba(0,0,0,0.2);transition:all 0.2s ease;user-select:none;padding:4px";
+
     let DOMAIN = "https://www.ratetend.com:5001";
-    let testDOMAIN = "http://localhost:8002";
     const DEVELOPER_USERID = "7bca846c-be51-4c49-ba2b6"
 
     let userid = getGV("userid");
     if(isEmpty(userid)){
         userid = guid();
         setGV("userid", userid);
-    }else{
-        // 本地调试用，连接本地服务器
-        if(userid === DEVELOPER_USERID){
-            if(testLocalFlag === 1){
-                DOMAIN = testDOMAIN;
-            }
-        }
     }
 
     setTimeout(developTest, 2000);
@@ -417,10 +418,11 @@
 
         let sites = getSitesOfStorage();
         if(sites.includes(site)){
-            // 假定新的提问出现时，上次的提问已经发送出去，故sendLock是已解锁
+            // 避免短时重复发送：假定新的提问出现时，上次的提问已经发送出去，故正常情况sendLock已解锁
             if(sendLock){
                 return;
             }
+            
             let msg = getGV("msg");
             let question = msg.question;
             // 避免重复发送
@@ -965,16 +967,14 @@
 
     // 面板延迟时间
     let panelDelay = site === ZCHAT ? 500 : 50;
-    const panel = document.createElement('div');
+    const panel = createTag('div', "", "");
 
     /**
      * 脚本首次使用的指引
      */
     let FIRST_RUN_KEY = "firstRun";
     setTimeout(function(){
-        document.body.appendChild(panel);
-        document.body.appendChild(toggleButton);
-        document.body.appendChild(subNavBar);
+        appendSeveral(document.body, panel, toggleButton, subNavBar);
         reloadDisableStatus();
 
         // 添加发送按钮监听
@@ -1032,9 +1032,7 @@
         }
     };
 
-    const toggleButton = document.createElement('div');
-    toggleButton.style.cssText = TOGGLE_BUTTON_STYLE;
-    toggleButton.textContent = TOGGLE_STATES.show.text;
+    const toggleButton = createTag('div', TOGGLE_STATES.show.text, TOGGLE_BUTTON_STYLE);
     toggleButton.title = '临时隐藏输入框获得更大的视野高度';
 
     const getNthParent = (el, n) => n > 0 ? getNthParent(el?.parentElement, n - 1) : el;
@@ -1088,7 +1086,7 @@
      * 计算bottom值
      */
     function calculateBottom() {
-        const savedBottom = localStorage.getItem(TOGGLE_BOTTOM_KEY);
+        const savedBottom = getS(TOGGLE_BOTTOM_KEY);
         if (savedBottom !== null) {
             return parseFloat(savedBottom);
         }
@@ -1149,7 +1147,7 @@
 
         // 情况2: 输入框√，按钮×。等于 输入框右边缘 + delta
         if (hasInputArea && !hasSendButton) {
-            const savedDelta2 = localStorage.getItem(TOGGLE_DELTA2_KEY);
+            const savedDelta2 = getS(TOGGLE_DELTA2_KEY);
             if (savedDelta2 !== null) {
                 const right2 = inputArea.getBoundingClientRect().right;
                 return right2 + parseFloat(savedDelta2);
@@ -1159,7 +1157,7 @@
 
         // 情况3: 输入框×，按钮√。等于 按钮右边缘 + delta
         if (!hasInputArea && hasSendButton) {
-            const savedDelta1 = localStorage.getItem(TOGGLE_DELTA1_KEY);
+            const savedDelta1 = getS(TOGGLE_DELTA1_KEY);
             if (savedDelta1 !== null) {
                 const right1 = sendButton.getBoundingClientRect().right;
                 return right1 + parseFloat(savedDelta1);
@@ -1168,7 +1166,7 @@
         }
 
         // 情况4: 输入框×，按钮×。用存储的 left
-        const savedLeft = localStorage.getItem(TOGGLE_LEFT_KEY);
+        const savedLeft = getS(TOGGLE_LEFT_KEY);
         if (savedLeft !== null) {
             return parseFloat(savedLeft);
         }
@@ -1192,7 +1190,7 @@
         if (isInputAreaHidden && isResizeEvent) {
             // 特殊情况：如果resize到最大宽度且有保存的maxLeft，优先使用maxLeft
             if (isMaxWidth()) {
-                const savedMaxLeft = localStorage.getItem(TOGGLE_MAX_LEFT_KEY);
+                const savedMaxLeft = getS(TOGGLE_MAX_LEFT_KEY);
                 if (savedMaxLeft !== null) {
                     left = parseFloat(savedMaxLeft);
                 } else {
@@ -1278,6 +1276,9 @@
     const NAV_VIEWPORT_THRESHOLD = 0.9; // 可视区域阈值（90%）
     const NAV_NEAR_TOP_THRESHOLD = 24; // 接近顶部阈值（像素）
     const NAV_CLICK_LOCK_DURATION = 1200; // 点击锁定持续时间（毫秒）
+    const NAV_UPDATE_TEXT_DELAY = 500; // 导航链接文本更新延迟（毫秒）
+    const NAV_RETRY_MAX_COUNT = 10; // 导航链接跳转最大重试次数
+    const NAV_RETRY_INTERVAL = 100; // 导航链接跳转重试间隔（毫秒）
     // 副目录标题级别配置（可配置为 h1~h4、h2~h4 或 h2~h3）
     const SUB_NAV_HEADING_LEVELS = [4, 3, 2, 1]; // 支持 h4, h3, h2, h1（顺序从低到高）
     const SUB_NAV_HEADING_SELECTOR = SUB_NAV_HEADING_LEVELS.map(level => `h${level}`).join(', '); // 生成选择器字符串，如 "h1, h2, h3, h4"
@@ -1322,13 +1323,10 @@
     };
 
     // 创建导航元素
-    const navBar = document.createElement('div');
+    const navBar = createTag('div', "", NAV_STYLES.navBar);
     navBar.id = "tool-nav-bar";
-    navBar.style.cssText = NAV_STYLES.navBar;
 
-    const navMiniButton = document.createElement('div');
-    navMiniButton.textContent = '目录';
-    navMiniButton.style.cssText = NAV_STYLES.miniButton;
+    const navMiniButton = createTag('div', '目录', NAV_STYLES.miniButton);
 
     // 获取副目录left位置的key
     const getSubNavLeftKey = () => {
@@ -1338,7 +1336,7 @@
     // 获取副目录的left值（优先从localStorage读取）
     const getSubNavLeft = () => {
         const key = getSubNavLeftKey();
-        const savedLeft = localStorage.getItem(key);
+        const savedLeft = getS(key);
         return savedLeft || SUB_NAV_LEFT;
     };
 
@@ -1349,11 +1347,9 @@
     };
 
     // 创建副目录栏元素
-    const subNavBar = document.createElement('div');
-    subNavBar.id = "tool-sub-nav-bar";
-    // 使用动态获取的left值设置样式
     const subNavLeft = getSubNavLeft();
-    subNavBar.style.cssText = NAV_STYLES.subNavBar.replace(`left:${SUB_NAV_LEFT}`, `left:${subNavLeft}`);
+    const subNavBar = createTag('div', "", NAV_STYLES.subNavBar.replace(`left:${SUB_NAV_LEFT}`, `left:${subNavLeft}`));
+    subNavBar.id = "tool-sub-nav-bar";
 
     // 状态变量
     let navQuestions, navLinks = [], navIO, elToLink = new Map();
@@ -1366,7 +1362,7 @@
     let navCountText = null; // 主目录条数显示元素
 
     // 从localStorage读取最小化状态，默认为false
-    let navMinimized = localStorage.getItem(T + 'navMinimized') === 'true';
+    let navMinimized = getS(T + 'navMinimized') === 'true';
 
     // 设置导航链接的样式（高亮或普通状态）
     const setLinkStyle = (linkContainer, isActive) => {
@@ -1376,11 +1372,8 @@
             ? linkContainer.querySelector('.tool-nav-link')
             : linkContainer;
         if(!link) return;
-        if(isActive) {
-            link.style.cssText = NAV_STYLES.link + 'background-color:;color:#0066cc;';
-        } else {
-            link.style.cssText = NAV_STYLES.link + 'background-color:;color:#333;';
-        }
+        const color = isActive ? SUB_NAV_ITEM_HOVER_COLOR : NAV_ITEM_COLOR;
+        link.style.cssText = NAV_STYLES.link + `background-color:;color:${color};`;
     };
 
     // 清除所有导航链接的高亮状态
@@ -1443,16 +1436,9 @@
         }
 
         // 如果条目数量超过指定阈值，则将navBar的top抬高
-        let navTop;
-        if(linkCount > NAV_TOP_THRESHOLD) {
-            navTop = "7%";
-            navBar.style.top = navTop;
-            navMiniButton.style.top = navTop;
-        } else {
-            navTop = NAV_TOP;
-            navBar.style.top = navTop;
-            navMiniButton.style.top = navTop;
-        }
+        let navTop = linkCount > NAV_TOP_THRESHOLD ? "7%" : NAV_TOP;
+        navBar.style.top = navTop;
+        navMiniButton.style.top = navTop;
 
         // 更新条数显示
         updateNavCount();
@@ -1510,9 +1496,7 @@
 
         // 找到所有可见的目录项
         const visibleElements = getVisibleElements(navQuestions, 1.0); // 使用100%视口高度进行初步筛选
-
         if(visibleElements.length === 0) {
-            // 视野无任何目录，保持上次高亮项（不做任何操作）
             return;
         }
 
@@ -1573,120 +1557,59 @@
 
         const questionIndex = Array.from(allQuestions).indexOf(questionEl);
         if (questionIndex < 0) {
-            // 问题不在列表中，尝试直接查找
-            let nextSibling = questionEl.nextElementSibling;
-            let checkedCount = 0;
-            while (nextSibling && checkedCount < FIND_ANSWER_SIBLING_LIMIT) {
-                const headings = nextSibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
-                if (headings.length > 0) {
-                    return nextSibling;
-                }
-                if (nextSibling.tagName && SUB_NAV_HEADING_TAGS.includes(nextSibling.tagName)) {
-                    return nextSibling.parentElement;
-                }
-                nextSibling = nextSibling.nextElementSibling;
-                checkedCount++;
-            }
             return null;
         }
-
         if (questionIndex >= allQuestions.length - 1) {
             // 如果是最后一个问题，查找它之后的所有内容
-            let current = questionEl;
-            let depth = 0;
-            while (current && depth < FIND_ANSWER_PARENT_DEPTH_LIMIT) {
-                // 查找当前元素的父元素
-                let parent = current.parentElement;
-                if (!parent) break;
-
-                // 查找父元素的兄弟元素
-                let sibling = parent.nextElementSibling;
-                let checkedCount = 0;
-                while (sibling && checkedCount < FIND_ANSWER_LAST_SIBLING_LIMIT) {
-                    const headings = sibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
-                    if (headings.length > 0) {
-                        return sibling;
-                    }
-                    // 检查当前元素本身是否是h2~h4
-                    if (sibling.tagName && SUB_NAV_HEADING_TAGS.includes(sibling.tagName)) {
-                        return sibling.parentElement;
-                    }
-                    sibling = sibling.nextElementSibling;
-                    checkedCount++;
-                }
-
-                // 向上查找
-                current = parent;
-                depth++;
-            }
+            return searchInParentSiblings(questionEl, FIND_ANSWER_LAST_SIBLING_LIMIT, null);
         } else {
             // 如果不是最后一个问题，查找当前问题和下一个问题之间的内容
             const nextQuestion = allQuestions[questionIndex + 1];
             if (!nextQuestion) return null;
 
-            // 查找问题元素和下一个问题元素之间的所有元素
-            let current = questionEl;
-            let depth = 0;
-            while (current && depth < FIND_ANSWER_PARENT_DEPTH_LIMIT) {
-                // 查找当前元素的父元素
-                let parent = current.parentElement;
-                if (!parent) break;
+            const stopCondition = (sibling) => {
+                return sibling.contains(nextQuestion) || sibling === nextQuestion;
+            };
+            return searchInParentSiblings(questionEl, FIND_ANSWER_MIDDLE_SIBLING_LIMIT, stopCondition);
+        }
+    };
+    
+    // 向上查找父元素的兄弟元素，查找回答区域
+    const searchInParentSiblings = (startEl, siblingLimit, stopCondition) => {
+        let current = startEl;
+        let depth = 0;
+        while (current && depth < FIND_ANSWER_PARENT_DEPTH_LIMIT) {
+            const parent = current.parentElement;
+            if (!parent) break;
 
-                // 查找父元素的兄弟元素，直到找到下一个问题
-                let sibling = parent.nextElementSibling;
-                let checkedCount = 0;
-                while (sibling && checkedCount < FIND_ANSWER_MIDDLE_SIBLING_LIMIT) {
-                    // 如果找到了下一个问题，停止搜索
-                    if (sibling.contains(nextQuestion) || sibling === nextQuestion) {
-                        break;
-                    }
-
-                    // 查找包含h2~h4的元素
-                    const headings = sibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
-                    if (headings.length > 0) {
-                        return sibling;
-                    }
-
-                    // 检查当前元素本身是否是h2~h4
-                    if (sibling.tagName && SUB_NAV_HEADING_TAGS.includes(sibling.tagName)) {
-                        return sibling.parentElement;
-                    }
-
-                    sibling = sibling.nextElementSibling;
-                    checkedCount++;
+            let sibling = parent.nextElementSibling;
+            let checkedCount = 0;
+            while (sibling && checkedCount < siblingLimit) {
+                // 检查停止条件（如遇到下一个问题）
+                if (stopCondition && stopCondition(sibling)) {
+                    break;
                 }
-
-                // 向上查找
-                current = parent;
-                depth++;
+                // 查找包含标题的兄弟元素
+                const headings = sibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
+                if (headings.length > 0) {
+                    return sibling;
+                }
+                if (sibling.tagName && SUB_NAV_HEADING_TAGS.includes(sibling.tagName)) {
+                    return sibling.parentElement;
+                }
+                sibling = sibling.nextElementSibling;
+                checkedCount++;
             }
+            current = parent;
+            depth++;
         }
-
-        // 如果以上方法都没找到，尝试在问题元素之后直接查找
-        let nextSibling = questionEl.nextElementSibling;
-        let checkedCount = 0;
-        while (nextSibling && checkedCount < FIND_ANSWER_SIBLING_LIMIT) {
-            const headings = nextSibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
-            if (headings.length > 0) {
-                return nextSibling;
-            }
-            if (nextSibling.tagName && SUB_NAV_HEADING_TAGS.includes(nextSibling.tagName)) {
-                return nextSibling.parentElement;
-            }
-            nextSibling = nextSibling.nextElementSibling;
-            checkedCount++;
-        }
-
         return null;
     };
 
     // 规范化标题文本（移除 emoji、空格、冒号等，但保留数字编号）
     const normalizeHeadingText = (text) => {
         if (!text) return '';
-
         let normalized = text.trim();
-
-        // 移除开头的空格和 emoji，但保留数字编号
         // 先移除开头的连续空格
         normalized = normalized.replace(/^\s+/, '');
 
@@ -1694,13 +1617,10 @@
         const firstChar = normalized.charAt(0);
         if (/[0-9]/.test(firstChar)) {
             // 第一个字符是数字，不做任何处理，保留完整的数字编号
-            // 例如："8. ..."、"8.1 ..."、"1. ..." 等
         } else {
-            // 第一个字符不是数字，可能是 emoji 或其他字符
             // 检查是否是 emoji 开头，且后面紧跟数字（可能含空格）
             if (/^\p{Emoji}\s*[0-9]/u.test(normalized)) {
                 // emoji 后面是数字，只移除 emoji 和空格，保留数字
-                // 例如："✅ 1. ..." → "1. ..."
                 normalized = normalized.replace(/^\p{Emoji}+\s*/u, '');
             } else if (/^\p{Emoji}/u.test(normalized)) {
                 // emoji 后面不是数字，安全移除 emoji
@@ -1711,86 +1631,10 @@
                 // 如果第一个字符是数字，说明被误识别为 emoji，不做处理
             }
         }
-
         // 移除末尾的冒号（中英文）
-        normalized = normalized.replace(/[:：]+$/, '');
-
-        return normalized;
+        return normalized.replace(/[:：]+$/, '');
     };
 
-    // 查找 Markdown 格式的标题（#、## 或 ### 开头）
-    const findMarkdownHeadings = (contentEl, headingList, startDomOrder) => {
-        // 支持标题被分割在多个元素中的情况（如 <span>## 五、</span><span>标题内容</span>）
-        // 兼容代码块未正确闭合的情况：即使标题在代码块内（因代码块未正确闭合导致的），也要识别为标题
-        const markdownHeadingPatterns = [
-            { level: 1, prefix: '# ' },    // h1: # 标题
-            { level: 2, prefix: '## ' },   // h2: ## 标题
-            { level: 3, prefix: '### ' }   // h3: ### 标题
-        ];
-
-        // 检查纯文本节点（包括合并后的文本，如分割在多个span中的标题在textContent中会合并成一行）
-        const walker = document.createTreeWalker(
-            contentEl,
-            NodeFilter.SHOW_TEXT,
-            null,
-            false
-        );
-
-        let textNode;
-        let domOrder = startDomOrder; // 继续使用传入的domOrder，保持顺序连续
-        while (textNode = walker.nextNode()) {
-            const text = textNode.textContent;
-            if (!text) continue;
-
-            // 兼容代码块未正确闭合的情况：不跳过代码块内的文本节点，识别所有标题
-            const lines = text.split(/\n|\r\n?/);
-            for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-                const line = lines[lineIndex];
-                const trimmedLine = line.trim();
-
-                // 对每一行，检查所有 markdown 标题模式
-                markdownHeadingPatterns.forEach(({ level, prefix }) => {
-                    if (!SUB_NAV_HEADING_LEVELS.includes(level)) return;
-
-                    if (trimmedLine.startsWith(prefix)) {
-                        const titleText = trimmedLine.substring(prefix.length).trim();
-                        if (!titleText) return;
-
-                        // 找到包含该文本的可见父元素
-                        // 兼容代码块未正确闭合的情况：即使父元素在代码块内，也识别为标题
-                        let parentEl = textNode.parentElement;
-                        while (parentEl && parentEl !== contentEl) {
-                            const rect = parentEl.getBoundingClientRect();
-                            if (rect.width > 0 && rect.height > 0) {
-                                // 检查是否已经存在相同文本和级别的标题（避免重复）
-                                const exists = headingList.some(h =>
-                                    h.text === titleText &&
-                                    h.level === level &&
-                                    Math.abs(h.position - rect.top) < 30
-                                );
-
-                                if (!exists) {
-                                    headingList.push({
-                                        element: parentEl,
-                                        tagName: `H${level}`,
-                                        text: titleText,
-                                        level: level,
-                                        position: rect.top,
-                                        domOrder: domOrder++, // 记录DOM顺序（每个匹配的标题单独分配）
-                                        isMarkdown: true
-                                    });
-                                }
-                                return; // 找到匹配后退出当前模式循环
-                            }
-                            parentEl = parentEl.parentElement;
-                        }
-                    }
-                });
-            }
-        }
-
-        return domOrder; // 返回更新后的domOrder
-    };
 
     // 在回答内容区域中查找所有配置的标题级别
     const findHeadingsInContent = (contentEl) => {
@@ -1799,7 +1643,7 @@
         const headingList = [];
 
         // 1. 查找现有的 h2~h4 标签标题
-        let domOrder = 0; // 初始化DOM顺序计数器（HTML标签标题和Markdown标题共用）
+        let domOrder = 0; // 初始化DOM顺序计数器（HTML标签标题用）
         const headings = contentEl.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
         Array.from(headings).forEach(h => {
             // 确保标题是可见的
@@ -1817,38 +1661,21 @@
                 tagName: h.tagName,
                 text: text,
                 level: level,
-                position: rect.top,
                 domOrder: domOrder++ // 为HTML标签标题也添加domOrder，确保排序正确
             });
         });
 
-        // 2. 查找文本中以 "## " 或 "### " 开头的 Markdown 标题
-        // 性能优化：仅对配置的站点启用此功能，避免对其他站点造成性能占用
-        if (ENABLE_MARKDOWN_HEADING_SITES.includes(site)) {
-            domOrder = findMarkdownHeadings(contentEl, headingList, domOrder);
-        }
-
-        // 3. 去重并排序（按DOM顺序，保持文档中的原始顺序）
+        // 2. 去重并排序（按DOM顺序，保持文档中的原始顺序）
         const uniqueHeadings = [];
         const seenKeys = new Set();
 
         // 按DOM顺序排序（TreeWalker遍历的顺序）
-        // 如果domOrder不存在，使用position作为备选排序依据
-        headingList.sort((a, b) => {
-            const orderA = a.domOrder !== undefined ? a.domOrder : Infinity;
-            const orderB = b.domOrder !== undefined ? b.domOrder : Infinity;
-            if (orderA !== Infinity && orderB !== Infinity) {
-                return orderA - orderB;
-            }
-            // 如果某个标题没有domOrder，使用position排序
-            return a.position - b.position;
-        });
+        headingList.sort((a, b) => a.domOrder - b.domOrder);
 
         headingList.forEach(heading => {
-            // 使用文本、级别和更精确的位置作为唯一标识，避免重复
-            // 使用更小的位置区间（5像素）来区分不同的标题
-            const positionKey = Math.floor(heading.position / 5);
-            const key = `${heading.text}_${heading.level}_${positionKey}`;
+            // 使用文本、级别和domOrder作为唯一标识，避免重复
+            // domOrder是稳定的，不会随页面滚动而变化
+            const key = `${heading.text}_${heading.level}_${heading.domOrder}`;
 
             if (!seenKeys.has(key)) {
                 seenKeys.add(key);
@@ -1856,59 +1683,13 @@
                     element: heading.element,
                     tagName: heading.tagName,
                     text: heading.text,
-                    level: heading.level
+                    level: heading.level,
+                    domOrder: heading.domOrder
                 });
             }
         });
 
         return uniqueHeadings;
-    };
-
-    const SUB_NAV_SCROLL_MAX_HEIGHT_DIFF = 120; // 副目录滚动时，上一个元素最大高度差（超过此值则不滚动）
-    const SUB_NAV_SCROLL_MIN_HEIGHT_DIFF = 50; // 副目录滚动时，上一个元素最小高度差（小于此值则再往前找一个元素）
-
-    // 滚动到目标元素，并可选择性地滚动到上一个元素
-    const scrollToTargetWithPrevElement = (targetElement) => {
-        if (!targetElement || !document.body.contains(targetElement)) {
-            console.warn('标题元素不存在，无法跳转');
-            return;
-        }
-
-        targetElement.scrollIntoView({ block: 'start' });
-
-        // 如果当前站点启用了滚动到上一个元素功能
-        if (ENABLE_SCROLL_TO_PREV_ELEMENT_SITES.includes(site)) {
-            setTimeout(() => {
-                // 找到targetElement的上一个相邻元素
-                let previousElement = targetElement.previousElementSibling;
-                if (previousElement) {
-                    // 检测上一个元素的位置是否比目标高出超过阈值
-                    const targetRect = targetElement.getBoundingClientRect();
-                    let prevRect = previousElement.getBoundingClientRect();
-                    let heightDiff = targetRect.top - prevRect.top;
-
-                    if (heightDiff > SUB_NAV_SCROLL_MAX_HEIGHT_DIFF) {
-                        console.log('上一个元素位置过高，不进行滚动');
-                    } else if (heightDiff <= SUB_NAV_SCROLL_MIN_HEIGHT_DIFF) {
-                        // 如果高度不超过最小阈值，再往前找一个元素
-                        const prevPrevElement = previousElement.previousElementSibling;
-                        if (prevPrevElement) {
-                            const prevPrevRect = prevPrevElement.getBoundingClientRect();
-                            const prevPrevHeightDiff = targetRect.top - prevPrevRect.top;
-                            if (prevPrevHeightDiff <= SUB_NAV_SCROLL_MAX_HEIGHT_DIFF) {
-                                previousElement = prevPrevElement;
-                                console.log('使用前前一个元素');
-                            }
-                        }
-                        previousElement.scrollIntoView({ block: 'start' });
-                    } else {
-                        previousElement.scrollIntoView({ block: 'start' });
-                    }
-                } else {
-                    console.log('没有找到上一个相邻元素');
-                }
-            }, 0);
-        }
     };
 
     // 渲染副目录项（根据当前选择的层级过滤）
@@ -1993,7 +1774,11 @@
                     }
                 }
 
-                scrollToTargetWithPrevElement(targetElement);
+                if (!targetElement || !document.body.contains(targetElement)) {
+                    console.warn('标题元素不存在，无法跳转');
+                    return;
+                }
+                targetElement.scrollIntoView({ block: 'start' });
             });
 
             subNavBar.appendChild(item);
@@ -2003,55 +1788,11 @@
     // 根据副目录条目数量动态设置top位置
     const updateSubNavTop = () => {
         const subNavItemCount = subNavBar.querySelectorAll('.sub-nav-item').length;
-        if (subNavItemCount > SUB_NAV_TOP_THRESHOLD) {
-            subNavBar.style.top = "5%";
-        } else {
-            subNavBar.style.top = SUB_NAV_TOP;
-        }
+        subNavBar.style.top = subNavItemCount > SUB_NAV_TOP_THRESHOLD ? "7%" : SUB_NAV_TOP;
     };
 
-    // 显示副目录栏
-    const showSubNavBar = (questionIndex, headings, isPolling = false) => {
-        // 如果已关闭，则不加载
-        if (isSubNavClosed()) {
-            return;
-        }
-
-        if (!headings || headings.length === 0) {
-            console.log('未找到标题');
-            return;
-        }
-
-        // 检测标题总条数，超过指定数量才显示副目录
-        if (headings.length <= SUB_NAV_MIN_ITEMS) {
-            return;
-        }
-
-        // 轮询时的优化：如果当前已有标题且新标题数量少于或等于现有标题数量，可能是DOM还没完全加载
-        // 只有在标题数量增加时才更新（保留更完整的数据）
-        if (isPolling && currentSubNavHeadings.length > 0) {
-            // 如果新标题数量少于现有标题，说明可能丢失了某些标题，不更新
-            if (headings.length < currentSubNavHeadings.length) {
-                console.log(`轮询时标题数量减少（${headings.length} < ${currentSubNavHeadings.length}），保留现有标题`);
-                return;
-            }
-            // 如果标题数量相同，检查是否有实际变化（避免不必要的重建）
-            if (headings.length === currentSubNavHeadings.length) {
-                // 检查标题列表是否完全相同（通过比较标题文本和位置的hash）
-                const existingKeys = new Set(currentSubNavHeadings.map(h =>
-                    `${h.text}_${h.level}_${Math.floor(h.position / 5)}`
-                ));
-                const newKeys = new Set(headings.map(h =>
-                    `${h.text}_${h.level}_${Math.floor(h.position / 5)}`
-                ));
-                // 如果标题完全相同，不更新
-                if (existingKeys.size === newKeys.size &&
-                    [...existingKeys].every(k => newKeys.has(k))) {
-                    return;
-                }
-            }
-        }
-
+    // 更新副目录状态
+    const updateSubNavState = (questionIndex, headings) => {
         // 保存标题数据和状态
         currentSubNavHeadings = headings;
 
@@ -2084,32 +1825,94 @@
             }
         }
 
-        // 清空副目录栏
-        subNavBar.replaceChildren();
+        return existingLevels;
+    };
 
-        // 创建标题容器（相对定位，用于放置关闭按钮）
-        const titleContainer = document.createElement('div');
-        titleContainer.style.cssText = 'position:relative;padding-right:24px;padding-bottom:6px;border-bottom:1px solid #eaeaea;margin-bottom:6px;';
-        titleContainer.className = 'sub-nav-title-container';
+    // 创建副目录位置按钮
+    const createSubNavPositionBtn = (titleContainer) => {
+        const positionBtn = createTag('div', "", NAV_STYLES.subNavPositionBtn);
+        positionBtn.textContent = '位置';
+        positionBtn.title = '设置副目录位置';
+        positionBtn.addEventListener('mouseenter', () => {
+            positionBtn.style.backgroundColor = '#f0f0f0';
+        });
+        positionBtn.addEventListener('mouseleave', () => {
+            positionBtn.style.backgroundColor = 'transparent';
+        });
+        positionBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
 
-        // 创建标题行容器
-        const titleRow = document.createElement('div');
-        titleRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+            // 创建输入框
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = getSubNavLeft();
+            input.style.cssText = NAV_STYLES.subNavPositionInput;
 
-        // 创建标题文本和按钮组容器
-        const titleLeft = document.createElement('div');
-        titleLeft.style.cssText = 'display:flex;align-items:center;gap:8px;flex:1;';
+            // 替换按钮为输入框
+            positionBtn.style.display = 'none';
+            titleContainer.appendChild(input);
+            input.focus();
+            input.select();
 
-        // 创建标题文本
-        const titleText = document.createElement('span');
-        titleText.style.cssText = 'font-weight:bold;color:#333;font-size:14px;';
-        // 如果主目录只有一项，不显示序号；否则显示序号
-        const totalQuestions = navQuestions ? navQuestions.length : 0;
-        titleText.textContent = totalQuestions <= 1 ? '副目录' : `副目录 ${questionIndex + 1}`;
+            // blur事件：保存值并更新位置
+            input.addEventListener('blur', () => {
+                const newLeft = input.value.trim();
+                const formatRegex = /^\d+(\.\d+)?px$/;
+                if (newLeft && formatRegex.test(newLeft)) {
+                    // 格式正确，保存到localStorage，更新副目录的left位置
+                    setSubNavLeft(newLeft);
+                    subNavBar.style.left = newLeft;
+                } else if (newLeft) {
+                    input.value = getSubNavLeft();
+                    alert('位置格式错误，请输入"数字+px"格式，例如：270px');
+                }
+                // 恢复按钮
+                input.remove();
+                positionBtn.style.display = 'flex';
+            });
 
-        // 创建层级按钮组
-        const levelBtnGroup = document.createElement('div');
-        levelBtnGroup.style.cssText = NAV_STYLES.levelBtnGroup;
+            // Enter键也触发blur
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    input.blur();
+                }
+            });
+        });
+        return positionBtn;
+    };
+
+    // 创建副目录关闭按钮
+    const createSubNavCloseBtn = () => {
+        const closeBtn = createTag('div', "", NAV_STYLES.subNavCloseBtn);
+        closeBtn.textContent = '×';
+        closeBtn.title = '关闭副目录';
+        closeBtn.addEventListener('mouseenter', () => {
+            closeBtn.style.backgroundColor = '#f0f0f0';
+        });
+        closeBtn.addEventListener('mouseleave', () => {
+            closeBtn.style.backgroundColor = 'transparent';
+        });
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+
+            // 检查是否是首次点击（用GM存储标记状态）
+            const firstCloseKey = `${T}subNavFirstCloseShown`;
+            const hasShownFirstClose = GM_getValue(firstCloseKey, false);
+            if (!hasShownFirstClose) {
+                alert("这家大模型将不再显示副目录；\n若需恢复，点击主目录每条提问前的小图标即可");
+                GM_setValue(firstCloseKey, true);
+            }
+
+            // 记录关闭状态
+            setSubNavClosed(true);
+            hideSubNavBar();
+        });
+        return closeBtn;
+    };
+
+    // 创建副目录层级按钮组
+    const createSubNavLevelBtnGroup = (existingLevels) => {
+        const levelBtnGroup = createTag('div', "", NAV_STYLES.levelBtnGroup);
 
         // 创建层级按钮（只显示实际存在的层级，按钮显示顺序为 h2, h3, h4，从高到低）
         existingLevels.slice().reverse().forEach(level => {
@@ -2165,96 +1968,37 @@
             levelBtnGroup.appendChild(btn);
         });
 
+        return levelBtnGroup;
+    };
+
+    // 渲染副目录UI
+    const renderSubNavUI = (questionIndex, existingLevels) => {
+        // 清空副目录栏
+        subNavBar.replaceChildren();
+
+        // 创建标题容器（相对定位，用于放置关闭按钮）
+        const titleContainer = createTag('div', "", 'position:relative;padding-right:24px;padding-bottom:6px;border-bottom:1px solid #eaeaea;margin-bottom:6px;');
+        titleContainer.className = 'sub-nav-title-container';
+        // 创建标题行容器、标题
+        const titleRow = createTag('div', "", 'display:flex;align-items:center;justify-content:space-between;gap:8px;');
+        const titleLeft = createTag('div', "", 'display:flex;align-items:center;gap:8px;flex:1;');
+
+        // 创建标题文本
+        const titleText = createTag('span', "", 'font-weight:bold;color:#333;font-size:14px;');
+        titleText.textContent = `副目录 ${questionIndex + 1}`;
+
+        // 创建层级按钮组
+        const levelBtnGroup = createSubNavLevelBtnGroup(existingLevels);
+
         // 组装左侧（标题和按钮组）
-        titleLeft.appendChild(titleText);
-        titleLeft.appendChild(levelBtnGroup);
+        appendSeveral(titleLeft, titleText, levelBtnGroup);
         titleRow.appendChild(titleLeft);
         titleContainer.appendChild(titleRow);
 
-        // 创建位置按钮
-        const positionBtn = document.createElement('div');
-        positionBtn.style.cssText = NAV_STYLES.subNavPositionBtn;
-        positionBtn.textContent = '位置';
-        positionBtn.title = '设置副目录位置';
-        positionBtn.addEventListener('mouseenter', () => {
-            positionBtn.style.backgroundColor = '#f0f0f0';
-        });
-        positionBtn.addEventListener('mouseleave', () => {
-            positionBtn.style.backgroundColor = 'transparent';
-        });
-        positionBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-
-            // 创建输入框
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.value = getSubNavLeft();
-            input.style.cssText = NAV_STYLES.subNavPositionInput;
-
-            // 替换按钮为输入框
-            positionBtn.style.display = 'none';
-            titleContainer.appendChild(input);
-            input.focus();
-            input.select();
-
-            // blur事件：保存值并更新位置
-            input.addEventListener('blur', () => {
-                const newLeft = input.value.trim();
-                // 检查格式：需为数字+px
-                const formatRegex = /^\d+(\.\d+)?px$/;
-                if (newLeft && formatRegex.test(newLeft)) {
-                    // 格式正确，保存到localStorage
-                    setSubNavLeft(newLeft);
-                    // 更新副目录的left位置
-                    subNavBar.style.left = newLeft;
-                } else if (newLeft) {
-                    // 格式不正确，提示用户并恢复原值
-                    alert('位置格式错误，请输入"数字+px"格式，例如：270px');
-                    // 恢复原值
-                    input.value = getSubNavLeft();
-                }
-                // 恢复按钮
-                input.remove();
-                positionBtn.style.display = 'flex';
-            });
-
-            // Enter键也触发blur
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    input.blur();
-                }
-            });
-        });
-        titleContainer.appendChild(positionBtn);
-
-        // 创建关闭按钮
-        const closeBtn = document.createElement('div');
-        closeBtn.style.cssText = NAV_STYLES.subNavCloseBtn;
-        closeBtn.textContent = '×';
-        closeBtn.title = '关闭副目录';
-        closeBtn.addEventListener('mouseenter', () => {
-            closeBtn.style.backgroundColor = '#f0f0f0';
-        });
-        closeBtn.addEventListener('mouseleave', () => {
-            closeBtn.style.backgroundColor = 'transparent';
-        });
-        closeBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-
-            // 检查是否是首次点击（用GM存储标记状态）
-            const firstCloseKey = `${T}subNavFirstCloseShown`;
-            const hasShownFirstClose = GM_getValue(firstCloseKey, false);
-            if (!hasShownFirstClose) {
-                alert("这家大模型将不再显示副目录；\n若需恢复，点击主目录每条提问前的小图标即可");
-                GM_setValue(firstCloseKey, true);
-            }
-
-            // 记录关闭状态
-            setSubNavClosed(true);
-
-            hideSubNavBar();
-        });
-        titleContainer.appendChild(closeBtn);
+        // 创建位置按钮和关闭按钮
+        const positionBtn = createSubNavPositionBtn(titleContainer);
+        const closeBtn = createSubNavCloseBtn();
+        appendSeveral(titleContainer, positionBtn, closeBtn);
 
         // 添加到副目录栏
         subNavBar.appendChild(titleContainer);
@@ -2275,24 +2019,65 @@
         startSubNavObserver(questionIndex);
     };
 
-    // 获取副目录关闭状态的key
-    const getSubNavClosedKey = () => {
-        return `${T}subNavClosed`;
+    // 显示副目录栏
+    const showSubNavBar = (questionIndex, headings, isPolling = false) => {
+        // 如果已关闭，则不加载
+        if (isSubNavClosed()) {
+            return;
+        }
+        if (!headings || headings.length === 0) {
+            console.log('未找到标题');
+            return;
+        }
+        // 检测标题总条数，超过指定数量才显示副目录
+        if (headings.length <= SUB_NAV_MIN_ITEMS) {
+            return;
+        }
+
+        // 轮询时的优化：如果当前已有标题且新标题数量少于或等于现有标题数量，可能是DOM还没完全加载
+        // 只有在标题数量增加时才更新（保留更完整的数据）
+        if (isPolling && currentSubNavHeadings.length > 0) {
+            // 如果新标题数量少于现有标题，说明可能丢失了某些标题，不更新
+            if (headings.length < currentSubNavHeadings.length) {
+                console.log(`轮询时标题数量减少（${headings.length} < ${currentSubNavHeadings.length}），保留现有标题`);
+                return;
+            }
+            // 如果标题数量相同，检查是否有实际变化（避免不必要的重建）
+            if (headings.length === currentSubNavHeadings.length) {
+                // 检查标题列表是否完全相同（通过比较标题文本、级别和domOrder）
+                const existingKeys = new Set(currentSubNavHeadings.map(h =>
+                    `${h.text}_${h.level}_${h.domOrder || 0}`
+                ));
+                const newKeys = new Set(headings.map(h =>
+                    `${h.text}_${h.level}_${h.domOrder || 0}`
+                ));
+                // 如果标题完全相同，不更新
+                if (existingKeys.size === newKeys.size &&
+                    [...existingKeys].every(k => newKeys.has(k))) {
+                    return;
+                }
+            }
+        }
+
+        // 更新状态
+        const existingLevels = updateSubNavState(questionIndex, headings);
+
+        // 渲染UI
+        renderSubNavUI(questionIndex, existingLevels);
     };
 
+    const SUB_NAV_CLOSED_KEY = `${T}subNavClosed`;
     // 检查副目录是否已关闭
     const isSubNavClosed = () => {
-        const key = getSubNavClosedKey();
-        return localStorage.getItem(key) === 'true';
+        return getS(SUB_NAV_CLOSED_KEY) === 'true';
     };
 
     // 设置副目录关闭状态
     const setSubNavClosed = (closed) => {
-        const key = getSubNavClosedKey();
         if (closed) {
-            setS(key, 'true');
+            setS(SUB_NAV_CLOSED_KEY, 'true');
         } else {
-            localStorage.removeItem(key);
+            localStorage.removeItem(SUB_NAV_CLOSED_KEY);
         }
     };
 
@@ -2375,17 +2160,71 @@
         showSubNavBar(questionIndex, headings, isPolling);
     };
 
+    // 处理导航链接点击事件
+    const handleNavLinkClick = (el, i, linkContainer) => {
+        return (e) => {
+            e.preventDefault();
+            // 验证元素是否存在，如果不存在则尝试重新获取
+            let targetEl = el;
+            const questions = getQuestionList();
+
+            if (!targetEl || !document.body.contains(targetEl)) {
+                // 元素可能已被移除或重新渲染，尝试重新获取
+                if (questions && questions.length > i) {
+                    targetEl = questions[i];
+                }
+            }
+
+            setTimeout(function(){
+                // 遍历更新所有条目文字：如果条目内容为空而questionList里的textContent非空
+                if (questions && navLinks) {
+                    questions.forEach((question, index) => {
+                        if (index >= navLinks.length) return;
+
+                        const currentLinkContainer = navLinks[index];
+                        const linkElement = currentLinkContainer.querySelector('.tool-nav-link');
+                        if (!linkElement) return;
+
+                        const spans = linkElement.querySelectorAll('span');
+                        if (spans.length < 2) return;
+
+                        const textSpanElement = spans[1]; // 第二个span是文本span
+                        const currentText = textSpanElement.textContent.trim();
+                        const newText = normalizeQuestionText(question.textContent);
+
+                        if (isEmpty(currentText) && !isEmpty(newText)) {
+                            textSpanElement.textContent = newText;
+                            linkElement.title = (index + 1) + '. ' + newText;
+                        }
+                    });
+                }
+            }, NAV_UPDATE_TEXT_DELAY);
+
+            // 如果元素存在，执行滚动
+            if (targetEl && document.body.contains(targetEl)) {
+                targetEl.scrollIntoView({block: 'start'});
+                clickedTarget = targetEl;
+                clickLockUntil = Date.now() + NAV_CLICK_LOCK_DURATION;
+                clearAllHighlights();
+                setLinkStyle(linkContainer, true);
+                // 自动显示当前点击项对应的副目录
+                if (typeof autoShowSubNav === 'function') {
+                    autoShowSubNav(i);
+                }
+            } else {
+                // 元素不存在，等待一段时间后重试
+            }
+        };
+    };
+
     // 创建导航链接元素
     const createNavLink = (el, i) => {
         // 创建链接容器
-        const linkContainer = document.createElement('div');
+        const linkContainer = createTag('div', "", NAV_STYLES.linkContainer);
         linkContainer.className = 'tool-nav-link-container';
-        linkContainer.style.cssText = NAV_STYLES.linkContainer;
 
         // 创建副目录小图标
-        const subNavIcon = document.createElement('span');
-        subNavIcon.textContent = '📖';
-        subNavIcon.style.cssText = NAV_STYLES.waveIcon;
+        const subNavIcon = createTag('span', '📖', NAV_STYLES.waveIcon);
         subNavIcon.title = '显示副目录';
         subNavIcon.addEventListener('mouseenter', () => {
             subNavIcon.style.cssText = NAV_STYLES.waveIcon + NAV_STYLES.waveIconHover;
@@ -2439,129 +2278,37 @@
         });
 
         // 创建链接内容
-        const link = document.createElement('div');
+        const link = createTag('div', "", NAV_STYLES.link);
         link.className = 'tool-nav-link';
-        link.style.cssText = NAV_STYLES.link;
 
-        const indexSpan = document.createElement('span');
-        indexSpan.textContent = (i + 1) + '. ';
+        const indexText = (i + 1) + '. ';
+        const indexSpan = createTag('span', indexText, "");
         indexSpan.style.color = NAV_ITEM_COLOR;
 
-        const textSpan = document.createElement('span');
         const normalizedText = normalizeQuestionText(el.textContent);
-        textSpan.textContent = normalizedText;
+        const textSpan = createTag('span', normalizedText, "");
 
         link.title = (i + 1) + '. ' + normalizedText;
-        link.appendChild(indexSpan);
-        link.appendChild(textSpan);
+        appendSeveral(link, indexSpan, textSpan);
 
         // 事件监听
         link.addEventListener('mouseenter', () => link.style.backgroundColor = '#f0f0f0');
         link.addEventListener('mouseleave', () => link.style.backgroundColor = '');
-        link.addEventListener('click', (e) => {
-            e.preventDefault();
-            // 验证元素是否存在，如果不存在则尝试重新获取
-            let targetEl = el;
-            const questions = getQuestionList();
-
-            if (!targetEl || !document.body.contains(targetEl)) {
-                // 元素可能已被移除或重新渲染，尝试重新获取
-                if (questions && questions.length > i) {
-                    targetEl = questions[i];
-                }
-            }
-
-
-            setTimeout(function(){
-                // 遍历更新所有条目文字：如果条目内容为空而questionList里的textContent非空
-                if (questions && navLinks) {
-                    questions.forEach((question, index) => {
-                        if (index >= navLinks.length) return;
-
-                        const linkContainer = navLinks[index];
-                        const linkElement = linkContainer.querySelector('.tool-nav-link');
-                        if (!linkElement) return;
-
-                        const spans = linkElement.querySelectorAll('span');
-                        if (spans.length < 2) return;
-
-                        const textSpanElement = spans[1]; // 第二个span是文本span
-                        const currentText = textSpanElement.textContent.trim();
-                        const newText = normalizeQuestionText(question.textContent);
-
-                        if (isEmpty(currentText) && !isEmpty(newText)) {
-                            textSpanElement.textContent = newText;
-                            linkElement.title = (index + 1) + '. ' + newText;
-                        }
-                    });
-                }
-            }, 500);
-
-            // 如果元素存在，执行滚动
-            if (targetEl && document.body.contains(targetEl)) {
-                targetEl.scrollIntoView({block: 'start'});
-                clickedTarget = targetEl;
-                clickLockUntil = Date.now() + NAV_CLICK_LOCK_DURATION;
-                clearAllHighlights();
-                setLinkStyle(linkContainer, true);
-                // 自动显示当前点击项对应的副目录
-                if (typeof autoShowSubNav === 'function') {
-                    autoShowSubNav(i);
-                }
-            } else {
-                // 元素不存在，等待一段时间后重试
-                let retryCount = 0;
-                const navMaxRetries = 10;
-                const retryInterval = 100;
-                const retryTimer = setInterval(() => {
-                    retryCount++;
-                    const questions = getQuestionList();
-                    if (questions && questions.length > i) {
-                        const newEl = questions[i];
-                        if (newEl && document.body.contains(newEl)) {
-                            clearInterval(retryTimer);
-                            newEl.scrollIntoView({block: 'start'});
-                            clickedTarget = newEl;
-                            clickLockUntil = Date.now() + NAV_CLICK_LOCK_DURATION;
-                            clearAllHighlights();
-                            setLinkStyle(linkContainer, true);
-                            // 自动显示当前点击项对应的副目录
-                            if (typeof autoShowSubNav === 'function') {
-                                autoShowSubNav(i);
-                            }
-                            // 更新navQuestions中的元素引用
-                            if (navQuestions && navQuestions[i] !== newEl) {
-                                navQuestions[i] = newEl;
-                                elToLink.set(newEl, linkContainer);
-                            }
-                        }
-                    }
-                    if (retryCount >= navMaxRetries) {
-                        clearInterval(retryTimer);
-                        console.warn('目录项跳转失败：元素未找到');
-                    }
-                }, retryInterval);
-            }
-        });
+        link.addEventListener('click', handleNavLinkClick(el, i, linkContainer));
 
         // 组装链接容器
-        linkContainer.appendChild(subNavIcon);
-        linkContainer.appendChild(link);
+        appendSeveral(linkContainer, subNavIcon, link);
 
         return linkContainer;
     };
 
     // 创建导航栏标题元素（包含隐藏按钮）
     const createTitle = () => {
-        const title = document.createElement('div');
-        title.style.cssText = NAV_STYLES.title;
+        const title = createTag('div', "", NAV_STYLES.title);
 
-        const titleText = document.createElement('span');
-        titleText.textContent = '主目录';
+        const titleText = createTag('span', '主目录', "");
 
-        const hideBtn = document.createElement('span');
-        hideBtn.textContent = '隐藏';
-        hideBtn.style.cssText = NAV_STYLES.hideBtn;
+        const hideBtn = createTag('span', '隐藏', NAV_STYLES.hideBtn);
         hideBtn.addEventListener('mouseenter', () => hideBtn.style.backgroundColor = '#f5f5f5');
         hideBtn.addEventListener('mouseleave', () => hideBtn.style.backgroundColor = '');
         hideBtn.addEventListener('click', (e) => {
@@ -2570,17 +2317,14 @@
         });
 
         // 创建条数显示元素
-        navCountText = document.createElement('span');
-        navCountText.style.cssText = NAV_STYLES.countText;
+        navCountText = createTag('span', "", NAV_STYLES.countText);
         navCountText.style.display = 'none'; // 默认隐藏
 
-        title.appendChild(titleText);
-        title.appendChild(hideBtn);
-        title.appendChild(navCountText);
+        appendSeveral(title, titleText, hideBtn, navCountText);
         return title;
     };
 
-    // 初始化IntersectionObserver
+    // 初始化 IntersectionObserver
     const initIntersectionObserver = () => {
         try {
             navIO = new IntersectionObserver((entries) => {
@@ -2702,7 +2446,6 @@
         setNavMinimized(false);
     });
 
-
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
      * ║                                                                      ║
@@ -2725,23 +2468,21 @@
     };
 
     // 面板数据
-    const contentContainer = document.createElement('div');
+    const contentContainer = createTag('div', "", "");
     let isCompactMode = false;
     let originalHTML = contentContainer.innerHTML;
 
     // 创建面板容器
     panel.style.cssText = PANEL_STYLES.panel;
     panel.id = TOOL_PANEL_ID;
-    let hint = document.createElement('div');
+    let hint = createTag('div', "", "");
 
     const DISABLE = "禁用";
     const ENABLE = "开启";
     
     // 创建禁用按钮
-    let disable = document.createElement('div');
+    let disable = createTag('div', DISABLE, PANEL_STYLES.disable);
     disable.id = "tool-disable";
-    disable.textContent = DISABLE;
-    disable.style = PANEL_STYLES.disable;
     disable.addEventListener('click', (e) => disableEvent(e));
 
     // 根据word在words数组中的索引获取背景色
@@ -2751,22 +2492,17 @@
     };
 
     // 生成单词和选择框
-    let headline = document.createElement('div');
-    headline.textContent = "全部模型";
-    headline.style.cssText = PANEL_STYLES.headline;
+    let headline = createTag('div', "全部模型", PANEL_STYLES.headline);
 
     let sitesAndCurrent = getSitesAndCurrent();
     const items = []; // 收集所有item元素
 
     words.forEach((word, index) => {
-        const item = document.createElement('div');
-        item.style.cssText = PANEL_STYLES.item + `background:${getItemBgColor(index)};`;
+        const item = createTag('div', "", PANEL_STYLES.item + `background:${getItemBgColor(index)};`);
         item.className = 'panel-item'; // 添加类名用于识别
         item.dataset.word = word; // 添加data-word属性
 
-        const wordSpan = document.createElement('span');
-        wordSpan.textContent = word;
-        wordSpan.style.cssText = PANEL_STYLES.wordSpan;
+        const wordSpan = createTag('span', word, PANEL_STYLES.wordSpan);
 
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
@@ -2789,16 +2525,13 @@
             updateStorageSites(word);
         });
 
-        item.appendChild(wordSpan);
-        item.appendChild(checkbox);
+        appendSeveral(item, wordSpan, checkbox);
         items.push(item); // 收集item，稍后统一添加
     });
 
     // 集中DOM操作：一次性添加所有元素到 contentContainer, panel
-    contentContainer.appendChild(headline);
-    items.forEach(item => contentContainer.appendChild(item));
-    panel.appendChild(disable);
-    panel.appendChild(contentContainer);
+    appendSeveral(contentContainer, headline, ...items);
+    appendSeveral(panel, disable, contentContainer);
 
     // 首次加载多选面板 是展开状态，后续刷新网页默认缩略状态
     if(getGV(FIRST_RUN_KEY)){
@@ -2992,9 +2725,7 @@
         }
 
         if (selectedWords.length === 0) {
-            const emptyMsg = document.createElement('div');
-            emptyMsg.textContent = '未选模型';
-            emptyMsg.style.cssText = PANEL_STYLES.emptyMessage;
+            const emptyMsg = createTag('div', '未选模型', PANEL_STYLES.emptyMessage);
             contentContainer.replaceChildren();
             contentContainer.appendChild(emptyMsg);
         } else {
@@ -3013,16 +2744,13 @@
 
         let isDisable = getGV("disable");
         selectedWords.forEach(word => {
-            const item = document.createElement('div');
             // 禁用状态下使用白色背景，否则使用彩色背景
             const bgColor = isDisable ? 'white' : getItemBgColor(word);
-            item.style.cssText = PANEL_STYLES.item + `background:${bgColor};`;
+            const item = createTag('div', "", PANEL_STYLES.item + `background:${bgColor};`);
             item.dataset.word = word;
 
-            const wordSpan = document.createElement('span');
             let alias = wordToAlias[word];
-            wordSpan.textContent = alias;
-            wordSpan.style.cssText = PANEL_STYLES.wordSpan;
+            const wordSpan = createTag('span', alias, PANEL_STYLES.wordSpan);
 
             item.appendChild(wordSpan);
             contentContainer.appendChild(item);
@@ -3106,6 +2834,30 @@
      * ║                                                                      ║
      * ═══════════════════════════════════════════════════════════════════════
      ******************************************************************************/
+
+    /**
+     * 创建标签
+     */
+    function createTag(tag, textContent, css){
+        const ele = document.createElement(tag);
+        ele.style.cssText = css;
+        if(textContent){
+            ele.textContent = textContent;
+        }
+        return ele;
+    }
+
+    /**
+     * 一次性添加多个子元素
+     */
+    function appendSeveral(parent, ...children) {
+        children.forEach(child => {
+            if (child) {
+                parent.appendChild(child);
+            }
+        });
+        return parent;
+    }
 
     /**
      * 使用 MutationObserver 监测元素出现（更优雅的方式）
