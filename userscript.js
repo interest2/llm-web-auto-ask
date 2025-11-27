@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      4.0.0
+// @version      4.0.3
 // @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -43,11 +43,7 @@
     const STUDIO_CONTENT_MAX_WIDTH = "800px"; // ai studio 内容最大宽度
 
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
-    const version = "4.0.0";
-
-    // 弹窗样式常量
-    const POPUP_CONTAINER_STYLE = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center';
-    const POPUP_CONTENT_BASE_STYLE = 'min-width:400px;background:white;border-radius:12px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.3)';
+    const version = "4.0.3";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -227,6 +223,10 @@
     // 按钮显示状态存储键名（GM存储，所有站点共享）
     const SHOW_TOGGLE_BUTTON_KEY = "showToggleButton";
     const SHOW_BOOKMARK_BUTTON_KEY = "showBookmarkButton"; // 同时控制"书签"和"历史"两个按钮
+    const DEFAULT_HIDE_INPUT_AREA_KEY = "defaultHideInputArea"; // 默认隐藏输入框
+    
+    // 书签功能总开关存储键名（GM存储，所有站点共享）
+    const ENABLE_BOOKMARK_FEATURE_KEY = "enableBookmarkFeature";
     
     // 多选面板可见模型列表存储键名（GM存储，所有站点共享）
     const VISIBLE_MODELS_KEY = "visibleModels";
@@ -297,12 +297,11 @@
     const CURRENT_BOOKMARK_KEY = "currentBookmarkKey"; // 当前书签key
     const BOOKMARK_KEY_LIST = "bookmarkKeyList";   // 书签key列表
     const BOOKMARK_DELETE_CONFIRMED = "bookmarkDeleteConfirmed"; // 是否已首次确认删除
-    const BOOKMARK_BTN_CLICKED = "bookmarkBtnClicked"; // 加书签按钮是否已点击过
-    const BOOKMARK_VIEW_BTN_CLICKED = "bookmarkViewBtnClicked"; // 列表按钮是否已点击过
     const BOOKMARK_GROUP_LIST = "bookmarkGroupList"; // 分组列表
-    const DEFAULT_GROUP_NAME = "默认分组"; // 默认分组名称
-    const BOOKMARK_BTN_STYLE =                   "position:fixed;right:0;top:50%;transform:translateY(-50%);background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:10000;border-radius:6px 0 0 6px;box-shadow:-2px 2px 8px rgba(0,0,0,0.2);transition:all 0.2s ease;user-select:none;padding:3px";
-    const BOOKMARK_VIEW_BTN_STYLE = "position:fixed;right:0;top:calc(50% + 50px);transform:translateY(-50%);background:linear-gradient(135deg,#11998e 0%,#38ef7d 100%);color:white;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:10000;border-radius:6px 0 0 6px;box-shadow:-2px 2px 8px rgba(0,0,0,0.2);transition:all 0.2s ease;user-select:none;padding:3px";
+    const DEFAULT_GROUP_NAME = "默认"; // 默认分组名称
+    const DEFAULT_GROUP_ID = 0; // 默认分组代号
+    // 书签按钮公共样式（不包含 bottom 和 background）
+    const BOOKMARK_BTN_BASE_STYLE = "position:fixed;right:0;color:white;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:10000;border-radius:6px 0 0 6px;box-shadow:-2px 2px 8px rgba(0,0,0,0.2);user-select:none;padding:3px 5px";
 
     let DOMAIN = "https://www.ratetend.com:5001";
     const DEVELOPER_USERID = "7bca846c-be51-4c49-ba2b6"
@@ -796,6 +795,9 @@
         // 如果按钮或输入框还没加载，稍后重试
         if (!sendBtnListenerAdded || !inputAreaListenerAdded) {
             setTimeout(addSendButtonListener, 500);
+        } else {
+            // 输入框和按钮都加载完成后，应用默认隐藏设置
+            applyDefaultHideInputArea();
         }
     }
 
@@ -970,7 +972,7 @@
      * 脚本首次使用的指引
      */
     let FIRST_RUN_KEY = "firstRun";
-    setTimeout(function(){
+        setTimeout(function(){
         appendSeveral(document.body, panel, toggleButton, subNavBar);
         reloadDisableStatus();
         updateButtonVisibility(); // 根据设置更新按钮显示状态
@@ -982,17 +984,18 @@
             // 首次运行
             if(isEmpty(getGV(FIRST_RUN_KEY))){
                 setGV(FIRST_RUN_KEY, 1);
-                let updateHint = "脚本使用提示：\n网页右下角的多选面板可勾选提问范围，\n点击\"禁用\"可一键关闭同步提问";
+                let updateHint = "网页右下方的多选面板可勾选提问范围，\n\n" +
+                    "点击\"设置\"按钮可进行多种设置；\n\n";
 
-                alert(updateHint);
+                showMessagePopup(updateHint, "脚本使用提示");
             } else {
                 // 非首次运行，检查版本更新
-                // let VERSION_MARK = FIRST_RUN_KEY + "_2";
-                // if(isEmpty(getGV(VERSION_MARK))){
-                //     setGV(VERSION_MARK, 1);
-                //     let updateHint = "脚本近期更新：\n为单个回答内容建立目录导航功能";
-                //     alert(updateHint);
-                // }
+                let VERSION_MARK = FIRST_RUN_KEY + "_5";
+                if(isEmpty(getGV(VERSION_MARK))){
+                    setGV(VERSION_MARK, 1);
+                    let updateHint = "多选面板上新增了【设置】按钮，可进行多种自定义设置；\n\n";
+                    showMessagePopup(updateHint, "近期更新");
+                }
             }
 
         }, 800);
@@ -1068,6 +1071,21 @@
         const state = isHidden ? TOGGLE_STATES.show : TOGGLE_STATES.hide;
         toggleButton.textContent = state.text;
         toggleButton.style.background = state.bg;
+    }
+
+    // 应用默认隐藏输入框设置
+    function applyDefaultHideInputArea() {
+        const shouldHide = getGV(DEFAULT_HIDE_INPUT_AREA_KEY) === true;
+        if (!shouldHide) {
+            return;
+        }
+        
+        const aroundInputArea = getNthInputArea();
+        if (aroundInputArea && aroundInputArea.style.display !== 'none') {
+            aroundInputArea.style.display = TOGGLE_STATES.hide.display;
+            isInputAreaHidden = true;
+            toggleBtnStatus(false);
+        }
     }
 
     // 存储的key
@@ -1635,12 +1653,30 @@
         if (!allQuestions || allQuestions.length === 0) return null;
 
         const questionIndex = Array.from(allQuestions).indexOf(questionEl);
+
+        // 兼容：问题节点已不在最新列表中时，仍然从其后续兄弟中兜底查找回答区域
         if (questionIndex < 0) {
+            let nextSibling = questionEl.nextElementSibling;
+            let checkedCount = 0;
+            while (nextSibling && checkedCount < FIND_ANSWER_MIDDLE_SIBLING_LIMIT) {
+                const headings = nextSibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
+                if (headings.length > 0) {
+                    return nextSibling;
+                }
+                if (nextSibling.tagName && SUB_NAV_HEADING_TAGS.includes(nextSibling.tagName)) {
+                    return nextSibling.parentElement;
+                }
+                nextSibling = nextSibling.nextElementSibling;
+                checkedCount++;
+            }
             return null;
         }
+
+        // 先按父级兄弟链查找回答区域
         if (questionIndex >= allQuestions.length - 1) {
             // 如果是最后一个问题，查找它之后的所有内容
-            return searchInParentSiblings(questionEl, FIND_ANSWER_LAST_SIBLING_LIMIT, null);
+            const answerFromParents = searchInParentSiblings(questionEl, FIND_ANSWER_LAST_SIBLING_LIMIT, null);
+            if (answerFromParents) return answerFromParents;
         } else {
             // 如果不是最后一个问题，查找当前问题和下一个问题之间的内容
             const nextQuestion = allQuestions[questionIndex + 1];
@@ -1649,8 +1685,26 @@
             const stopCondition = (sibling) => {
                 return sibling.contains(nextQuestion) || sibling === nextQuestion;
             };
-            return searchInParentSiblings(questionEl, FIND_ANSWER_MIDDLE_SIBLING_LIMIT, stopCondition);
+            const answerFromParents = searchInParentSiblings(questionEl, FIND_ANSWER_MIDDLE_SIBLING_LIMIT, stopCondition);
+            if (answerFromParents) return answerFromParents;
         }
+
+        // 父级兄弟未找到时，最后再从当前问题节点的后续兄弟元素中兜底查找
+        let nextSibling = questionEl.nextElementSibling;
+        let checkedCount = 0;
+        while (nextSibling && checkedCount < FIND_ANSWER_MIDDLE_SIBLING_LIMIT) {
+            const headings = nextSibling.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
+            if (headings.length > 0) {
+                return nextSibling;
+            }
+            if (nextSibling.tagName && SUB_NAV_HEADING_TAGS.includes(nextSibling.tagName)) {
+                return nextSibling.parentElement;
+            }
+            nextSibling = nextSibling.nextElementSibling;
+            checkedCount++;
+        }
+
+        return null;
     };
     
     // 向上查找父元素的兄弟元素，查找回答区域
@@ -2535,7 +2589,7 @@
 
     // 面板样式集中定义
     const PANEL_STYLES = {
-        panel: `z-index:9999;cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:400px;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);overflow-y:auto;padding:2px;display:flex;flex-direction:column;`,
+        panel: `z-index:9999;cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:430px;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);overflow-y:auto;padding:2px;display:flex;flex-direction:column;`,
         panelCompact: `min-width:120px;`,
         disable: `background:#ec7258;color:white;border-radius:6px;padding:2px 1px;`,
         item: `display:flex;align-items:center;padding:3px 0 3px 3px;border-bottom:1px solid #eee;`,
@@ -3156,6 +3210,11 @@
         return true;
     }
 
+    // 获取书签功能总开关状态（默认 false，即关闭）
+    function isBookmarkFeatureEnabled() {
+        return getGV(ENABLE_BOOKMARK_FEATURE_KEY) === true;
+    }
+
     // 通用判空函数
     function isEmpty(item){
         if(item===null || item===undefined || item.length===0 || item === "null"){
@@ -3190,6 +3249,11 @@
         if (second < 10) second = "0" + second;
         return `【${hour}:${minute}:${second}】`;
     }
+
+    // 弹窗样式常量
+    const POPUP_CONTAINER_STYLE = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center';
+    const POPUP_CONTENT_BASE_STYLE = 'min-width:400px;background:white;border-radius:12px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.3)';
+    const POPUP_TITLE_STYLE = 'font-size:16px;font-weight:bold;color:#222;margin-bottom:10px';
 
     /**
      * 创建弹窗基础结构
@@ -3226,9 +3290,17 @@
 
     /**
      * 显示提示弹窗
+     * @param {string} message 提示内容
+     * @param {string} [title] 可选标题
      */
-    function showMessagePopup(message) {
+    function showMessagePopup(message, title) {
         const { popup, content } = createPopupBase('message-popup', ';max-width:400px');
+
+        // 标题（可选）
+        if (title) {
+            const titleDiv = createTag('div', title, POPUP_TITLE_STYLE);
+            content.appendChild(titleDiv);
+        }
 
         // 消息内容
         const messageDiv = createTag('div', message, 'color:#333;font-size:14px;line-height:1.6;white-space:pre-line;margin-bottom:15px');
@@ -3280,21 +3352,22 @@
         const siteWord = siteToWord[siteId] || siteId;
 
         // 重新读取最新数据，避免并发覆盖
-        let bookmarkData = getGV(bookmarkKey) || [];
-        const existingIndex = bookmarkData.findIndex(item => item.site === siteId);
+        const bookmarkData = getBookmarkData(bookmarkKey) || { sites: [], group: DEFAULT_GROUP_ID };
+        const sites = bookmarkData.sites || [];
+        const existingIndex = sites.findIndex(item => item.site === siteId);
 
         if (existingIndex >= 0) {
-            bookmarkData[existingIndex].url = url;
+            sites[existingIndex].url = url;
         } else {
-            bookmarkData.push({ site: siteId, siteName: siteWord, url: url });
+            sites.push({ site: siteId, siteName: siteWord, url: url });
         }
 
-        setGV(bookmarkKey, bookmarkData);
+        setBookmarkData(bookmarkKey, sites, bookmarkData.group);
 
         // 写入后验证，若数据丢失则重试
         setTimeout(() => {
-            const verifyData = getGV(bookmarkKey) || [];
-            const verified = verifyData.some(item => item.site === siteId && item.url === url);
+            const verifyData = getBookmarkData(bookmarkKey);
+            const verified = verifyData && verifyData.sites && verifyData.sites.some(item => item.site === siteId && item.url === url);
             if (!verified) {
                 console.log(curDate() + `书签: 检测到数据丢失，重试写入 ${siteWord}`);
                 updateBookmarkData(bookmarkKey, siteId, url);
@@ -3451,15 +3524,30 @@
      * 更新按钮显示状态
      */
     function updateButtonVisibility() {
+        // 先读取当前开关配置
         const showToggle = getGV(SHOW_TOGGLE_BUTTON_KEY) !== false; // 默认true（显示）
-        const showBookmark = getGV(SHOW_BOOKMARK_BUTTON_KEY) !== false; // 默认true（显示），同时控制书签和历史按钮
+        // 书签/列表按钮：默认 false（隐藏），只有显式设置为 true 时才显示
+        const showBookmark = getGV(SHOW_BOOKMARK_BUTTON_KEY) === true;
 
-        // 更新隐藏（输入框）按钮
+        // 更新隐藏（输入框）按钮 —— 与书签功能是否启用无关
         if (toggleButton) {
             toggleButton.style.display = showToggle ? 'flex' : 'none';
         }
 
-        // 更新书签按钮
+        // 书签功能整体关闭时，清理书签按钮并退出
+        if (!isBookmarkFeatureEnabled()) {
+            const bookmarkBtnForce = document.getElementById('bookmark-btn');
+            if (bookmarkBtnForce) {
+                bookmarkBtnForce.remove();
+            }
+            const bookmarkViewBtnForce = document.getElementById('bookmark-view-btn');
+            if (bookmarkViewBtnForce) {
+                bookmarkViewBtnForce.remove();
+            }
+            return;
+        }
+
+        // 当书签功能开启时，按用户配置显示/隐藏书签按钮
         const bookmarkBtn = document.getElementById('bookmark-btn');
         if (bookmarkBtn) {
             bookmarkBtn.style.display = showBookmark ? 'flex' : 'none';
@@ -3590,22 +3678,41 @@
         const tab = createTag('div', '按钮显示', 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid transparent;color:#666;font-size:14px;background:#f5f5f5;');
         const tabContent = createTag('div', '', 'display:none;');
         
-        // 读取当前设置（默认true，即显示）
+        // 读取当前设置
+        // 隐藏输入框按钮：默认 true（显示）
         const showToggle = getGV(SHOW_TOGGLE_BUTTON_KEY) !== false;
-        const showBookmark = getGV(SHOW_BOOKMARK_BUTTON_KEY) !== false;
+        // 书签/列表按钮：默认 false（隐藏），只有显式设置为 true 时才显示
+        const showBookmark = getGV(SHOW_BOOKMARK_BUTTON_KEY) === true;
+        // 默认隐藏输入框：默认 false（不隐藏）
+        const defaultHideInput = getGV(DEFAULT_HIDE_INPUT_AREA_KEY) === true;
 
-        // 创建两个开关
+        // 创建三个开关
         const toggleSwitch1 = createToggleSwitch('隐藏输入框的按钮，是否展示', showToggle, (checked) => {
             setGV(SHOW_TOGGLE_BUTTON_KEY, checked);
             updateButtonVisibility();
         });
 
-        const toggleSwitch2 = createToggleSwitch('书签、列表这两个按钮，是否展示', showBookmark, (checked) => {
+        const toggleSwitch2 = createToggleSwitch('此按钮留着，暂无实用', showBookmark, (checked) => {
             setGV(SHOW_BOOKMARK_BUTTON_KEY, checked);
             updateButtonVisibility();
         });
 
-        appendSeveral(tabContent, toggleSwitch1, toggleSwitch2);
+        const toggleSwitch3 = createToggleSwitch('每次打开页面，输入框将默认隐藏', defaultHideInput, (checked) => {
+            setGV(DEFAULT_HIDE_INPUT_AREA_KEY, checked);
+            // 如果开启，立即应用；如果关闭，恢复显示
+            if (checked) {
+                applyDefaultHideInputArea();
+            } else {
+                const aroundInputArea = getNthInputArea();
+                if (aroundInputArea && aroundInputArea.style.display === 'none') {
+                    aroundInputArea.style.display = TOGGLE_STATES.show.display;
+                    isInputAreaHidden = false;
+                    toggleBtnStatus(true);
+                }
+            }
+        });
+
+        appendSeveral(tabContent, toggleSwitch1, toggleSwitch2, toggleSwitch3);
         
         return { tab, tabContent };
     }
@@ -3632,7 +3739,7 @@
         const configContainer = createTag('div', '', 'display:flex;flex-direction:column;gap:12px');
         const inputCss = 'width:80px;padding:6px 10px;border:1px solid #ddd;border-radius:4px;font-size:14px;';
         const itemContainerCss = 'display:flex;align-items:center;padding:10px 0;border-bottom:1px solid #f0f0f0';
-        const labelCss = 'font-size:14px;color:#333;min-width:200px;flex-shrink:0;user-select:none;';
+        const labelCss = 'font-size:14px;color:#333;min-width:220px;flex-shrink:0;user-select:none;';
         const defaultLabelCss = 'font-size:13px;color:#666;margin-left:10px;';
 
         // 导航变量配置
@@ -3856,7 +3963,7 @@
         };
         
         // 关闭按钮
-        const closeBtn = createTag('span', '✕', 'cursor:pointer;font-size:20px;color:#999;padding:5px;position:absolute;top:15px;right:15px');
+        const closeBtn = createTag('span', '✕', 'cursor:pointer;font-size:20px;font-weight:bold;color:#999;padding:5px;position:absolute;top:15px;right:15px');
         closeBtn.onclick = closePopup;
         
         // 点击背景关闭时也刷新面板
@@ -3897,11 +4004,11 @@
 
         // 延迟显示提示，等待其他站点响应后获取实际添加的站点列表
         setTimeout(() => {
-            const bookmarkData = getGV(bookmarkKey) || [];
-            const actualSites = bookmarkData.map(item => item.site);
+            const bookmarkData = getBookmarkData(bookmarkKey);
+            const actualSites = bookmarkData ? (bookmarkData.sites || []).map(item => item.site) : [];
             const siteNames = actualSites.map(s => siteToWord[s] || s).join(', ');
             showMessagePopup(`书签已创建！\n【关联站点】${siteNames}\n【书签名】${questionText}`);
-        }, 500);
+        }, 1500);
     }
 
     /**
@@ -3919,11 +4026,11 @@
         const currentUrl = getUrl();
 
         // 检查是否已存在
-        const existingData = getGV(bookmarkKey);
+        const existingData = getBookmarkData(bookmarkKey);
 
-        if (existingData && existingData.length > 0) {
+        if (existingData && existingData.sites && existingData.sites.length > 0) {
             // 检查是否真的重复：相同site且相同url
-            const isReallyDuplicate = existingData.some(item => item.site === site && item.url === currentUrl);
+            const isReallyDuplicate = existingData.sites.some(item => item.site === site && item.url === currentUrl);
 
             if (isReallyDuplicate) {
                 // 真的重复，提示用户
@@ -3951,21 +4058,17 @@
      * 删除书签
      */
     function removeBookmark(bookmarkKey) {
-        // 从列表中移除
+        // 列表中移除、移除 json
         let keyList = getGV(BOOKMARK_KEY_LIST) || [];
         keyList = keyList.filter(k => k !== bookmarkKey);
         setGV(BOOKMARK_KEY_LIST, keyList);
 
-        // 删除书签数据
         GM_deleteValue(bookmarkKey);
-
         console.log(curDate() + `书签: 已删除 ${bookmarkKey}`);
     }
 
     /**
      * 移动书签在列表中的位置（上移或下移）
-     * @param {string} bookmarkKey - 书签key
-     * @param {string} direction - 'up' 上移 或 'down' 下移
      */
     function moveBookmarkInList(bookmarkKey, direction) {
         let keyList = getGV(BOOKMARK_KEY_LIST) || [];
@@ -4016,8 +4119,8 @@
      */
     function updateBookmarkQuestion(oldBookmarkKey, newQuestion) {
         // 获取旧书签数据
-        const oldData = getGV(oldBookmarkKey);
-        if (!oldData || oldData.length === 0) {
+        const oldData = getBookmarkData(oldBookmarkKey);
+        if (!oldData || !oldData.sites || oldData.sites.length === 0) {
             console.log(curDate() + `书签: 未找到旧书签数据 ${oldBookmarkKey}`);
             return false;
         }
@@ -4031,8 +4134,8 @@
         }
 
         // 检查新key是否已存在
-        const existingData = getGV(newBookmarkKey);
-        if (existingData && existingData.length > 0) {
+        const existingData = getBookmarkData(newBookmarkKey);
+        if (existingData && existingData.sites && existingData.sites.length > 0) {
             showMessagePopup('该提问内容已存在，无法更新');
             return false;
         }
@@ -4045,7 +4148,7 @@
         removeBookmark(oldBookmarkKey);
 
         // 创建新书签并恢复数据
-        setGV(newBookmarkKey, oldData);
+        setBookmarkData(newBookmarkKey, oldData.sites, oldData.group);
         
         // 在相同位置插入新书签，保持顺序不变
         if (oldIndex !== -1) {
@@ -4056,24 +4159,169 @@
             // 如果找不到旧位置，则添加到末尾（兜底逻辑）
             addBookmarkKeyToList(newBookmarkKey);
         }
-
         console.log(curDate() + `书签: 已更新 ${oldBookmarkKey} -> ${newBookmarkKey}`);
+        return true;
+    }
+
+    /**
+     * 分组管理函数
+     */
+    // 获取分组列表（对象数组：{id, name}）
+    function getBookmarkGroups() {
+        let groups = getGV(BOOKMARK_GROUP_LIST) || [];
+        // 确保默认分组存在
+        const hasDefault = groups.some(g => g.id === DEFAULT_GROUP_ID);
+        if (!hasDefault) {
+            groups.unshift({ id: DEFAULT_GROUP_ID, name: DEFAULT_GROUP_NAME });
+            setGV(BOOKMARK_GROUP_LIST, groups);
+        }
+        return groups;
+    }
+
+    // 根据代号获取分组名称
+    function getGroupNameById(groupId) {
+        const groups = getBookmarkGroups();
+        const group = groups.find(g => g.id === groupId);
+        return group ? group.name : DEFAULT_GROUP_NAME;
+    }
+
+    // 根据名称获取分组代号
+    function getGroupIdByName(groupName) {
+        if (groupName === '全部') return null;
+        const groups = getBookmarkGroups();
+        const group = groups.find(g => g.name === groupName);
+        return group ? group.id : DEFAULT_GROUP_ID;
+    }
+
+    // 分组背景色数组（用于区分不同分组）
+    const GROUP_BACKGROUND_COLORS = [
+        '#f5f5f5', // 默认灰色
+        '#e3f2fd', // 浅蓝色
+        '#f3e5f5', // 浅紫色
+        '#e8f5e9', // 浅绿色
+        '#fff3e0', // 浅橙色
+        '#fce4ec', // 浅粉色
+        '#e0f2f1', // 浅青色
+        '#fff9c4', // 浅黄色
+        '#f1f8e9', // 浅黄绿色
+        '#ede7f6', // 浅蓝紫色
+        '#e8eaf6'  // 浅靛蓝色
+    ];
+
+    // 根据分组ID获取对应的背景色
+    function getGroupBackgroundColor(groupId) {
+        if (groupId === null || groupId === undefined) {
+            return '#f5f5f5'; // 默认灰色
+        }
+        const index = Math.abs(groupId) % GROUP_BACKGROUND_COLORS.length;
+        return GROUP_BACKGROUND_COLORS[index];
+    }
+
+    // 添加分组
+    function addBookmarkGroup(groupName) {
+        if (!groupName || !groupName.trim()) {
+            return false;
+        }
+        const trimmedName = groupName.trim();
+        const groups = getBookmarkGroups();
+        // 检查名称是否已存在
+        if (groups.some(g => g.name === trimmedName)) {
+            return false; // 已存在
+        }
+        // 计算新的代号（自增）
+        const maxId = groups.length > 0 ? Math.max(...groups.map(g => g.id)) : DEFAULT_GROUP_ID;
+        const newId = maxId + 1;
+        groups.push({ id: newId, name: trimmedName });
+        setGV(BOOKMARK_GROUP_LIST, groups);
+        return true;
+    }
+
+    // 删除分组
+    function deleteBookmarkGroup(groupName) {
+        if (groupName === DEFAULT_GROUP_NAME) {
+            return false; // 不能删除默认分组
+        }
+        const groups = getBookmarkGroups();
+        const groupToDelete = groups.find(g => g.name === groupName);
+        if (!groupToDelete) {
+            return false;
+        }
+        const groupId = groupToDelete.id;
+        // 从列表中删除
+        const index = groups.findIndex(g => g.id === groupId);
+        if (index === -1) {
+            return false;
+        }
+        groups.splice(index, 1);
+        setGV(BOOKMARK_GROUP_LIST, groups);
+        
+        // 将该分组下的所有书签移到默认分组
+        const keyList = getGV(BOOKMARK_KEY_LIST) || [];
+        keyList.forEach(key => {
+            const data = getBookmarkData(key);
+            if (data && data.group === groupId) {
+                setBookmarkData(key, data.sites, DEFAULT_GROUP_ID);
+            }
+        });
+        return true;
+    }
+
+    /**
+     * 获取书签数据
+     */
+    function getBookmarkData(bookmarkKey) {
+        const data = getGV(bookmarkKey);
+        if (!data) return null;
+        return {
+            sites: data.sites || [],
+            group: (typeof data.group === 'number') ? data.group : DEFAULT_GROUP_ID
+        };
+    }
+
+    /**
+     * 设置书签数据（group使用代号）
+     */
+    function setBookmarkData(bookmarkKey, sites, group) {
+        setGV(bookmarkKey, {
+            sites: sites || [],
+            group: (typeof group === 'number') ? group : DEFAULT_GROUP_ID
+        });
+    }
+
+    /**
+     * 设置书签分组（group使用代号）
+     */
+    function setBookmarkGroup(bookmarkKey, groupId) {
+        const data = getBookmarkData(bookmarkKey);
+        if (!data) return false;
+        setBookmarkData(bookmarkKey, data.sites, groupId || DEFAULT_GROUP_ID);
         return true;
     }
 
     /**
      * 获取所有书签数据
      */
-    function getAllBookmarks() {
+    function getAllBookmarks(filterGroupId = null) {
         const keyList = getGV(BOOKMARK_KEY_LIST) || [];
         const bookmarks = [];
         // 倒序遍历，让最新的在上面
         for (let i = keyList.length - 1; i >= 0; i--) {
             const key = keyList[i];
-            const data = getGV(key);
-            if (data && data.length > 0) {
+            const data = getBookmarkData(key);
+            if (data && data.sites && data.sites.length > 0) {
+                // 如果指定了分组过滤，则只返回该分组的书签（使用代号比较）
+                if (filterGroupId !== null && data.group !== filterGroupId) {
+                    continue;
+                }
                 const question = key.replace(BOOKMARK_PREFIX, '');
-                bookmarks.push({ question, sites: data });
+                // 返回时转换为名称显示
+                bookmarks.push({ 
+                    question, 
+                    sites: data.sites,
+                    group: getGroupNameById(data.group || DEFAULT_GROUP_ID),
+                    groupId: data.group || DEFAULT_GROUP_ID, // 同时保存代号用于操作
+                    bookmarkKey: key
+                });
             }
         }
         return bookmarks;
@@ -4124,21 +4372,14 @@
     }
 
     /**
-     * 显示书签列表弹窗
+     * 渲染书签列表内容（表格部分）
+     * @param {HTMLElement} content - 内容容器
+     * @param {number|null} currentGroupId - 当前选中的分组代号
+     * @param {Array} groups - 分组列表
      */
-    function showBookmarkListPopup() {
-        const { popup, content } = createPopupBase('bookmark-popup', ';max-width:80%;max-height:80%;overflow:auto');
-
-        const bookmarks = getAllBookmarks();
-
-        // 标题栏
-        const header = createTag('div', "", 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee');
-        setInnerHTML(header, '<h3 style="margin:0;color:#333">📚 同步书签列表</h3>');
-
-        const closeBtn = createTag('span', '✕', 'cursor:pointer;font-size:20px;color:#999;padding:5px');
-        closeBtn.onclick = () => popup.remove();
-        header.appendChild(closeBtn);
-        content.appendChild(header);
+    function renderBookmarkListContent(content, currentGroupId, groups) {
+        // 获取书签（根据选中的分组过滤，使用代号）
+        const bookmarks = getAllBookmarks(currentGroupId);
 
         if (bookmarks.length === 0) {
             const emptyTip = createTag('p', '', 'color:#666;text-align:center;padding:20px');
@@ -4150,7 +4391,7 @@
 
             // 表头
             const thead = createTag('thead', "", "");
-            setInnerHTML(thead, '<tr style="background:#f5f5f5"><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">提问</th><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">站点链接</th><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">操作</th><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">排序</th></tr>');
+            setInnerHTML(thead, '<tr style="background:#f5f5f5"><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">分组</th><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">提问</th><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">站点链接</th><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">操作</th><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">排序</th></tr>');
             table.appendChild(thead);
 
             // 表体
@@ -4158,7 +4399,37 @@
             bookmarks.forEach((bookmark, index) => {
                 const tr = createTag('tr', "", 'border-bottom:1px solid #eee');
 
-                const bookmarkKey = BOOKMARK_PREFIX + bookmark.question;
+                const bookmarkKey = bookmark.bookmarkKey || (BOOKMARK_PREFIX + bookmark.question);
+                const bookmarkGroupName = bookmark.group || DEFAULT_GROUP_NAME;
+                const bookmarkGroupId = bookmark.groupId !== undefined ? bookmark.groupId : getGroupIdByName(bookmarkGroupName);
+
+                // 分组列（仅下拉框应用对应分组的背景色）
+                const groupBgColor = getGroupBackgroundColor(bookmarkGroupId);
+                const tdGroup = createTag('td', "", 'padding:10px;vertical-align:top;white-space:nowrap');
+                const groupSelect = document.createElement('select');
+                groupSelect.style.cssText = `padding:4px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;cursor:pointer;min-width:50px;background:${groupBgColor}`;
+                
+                // 添加所有分组选项（显示名称，但value存储代号）
+                groups.forEach(group => {
+                    const option = document.createElement('option');
+                    option.value = group.id;
+                    option.textContent = group.name;
+                    groupSelect.appendChild(option);
+                });
+
+                // 选中当前分组（必须在 options 都加完之后再设，使用代号）
+                groupSelect.value = bookmarkGroupId;
+                
+                groupSelect.addEventListener('change', (e) => {
+                    const newGroupId = parseInt(e.target.value);
+                    if (setBookmarkGroup(bookmarkKey, newGroupId)) {
+                        // 保持当前Tab选中状态
+                        showBookmarkListPopup(currentGroupId);
+                    }
+                });
+                
+                tdGroup.appendChild(groupSelect);
+                tr.appendChild(tdGroup);
 
                 // 提问列
                 const tdQuestion = createTag('td', "", 'padding:10px;max-width:300px;word-break:break-all;vertical-align:top;position:relative');
@@ -4173,10 +4444,8 @@
                 questionContainer.appendChild(questionText);
 
                 // 编辑按钮
-                const editBtn = createTag('button', '✏️', 'padding:4px 8px;background:#f0f0f0;border:1px solid #ddd;border-radius:4px;cursor:pointer;font-size:12px;flex-shrink:0');
+                const editBtn = createTag('button', '✏️', 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;flex-shrink:0;color:#666');
                 editBtn.title = '编辑提问内容';
-                editBtn.addEventListener('mouseenter', () => editBtn.style.background = '#e0e0e0');
-                editBtn.addEventListener('mouseleave', () => editBtn.style.background = '#f0f0f0');
                 editBtn.addEventListener('click', () => {
                     handleEditBookmarkQuestion(bookmark.question, bookmarkKey, questionText, editBtn, questionContainer);
                 });
@@ -4188,7 +4457,7 @@
                 // 站点列
                 const tdSites = createTag('td', "", 'padding:10px;vertical-align:top');
                 bookmark.sites.forEach(s => {
-                    const link = createTag('a', s.siteName, 'color:#667eea;text-decoration:none;margin-right:10px;cursor:pointer');
+                    const link = createTag('a', s.siteName, 'color:#3b4cc8;text-decoration:none;margin-right:10px;cursor:pointer');
                     link.href = s.url;
                     link.addEventListener('click', (e) => {
                         e.preventDefault();
@@ -4202,21 +4471,19 @@
                 const tdAction = createTag('td', "", 'padding:10px;vertical-align:top;white-space:nowrap');
 
                 // 一键跳转按钮
-                const jumpBtn = createTag('button', '一键跳转', 'padding:6px 12px;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;margin-right:8px');
-                jumpBtn.title = '这几家的网页在已打开任意页面的情况下，点击后将都自动跳转到该条对话页面';
+                const jumpBtn = createTag('button', '一键跳转', 'padding:6px 12px;background:#f5f5f5;color:#000;border:1px solid #ddd;border-radius:4px;cursor:pointer;font-size:12px;margin-right:8px');
+                jumpBtn.title = '前提是已打开各家网页（任意页面皆可）';
                 jumpBtn.addEventListener('click', () => sendJumpSignalToAll(bookmark.sites));
                 jumpBtn.addEventListener('mouseenter', () => jumpBtn.style.opacity = '0.85');
                 jumpBtn.addEventListener('mouseleave', () => jumpBtn.style.opacity = '1');
 
                 // 删除按钮
-                const delBtn = createTag('button', '✕', 'padding:6px 10px;background:#ff6b6b;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px;font-weight:bold');
+                const delBtn = createTag('button', '✕', 'padding:6px 10px;background:transparent;border:none;cursor:pointer;font-size:18px;color:#ff6b6b');
                 delBtn.title = '删除此书签，无法恢复';
                 delBtn.addEventListener('click', () => {
                     removeBookmark(bookmarkKey);
                     showBookmarkListPopup();
                 });
-                delBtn.addEventListener('mouseenter', () => delBtn.style.background = '#ee5a5a');
-                delBtn.addEventListener('mouseleave', () => delBtn.style.background = '#ff6b6b');
                 appendSeveral(tdAction, jumpBtn, delBtn);
 
                 tr.appendChild(tdAction);
@@ -4225,7 +4492,7 @@
                 const tdSort = createTag('td', "", 'padding:10px;vertical-align:top;white-space:nowrap;text-align:center');
 
                 // 置顶按钮（显示中最上面，存储中移到最后）
-                const topBtn = createTag('button', '⬆', 'padding:4px 8px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px;margin-right:4px');
+                const topBtn = createTag('button', '⬆', 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;margin-right:4px;color:#3498db');
                 topBtn.title = '置顶';
                 // 显示中 index=0 对应存储列表的最后一个，如果已经在最后则不能置顶
                 const keyList = getGV(BOOKMARK_KEY_LIST) || [];
@@ -4237,15 +4504,13 @@
                 } else {
                     topBtn.addEventListener('click', () => {
                         if (moveBookmarkInList(bookmarkKey, 'bottom')) {
-                            showBookmarkListPopup();
+                            showBookmarkListPopup(currentGroupId);
                         }
                     });
-                    topBtn.addEventListener('mouseenter', () => topBtn.style.background = '#2980b9');
-                    topBtn.addEventListener('mouseleave', () => topBtn.style.background = '#3498db');
                 }
 
                 // 上移按钮（显示中向上，存储中向下）
-                const upBtn = createTag('button', '↑', 'padding:4px 8px;background:#95a5a6;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px;margin-right:4px');
+                const upBtn = createTag('button', '↑', 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;margin-right:4px;color:#95a5a6');
                 upBtn.title = '上移';
                 const canMoveUp = index > 0;
                 if (!canMoveUp) {
@@ -4255,15 +4520,13 @@
                     upBtn.addEventListener('click', () => {
                         // 显示中向上 = 存储中向下
                         if (moveBookmarkInList(bookmarkKey, 'down')) {
-                            showBookmarkListPopup();
+                            showBookmarkListPopup(currentGroupId);
                         }
                     });
-                    upBtn.addEventListener('mouseenter', () => upBtn.style.background = '#7f8c8d');
-                    upBtn.addEventListener('mouseleave', () => upBtn.style.background = '#95a5a6');
                 }
 
                 // 下移按钮（显示中向下，存储中向上）
-                const downBtn = createTag('button', '↓', 'padding:4px 8px;background:#95a5a6;color:white;border:none;border-radius:4px;cursor:pointer;font-size:14px');
+                const downBtn = createTag('button', '↓', 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;color:#95a5a6');
                 downBtn.title = '下移';
                 const canMoveDown = index < bookmarks.length - 1;
                 if (!canMoveDown) {
@@ -4273,11 +4536,9 @@
                     downBtn.addEventListener('click', () => {
                         // 显示中向下 = 存储中向上
                         if (moveBookmarkInList(bookmarkKey, 'up')) {
-                            showBookmarkListPopup();
+                            showBookmarkListPopup(currentGroupId);
                         }
                     });
-                    downBtn.addEventListener('mouseenter', () => downBtn.style.background = '#7f8c8d');
-                    downBtn.addEventListener('mouseleave', () => downBtn.style.background = '#95a5a6');
                 }
 
                 appendSeveral(tdSort, topBtn, upBtn, downBtn);
@@ -4290,94 +4551,178 @@
         }
     }
 
-    // 创建可缩略的书签按钮（通用函数）
-    function createCollapsibleBookmarkButton(config) {
-        const { id, text, title, style, storageKey, hoverBg, onClick } = config;
+    /**
+     * 显示书签列表弹窗
+     * @param {number|null} selectedGroupId - 选中的分组代号，null表示"全部"
+     */
+    function showBookmarkListPopup(selectedGroupId = null) {
+        // 保存弹窗尺寸的key（用于跨弹窗生命周期保存，关闭弹窗后重新打开时使用）
+        const POPUP_HEIGHT_KEY = '__bookmark_popup_height__';
+        const POPUP_WIDTH_KEY = '__bookmark_popup_width__';
+        
+        // 检查弹窗是否已存在
+        const existingPopup = document.getElementById('bookmark-popup');
+        let popup, content;
+        
+        if (existingPopup) {
+            // 弹窗已存在，复用它（避免闪烁）
+            popup = existingPopup;
+            content = popup.firstElementChild; // content是popup的第一个子元素
+            // 清空内容，准备重新填充
+            if (content) {
+                // 保存当前尺寸（如果已设置），如果没有则从window读取
+                let currentHeight = content.style.height;
+                let currentWidth = content.style.width;
+                if (!currentHeight && window[POPUP_HEIGHT_KEY]) {
+                    currentHeight = window[POPUP_HEIGHT_KEY] + 'px';
+                }
+                if (!currentWidth && window[POPUP_WIDTH_KEY]) {
+                    currentWidth = window[POPUP_WIDTH_KEY] + 'px';
+                }
+                content.replaceChildren(); // 使用replaceChildren代替innerHTML
+                // 立即恢复尺寸样式（避免闪烁）
+                if (currentHeight) content.style.height = currentHeight;
+                if (currentWidth) content.style.width = currentWidth;
+                if (currentHeight) content.style.overflowY = 'auto';
+            }
+        } else {
+            // 首次创建弹窗
+            const result = createPopupBase('bookmark-popup', ';max-width:80%;max-height:80%;overflow:auto');
+            popup = result.popup;
+            content = result.content;
+        }
+        
+        // 判断是否是首次打开（显示全部）
+        const isFirstOpen = selectedGroupId === null;
+        
+        // 读取保存的尺寸：优先从content元素读取，如果没有则从window读取
+        let savedHeight = content && content.style.height ? parseFloat(content.style.height) : window[POPUP_HEIGHT_KEY];
+        let savedWidth = content && content.style.width ? parseFloat(content.style.width) : window[POPUP_WIDTH_KEY];
+
+        // 标题栏
+        const header = createTag('div', "", 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee');
+        setInnerHTML(header, '<h3 style="margin:0;color:#333">📚 书签列表</h3>');
+
+        const closeBtn = createTag('span', '✕', 'cursor:pointer;font-size:20px;color:#999;padding:5px');
+        closeBtn.onclick = () => {
+            delete window[POPUP_HEIGHT_KEY]; // 清除保存的高度
+            delete window[POPUP_WIDTH_KEY]; // 清除保存的宽度
+            if (popup && popup.parentNode) {
+                popup.remove();
+            }
+        };
+        header.appendChild(closeBtn);
+        content.appendChild(header);
+
+        // 分组管理区域
+        const groups = getBookmarkGroups();
+        const currentGroupId = selectedGroupId;
+        
+        // Tab切换区域
+        const tabContainer = createTag('div', "", 'display:flex;align-items:center;gap:8px;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee;flex-wrap:wrap');
+        
+        // 全部Tab
+        const isAllSelected = currentGroupId === null;
+        const allTab = createTag('div', '全部', `padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:bold;background:#f0f0f0;color:#333;border:${isAllSelected ? '1px solid #667eea' : '1px solid transparent'}`);
+        allTab.addEventListener('click', () => showBookmarkListPopup(null));
+        tabContainer.appendChild(allTab);
+        
+        // 各分组Tab
+        groups.forEach(group => {
+            const isSelected = currentGroupId === group.id;
+            const groupBgColor = getGroupBackgroundColor(group.id);
+            const groupTab = createTag('div', group.name, `padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;background:${groupBgColor};color:#333;border:${isSelected ? '1px solid #667eea' : '1px solid transparent'}`);
+            groupTab.addEventListener('click', () => showBookmarkListPopup(group.id));
+            tabContainer.appendChild(groupTab);
+        });
+        
+        // 添加分组按钮
+        const addGroupBtn = createTag('button', '+ 添加分组', 'padding:6px 12px;background:#4caf50;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px');
+        addGroupBtn.title = '添加新分组';
+        addGroupBtn.addEventListener('click', () => {
+            const groupName = prompt('请输入分组名称：');
+            if (groupName && groupName.trim()) {
+                if (addBookmarkGroup(groupName.trim())) {
+                    showBookmarkListPopup(currentGroupId);
+                } else {
+                    showMessagePopup('分组名称已存在或无效');
+                }
+            }
+        });
+        addGroupBtn.addEventListener('mouseenter', () => addGroupBtn.style.opacity = '0.85');
+        addGroupBtn.addEventListener('mouseleave', () => addGroupBtn.style.opacity = '1');
+        tabContainer.appendChild(addGroupBtn);
+        
+        content.appendChild(tabContainer);
+
+        // 渲染书签列表
+        renderBookmarkListContent(content, currentGroupId, groups);
+        
+        // 处理弹窗尺寸：首次打开时记录高度和宽度，切换tab时保持尺寸不变
+        setTimeout(() => {
+            if (isFirstOpen && savedHeight === undefined) {
+                // 首次打开（显示全部），记录初始高度和宽度
+                const rect = content.getBoundingClientRect();
+                window[POPUP_HEIGHT_KEY] = rect.height;
+                window[POPUP_WIDTH_KEY] = rect.width;
+            } else if (!isFirstOpen && savedHeight !== undefined) {
+                // 切换tab时，使用保存的高度和宽度
+                content.style.height = savedHeight + 'px';
+                content.style.overflowY = 'auto';
+                if (savedWidth !== undefined) {
+                    content.style.width = savedWidth + 'px';
+                }
+            }
+        }, 10);
+    }
+
+    // 创建书签按钮（通用函数）
+    function createBookmarkButton(config) {
+        const { id, text, title, bottom, background, onClick } = config;
         const btn = document.createElement('div');
         btn.id = id;
         setInnerHTML(btn, text);
         btn.title = title;
-        btn.style.cssText = style;
-
-        // 缩略按钮到边缘
-        const collapseButton = () => {
-            btn.style.width = '3px';
-            btn.style.overflow = 'hidden';
-            btn.style.textIndent = '-9999px';
-        };
-
-        // 展开按钮
-        const expandButton = () => {
-            btn.style.width = '50px';
-            btn.style.overflow = 'visible';
-            btn.style.textIndent = '0';
-        };
-
-        // 检查是否已点击过，第一次完整显示，之后根据记录决定
-        let hasClicked = getGV(storageKey) === true;
-        if (hasClicked) {
-            collapseButton();
-        } else {
-            expandButton();
-        }
-
-        btn.addEventListener('mouseenter', () => {
-            expandButton();
-            btn.style.background = hoverBg;
-        });
-
-        btn.addEventListener('mouseleave', () => {
-            if (!hasClicked) {
-                setGV(storageKey, true);
-                hasClicked = true;
-            }
-            collapseButton();
-        });
-
-        btn.addEventListener('click', () => {
-            if (!hasClicked) {
-                setGV(storageKey, true);
-                hasClicked = true;
-            }
+        // 组合公共样式和动态样式
+        btn.style.cssText = BOOKMARK_BTN_BASE_STYLE + `;bottom:${bottom};background:${background}`;
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
             onClick();
-            setTimeout(() => {
-                collapseButton();
-            }, 300);
         });
-
         document.body.appendChild(btn);
     }
 
-    // 创建书签按钮
-    function createBookmarkButton() {
-        createCollapsibleBookmarkButton({
+    // 创建加书签按钮
+    function createBookmarkAddButton() {
+        createBookmarkButton({
             id: 'bookmark-btn',
-            text: '加书签',
-            title: '本地一键保存多选提问的各家页面网址，后续方便查找',
-            style: BOOKMARK_BTN_STYLE,
-            storageKey: BOOKMARK_BTN_CLICKED,
-            hoverBg: 'linear-gradient(135deg, #764ba2 0%, #667eea 100%)',
+            text: '书签',
+            title: '多家同步提问后的各页面，可一键加书签，方便回看',
+            bottom: '10px',
+            background: 'linear-gradient(135deg,#11998e 0%,#38ef7d 100%)',
             onClick: onBookmarkButtonClick
         });
     }
 
     // 创建查看书签按钮
     function createBookmarkViewButton() {
-        createCollapsibleBookmarkButton({
+        createBookmarkButton({
             id: 'bookmark-view-btn',
             text: '列表',
             title: '书签列表',
-            style: BOOKMARK_VIEW_BTN_STYLE,
-            storageKey: BOOKMARK_VIEW_BTN_CLICKED,
-            hoverBg: 'linear-gradient(135deg, #38ef7d 0%, #11998e 100%)',
+            bottom: '45px',
+            background: 'linear-gradient(135deg,#667eea 0%,#764ba2 100%)',
             onClick: showBookmarkListPopup
         });
     }
 
     // 初始化书签按钮
     setTimeout(() => {
-        createBookmarkButton();
-        createBookmarkViewButton();
+        if (isBookmarkFeatureEnabled()) {
+            createBookmarkAddButton();
+            createBookmarkViewButton();
+        }
         updateButtonVisibility(); // 根据设置更新按钮显示状态
     }, 1000);
 
