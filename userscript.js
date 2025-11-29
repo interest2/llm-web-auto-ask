@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      4.1.0
+// @version      4.1.1
 // @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -35,8 +35,9 @@
     console.log("ai script, start");
 
     const STUDIO_CONTENT_MAX_WIDTH = "800px"; // ai studio 内容最大宽度
+    const GEMINI_MAX_WIDTH = "850px"; // gemini 内容最大宽度
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
-    const version = "4.1.0";
+    const version = "4.1.1";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -874,13 +875,12 @@
 
         // 单独适配：gemini的表格宽度、studio的内容宽度
         if(site === GEMINI){
-            const EXPAND_MAX_WIDTH = "850px";
             const ADAPTIVE_WIDTH = window.outerWidth * 0.8 + "px";
 
             let askContent = document.querySelectorAll('.conversation-container');
             if(askContent.length > 0){
                 askContent.forEach((element, index) => {
-                    element.style.maxWidth = EXPAND_MAX_WIDTH;
+                    element.style.maxWidth = GEMINI_MAX_WIDTH;
                     element.style.width = ADAPTIVE_WIDTH;
                 });
             }
@@ -888,14 +888,14 @@
             let tables = document.querySelectorAll('.horizontal-scroll-wrapper');
             if(tables.length > 0){
                 tables.forEach((element, index) => {
-                    element.style.maxWidth = EXPAND_MAX_WIDTH;
+                    element.style.maxWidth = GEMINI_MAX_WIDTH;
                     element.style.width = ADAPTIVE_WIDTH;
                 });
             }
             let graphs = document.querySelectorAll('.code-block');
             if(graphs.length > 0){
                 graphs.forEach((element, index) => {
-                    element.style.maxWidth = EXPAND_MAX_WIDTH;
+                    element.style.maxWidth = GEMINI_MAX_WIDTH;
                     element.style.width = ADAPTIVE_WIDTH;
                 });
             }
@@ -1464,6 +1464,7 @@
     let clickedTarget = null, clickLockUntil = 0, scrollDebounceTimer;
     let currentSubNavQuestionIndex = -1; // 当前显示的副目录对应的主目录索引
     let preservedNavTextsUrl = null; // 保存保留文本时的 URL
+    let currentNavBarUrl = null; // 当前导航栏对应的 URL，用于检测 URL 变化
     let currentSubNavLevel = 4; // 当前副目录显示的层级（默认 h4）
     let currentSubNavHeadings = []; // 当前副目录的所有标题数据（未过滤）
     let subNavPollInterval = null; // 副目录轮询定时器
@@ -2614,18 +2615,19 @@
         if(isEmpty(quesList)) {
             navBar.replaceChildren();
             navBar.style.visibility = navMiniButton.style.visibility = "hidden";
+            currentNavBarUrl = null; // 清空时也重置 URL 跟踪
             updateNavCount(); // 更新条数显示
             return;
         }
 
         const thisQuestions = Array.from(quesList);
+        const currentUrl = getUrl();
+        // 检查 URL 是否变化（使用 currentNavBarUrl 来检测，即使 preservedNavTextsUrl 为 null 也能检测到）
+        const urlChanged = currentNavBarUrl !== null && currentNavBarUrl !== currentUrl;
+        
         if(navQuestions
             && thisQuestions.length === navQuestions.length
             && normalizeQuestionText(thisQuestions[0].textContent) === normalizeQuestionText(navQuestions[0].textContent)) {
-
-            // 检查 URL 是否变化
-            const currentUrl = getUrl();
-            const urlChanged = preservedNavTextsUrl !== null && preservedNavTextsUrl !== currentUrl;
 
             // 非 STUDIO 站点保持原有逻辑，直接返回（除非 URL 变化）
             if(site !== STUDIO) {
@@ -2653,6 +2655,9 @@
         navLinks = [];
         elToLink.clear();
         if(navIO) try { navIO.disconnect(); } catch(e) {}
+
+        // 更新当前导航栏对应的 URL
+        currentNavBarUrl = currentUrl;
 
         navBar.appendChild(createTitle());
         navQuestions = thisQuestions;
