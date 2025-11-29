@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      4.0.3
+// @version      4.1.0
 // @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -17,6 +17,7 @@
 // @match        https://aistudio.google.com/*
 // @match        https://claude.ai/*
 // @match        https://grok.com/*
+// @noframes
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
@@ -31,19 +32,11 @@
 
 (function () {
     'use strict';
-    const FLAG = '__MY_SCRIPT_ALREADY_RUN__';
-    if (window[FLAG]) {
-        console.log('Already running. Skipped.');
-        return;
-    }
-    window[FLAG] = true;
-
     console.log("ai script, start");
 
     const STUDIO_CONTENT_MAX_WIDTH = "800px"; // ai studio 内容最大宽度
-
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
-    const version = "4.0.3";
+    const version = "4.1.0";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -70,9 +63,6 @@
 
     // 默认不启用的站点列表，移除元素可启用对应站点
     const DISABLE_SITES = [];
-
-    // 启用 副目录滚动到上一个元素的站点列表
-    const ENABLE_SCROLL_TO_PREV_ELEMENT_SITES = [CLAUDE];
 
     // 输入框类型分类
     const inputAreaTypes = {
@@ -149,7 +139,7 @@
         [TONGYI]: ["https://www.qianwen.com/"],
         [CHATGPT]: ["https://chatgpt.com/"],
         [DOUBAO]: ["https://www.doubao.com/chat"],
-        [YUANBAO]: ["https://yuanbao.tencent.com"],
+        [YUANBAO]: ["https://yuanbao.tencent.com/"],
 
         [ZCHAT]: ["https://chat.zchat.tech/"],
         [GEMINI]: ["https://gemini.google.com/app"],
@@ -251,10 +241,13 @@
         return [];
     };
 
-    // 标准化问题文本：移除特定站点的前缀
+    const INVISIBLE_EDGE_CHARS_REGEX = /^[\u200B-\u200D\uFEFF]+|[\u200B-\u200D\uFEFF]+$/g;
+
+    // 标准化问题文本：移除头尾不可见字符 + 特定站点前缀
     const normalizeQuestionText = (text) => {
         if (!text) return '';
-        const trimmedText = text.trim();
+        const cleanedText = text.replace(INVISIBLE_EDGE_CHARS_REGEX, '');
+        const trimmedText = cleanedText.trim();
         const removeWord = 'User';
         if (site === STUDIO && trimmedText.startsWith(removeWord)) {
             return trimmedText.substring(removeWord.length).trim();
@@ -294,10 +287,12 @@
 
     // 同步书签相关常量
     const BOOKMARK_PREFIX = "bookmark-";           // 书签存储key前缀
+    const BOOKMARK_ID_COUNTER = "bookmarkIdCounter"; // 书签ID计数器
     const CURRENT_BOOKMARK_KEY = "currentBookmarkKey"; // 当前书签key
     const BOOKMARK_KEY_LIST = "bookmarkKeyList";   // 书签key列表
     const BOOKMARK_DELETE_CONFIRMED = "bookmarkDeleteConfirmed"; // 是否已首次确认删除
     const BOOKMARK_GROUP_LIST = "bookmarkGroupList"; // 分组列表
+    const BOOKMARK_LAST_SELECTED_GROUP = "bookmarkLastSelectedGroup"; // 上次选中的分组ID
     const DEFAULT_GROUP_NAME = "默认"; // 默认分组名称
     const DEFAULT_GROUP_ID = 0; // 默认分组代号
     // 书签按钮公共样式（不包含 bottom 和 background）
@@ -879,8 +874,17 @@
 
         // 单独适配：gemini的表格宽度、studio的内容宽度
         if(site === GEMINI){
-            const EXPAND_MAX_WIDTH = "800px";
+            const EXPAND_MAX_WIDTH = "850px";
             const ADAPTIVE_WIDTH = window.outerWidth * 0.8 + "px";
+
+            let askContent = document.querySelectorAll('.conversation-container');
+            if(askContent.length > 0){
+                askContent.forEach((element, index) => {
+                    element.style.maxWidth = EXPAND_MAX_WIDTH;
+                    element.style.width = ADAPTIVE_WIDTH;
+                });
+            }
+
             let tables = document.querySelectorAll('.horizontal-scroll-wrapper');
             if(tables.length > 0){
                 tables.forEach((element, index) => {
@@ -1079,6 +1083,13 @@
         if (!shouldHide) {
             return;
         }
+        
+        // 如果是新对话（问题列表为空），则不隐藏输入框
+        const questions = getQuestionList();
+        if (questions.length === 0) {
+            return;
+        }
+
         
         const aroundInputArea = getNthInputArea();
         if (aroundInputArea && aroundInputArea.style.display !== 'none') {
@@ -1452,10 +1463,12 @@
     let navQuestions, navLinks = [], navIO, elToLink = new Map();
     let clickedTarget = null, clickLockUntil = 0, scrollDebounceTimer;
     let currentSubNavQuestionIndex = -1; // 当前显示的副目录对应的主目录索引
+    let preservedNavTextsUrl = null; // 保存保留文本时的 URL
     let currentSubNavLevel = 4; // 当前副目录显示的层级（默认 h4）
     let currentSubNavHeadings = []; // 当前副目录的所有标题数据（未过滤）
     let subNavPollInterval = null; // 副目录轮询定时器
     let isSubNavLevelManuallySet = false; // 用户是否手动选择了层级
+    let h1Count = 0; // h1标题的数量
     let navCountText = null; // 主目录条数显示元素
 
     // 从localStorage读取最小化状态，默认为false
@@ -1754,7 +1767,7 @@
             // 检查是否是 emoji 开头，且后面紧跟数字（可能含空格）
             if (/^\p{Emoji}\s*[0-9]/u.test(normalized)) {
                 // emoji 后面是数字，只移除 emoji 和空格，保留数字
-                normalized = normalized.replace(/^\p{Emoji}+\s*/u, '');
+                normalized = normalized.substring(2);
             } else if (/^\p{Emoji}/u.test(normalized)) {
                 // emoji 后面不是数字，安全移除 emoji
                 // 再次确认第一个字符不是数字（双重检查，防止误识别）
@@ -1836,7 +1849,12 @@
         items.forEach(item => item.remove());
 
         // 根据当前选择的层级过滤标题
-        const filteredHeadings = currentSubNavHeadings.filter(h => h.level <= currentSubNavLevel);
+        let filteredHeadings = currentSubNavHeadings.filter(h => h.level <= currentSubNavLevel);
+        
+        // 如果h1只有1个，则过滤掉h1标题项
+        if (h1Count === 1) {
+            filteredHeadings = filteredHeadings.filter(h => h.level !== 1);
+        }
 
         // 创建标题级别样式映射
         const headingStyleMap = {
@@ -1929,8 +1947,16 @@
         // 保存标题数据和状态
         currentSubNavHeadings = headings;
 
-        // 获取实际存在的标题层级（从高到低：h4, h3, h2）
-        const existingLevels = [...new Set(headings.map(h => h.level))].sort((a, b) => b - a);
+        // 统计h1标题的数量
+        h1Count = headings.filter(h => h.level === 1).length;
+
+        // 获取实际存在的标题层级（从高到低：h4, h3, h2, h1）
+        let existingLevels = [...new Set(headings.map(h => h.level))].sort((a, b) => b - a);
+
+        // 如果h1只有1个，则从层级列表中过滤掉h1
+        if (h1Count === 1) {
+            existingLevels = existingLevels.filter(level => level !== 1);
+        }
 
         // 检查是否是同一个问题且用户已手动选择层级
         const isSameQuestion = questionIndex === currentSubNavQuestionIndex;
@@ -1955,6 +1981,10 @@
                     // 否则显示到实际存在的最高层级（h4 > h3 > h2）
                     currentSubNavLevel = highestLevel;
                 }
+            }
+            // 如果h1只有1个且当前层级是h1，则降级到h2
+            if (h1Count === 1 && currentSubNavLevel === 1) {
+                currentSubNavLevel = existingLevels.length > 0 ? existingLevels[0] : 2;
             }
         }
 
@@ -2351,7 +2381,7 @@
     };
 
     // 创建导航链接元素
-    const createNavLink = (el, i) => {
+    const createNavLink = (el, i, preservedText) => {
         // 创建链接容器
         const linkContainer = createTag('div', "", NAV_STYLES.linkContainer);
         linkContainer.className = 'tool-nav-link-container';
@@ -2418,7 +2448,9 @@
         const indexSpan = createTag('span', indexText, "");
         indexSpan.style.color = NAV_ITEM_COLOR;
 
-        const normalizedText = normalizeQuestionText(el.textContent);
+        // 先获取新文本，如果新文本非空则使用新文本，否则使用保留文本
+        const newText = normalizeQuestionText(el.textContent);
+        const normalizedText = (newText && newText.length > 0) ? newText : (preservedText || newText);
         const textSpan = createTag('span', normalizedText, "");
 
         link.title = (i + 1) + '. ' + normalizedText;
@@ -2520,6 +2552,63 @@
         } catch(e) {}
     };
 
+    // 从主目录栏链接容器中获取实质内容文本
+    const getStudioNavLinkText = (linkContainer) => {
+        if(!linkContainer) return null;
+        const link = linkContainer.querySelector('.tool-nav-link');
+        if(!link) return null;
+        const spans = link.querySelectorAll('span');
+        if(spans.length < 2) return null;
+        const textSpan = spans[1]; // 第二个 span 是文本内容
+        const normalizedText = normalizeQuestionText(textSpan.textContent);
+        return (normalizedText && normalizedText.length > 0) ? normalizedText : null;
+    };
+
+    // 检查 STUDIO 站点主目录栏中所有链接的 span 是否都有实质内容
+    const checkStudioNavContent = () => {
+        return navLinks.length > 0 && navLinks.every(linkContainer => {
+            return getStudioNavLinkText(linkContainer) !== null;
+        });
+    };
+
+    // 获取主目录栏中第一个有实质内容的链接文本
+    const getFirstStudioNavLinkText = () => {
+        if(!navLinks || navLinks.length === 0) return null;
+        for (let i = 0; i < navLinks.length; i++) {
+            const text = getStudioNavLinkText(navLinks[i]);
+            if(text) return text;
+        }
+        return null;
+    };
+
+    // 保存 STUDIO 站点旧链接中有实质内容的文本
+    const preserveStudioNavTexts = () => {
+        const preservedTexts = [];
+        const currentUrl = getUrl();
+        // 如果 URL 变化了，清空保留的文本，不保存旧文本
+        if(navLinks.length > 0) {
+            // 检查 URL 是否变化
+            if(preservedNavTextsUrl !== null && preservedNavTextsUrl !== currentUrl) {
+                preservedNavTextsUrl = null;
+                // URL 变化了，不保存旧文本，preservedTexts 保持为空数组
+            } else {
+                // URL 未变化，保存旧文本
+                navLinks.forEach((linkContainer, i) => {
+                    preservedTexts[i] = getStudioNavLinkText(linkContainer);
+                });
+                // 保存当前的 URL
+                preservedNavTextsUrl = currentUrl;
+            }
+        }
+        return preservedTexts;
+    };
+
+    // 获取 STUDIO 站点保留的文本（用于创建链接时）
+    const getPreservedTextForStudio = (preservedTexts, index) => {
+        const urlWhenUsing = getUrl();
+        return (preservedNavTextsUrl === urlWhenUsing && preservedTexts[index]) ? preservedTexts[index] : null;
+    };
+
     // 更新导航问题列表（重新构建导航栏）
     const updateNavQuestions = (quesList) => {
         if(isEmpty(quesList)) {
@@ -2534,9 +2623,31 @@
             && thisQuestions.length === navQuestions.length
             && normalizeQuestionText(thisQuestions[0].textContent) === normalizeQuestionText(navQuestions[0].textContent)) {
 
-            refreshNavBarVisibility();
-            return;
+            // 检查 URL 是否变化
+            const currentUrl = getUrl();
+            const urlChanged = preservedNavTextsUrl !== null && preservedNavTextsUrl !== currentUrl;
+
+            // 非 STUDIO 站点保持原有逻辑，直接返回（除非 URL 变化）
+            if(site !== STUDIO) {
+                if(!urlChanged) {
+                    refreshNavBarVisibility();
+                    return;
+                }
+                // URL 变化了，继续执行后续流程
+            } else {
+                // STUDIO 站点：检查主目录栏中所有链接的 span 是否都有实质内容
+                const hasSubstantialContent = checkStudioNavContent();
+
+                // 如果有实质内容且 URL 未变化，则直接返回；否则继续执行后续流程
+                if(hasSubstantialContent && !urlChanged) {
+                    refreshNavBarVisibility();
+                    return;
+                }
+            }
         }
+
+        // 对于 STUDIO 站点，保存旧链接中有实质内容的文本
+        const preservedTexts = site === STUDIO ? preserveStudioNavTexts() : [];
 
         navBar.replaceChildren();
         navLinks = [];
@@ -2548,7 +2659,9 @@
 
         navQuestions.forEach((el, i) => {
             if(!el?.tagName) return;
-            const link = createNavLink(el, i);
+            // 如果有保留的文本且 URL 未变化，则使用保留的文本；否则不使用
+            const preservedText = site === STUDIO ? getPreservedTextForStudio(preservedTexts, i) : null;
+            const link = createNavLink(el, i, preservedText);
             navBar.appendChild(link);
             navLinks.push(link);
             elToLink.set(el, link);
@@ -2678,7 +2791,8 @@
      */
     function renderPanelContent() {
         const selectedSites = getSitesAndCurrent();
-        const visibleWords = getVisibleModels();
+        const visibleSites = getVisibleModels();
+        const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
         const items = visibleWords.map(word => createPanelItem(word, selectedSites));
 
         const headline = createTag('div', "全部模型", PANEL_STYLES.headline);
@@ -2792,7 +2906,8 @@
         // 只要有勾选动作，就关闭禁用模式
         changeDisable(false);
 
-        const visibleWords = getVisibleModels();
+        const visibleSites = getVisibleModels();
+        const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
         const selectedSites = visibleWords
             .filter(word => document.getElementById(`word-${word}`)?.checked)
             .map(word => wordToSite[word]);
@@ -2820,7 +2935,8 @@
         const selectedSites = getSitesAndCurrent();
         // console.log('Syncing checkboxes from stoage:', selectedSites);
 
-        const visibleWords = getVisibleModels();
+        const visibleSites = getVisibleModels();
+        const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
         visibleWords.forEach(word => {
             const checkbox = document.getElementById(`word-${word}`);
             if (checkbox) {
@@ -2865,7 +2981,8 @@
         let selectedSites = getSitesAndCurrent();
         let selectedWords = selectedSites.map(site => siteToWord[site]).filter(word => word);
         // 按照可见模型列表的顺序排序
-        const visibleWords = getVisibleModels();
+        const visibleSites = getVisibleModels();
+        const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
         selectedWords = visibleWords.filter(word => selectedWords.includes(word));
         drawCompactPanel(selectedWords);
 
@@ -2887,7 +3004,8 @@
         originalHTML = contentContainer.innerHTML;
 
         // 记录选中的项：优先从DOM读取，如果读取不到则从存储读取
-        const visibleWords = getVisibleModels();
+        const visibleSites = getVisibleModels();
+        const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
         let selectedWords = visibleWords.filter(word =>
             document.getElementById(`word-${word}`)?.checked
         );
@@ -3050,6 +3168,15 @@
         return ele;
     }
 
+    function createHtml(tag, html, css){
+        const ele = document.createElement(tag);
+        ele.style.cssText = css;
+        if(html){
+            setInnerHTML(ele, html);
+        }
+        return ele;
+    }
+
     /**
      * 一次性添加多个子元素
      */
@@ -3189,24 +3316,25 @@
         return GM_getValue(key);
     }
 
-    // 获取可见模型列表
+    // 获取可见模型列表（返回site值列表）
     function getVisibleModels() {
         const stored = getGV(VISIBLE_MODELS_KEY);
         if (stored && Array.isArray(stored) && stored.length > 0) {
-            // 验证存储的模型是否仍然有效（未被禁用）
-            return stored.filter(word => words.includes(word));
+            // 验证存储的site是否仍然有效（未被禁用）
+            const validSites = wordConfig.map(item => item.site);
+            return stored.filter(site => validSites.includes(site));
         }
-        // 默认返回所有模型的 word 列表
-        return words.slice(); // 返回副本
+        // 默认返回所有模型的 site 列表
+        return wordConfig.map(item => item.site);
     }
 
-    // 设置可见模型列表
-    function setVisibleModels(visibleWords) {
+    // 设置可见模型列表（接受site值列表）
+    function setVisibleModels(visibleSites) {
         // 验证：至少保留一个
-        if (!visibleWords || visibleWords.length === 0) {
+        if (!visibleSites || visibleSites.length === 0) {
             return false;
         }
-        setGV(VISIBLE_MODELS_KEY, visibleWords);
+        setGV(VISIBLE_MODELS_KEY, visibleSites);
         return true;
     }
 
@@ -3255,6 +3383,41 @@
     const POPUP_CONTENT_BASE_STYLE = 'min-width:400px;background:white;border-radius:12px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.3)';
     const POPUP_TITLE_STYLE = 'font-size:16px;font-weight:bold;color:#222;margin-bottom:10px';
 
+    // 设置面板公共样式常量（提取公共基础，通过组合减少重复）
+    const _tabBase = 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;font-size:14px;';
+    const _labelBase = 'font-size:14px;color:#333;';
+    const _inputBase = 'border:1px solid #ddd;border-radius:4px;font-size:14px;';
+    const _containerBase = 'display:flex;align-items:center;';
+    
+    const SETTINGS_STYLES = {
+        // Tab样式
+        tabBase: _tabBase,
+        tabActive: _tabBase + 'border-bottom:3px solid #667eea;color:#667eea;font-weight:bold;background:#e8f0fe;',
+        tabInactive: _tabBase + 'border-bottom:3px solid transparent;color:#666;background:#f5f5f5;',
+        // Label样式
+        labelBase: _labelBase,
+        labelWithCursor: _labelBase + 'cursor:pointer;flex:1;',
+        labelWithMinWidth: _labelBase + 'min-width:220px;flex-shrink:0;user-select:none;',
+        labelWithMinWidthSmall: _labelBase + 'min-width:82px;flex-shrink:0;',
+        // Input样式
+        inputBase: 'padding:6px;' + _inputBase,
+        inputSmall: 'width:55px;padding:6px 2px;' + _inputBase + 'text-align:center;',
+        inputMedium: 'width:80px;padding:6px 10px;' + _inputBase,
+        inputTextarea: 'width:100%;min-height:60px;padding:6px;border:1px solid #667eea;border-radius:4px;font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box',
+        // Container样式
+        itemContainer: _containerBase + 'padding:10px 0;border-bottom:1px solid #f0f0f0',
+        itemContainerWithGap: _containerBase + 'padding:8px 0;border-bottom:1px solid #f0f0f0',
+        toggleContainer: _containerBase + 'justify-content:flex-start;padding:6px 0;border-bottom:1px solid #f0f0f0;gap:12px;',
+        columnsContainer: 'display:flex;gap:12px;margin-bottom:15px',
+        // Tip文本样式
+        tipText: 'color:#333;font-size:14px;margin-bottom:15px;line-height:1.5',
+        // 其他样式
+        checkboxSmall: 'margin-right:8px;width:16px;height:16px;cursor:pointer;',
+        checkboxHidden: 'opacity:0;width:0;height:0;position:absolute;',
+        closeBtn: 'cursor:pointer;font-size:20px;font-weight:bold;color:#999;padding:5px;position:absolute;top:15px;right:15px',
+        saveBtn: 'padding:4px 8px;background:#4caf50;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;flex-shrink:0'
+    };
+
     /**
      * 创建弹窗基础结构
      */
@@ -3292,8 +3455,9 @@
      * 显示提示弹窗
      * @param {string} message 提示内容
      * @param {string} [title] 可选标题
+     * @param {Object} [extraButton] 可选额外按钮配置 {text: string, onClick: function}
      */
-    function showMessagePopup(message, title) {
+    function showMessagePopup(message, title, extraButton) {
         const { popup, content } = createPopupBase('message-popup', ';max-width:400px');
 
         // 标题（可选）
@@ -3305,217 +3469,31 @@
         // 消息内容
         const messageDiv = createTag('div', message, 'color:#333;font-size:14px;line-height:1.6;white-space:pre-line;margin-bottom:15px');
 
+        // 按钮容器
+        const buttonContainer = createTag('div', '', 'display:flex;gap:10px;margin-top:15px');
+        
         // 确定按钮
         const confirmBtn = createPrimaryButton('确定', () => popup.remove());
-        confirmBtn.style.width = '100%';
-        appendSeveral(content, messageDiv, confirmBtn);
+        confirmBtn.style.flex = '1';
+        
+        // 如果有额外按钮，添加到容器中
+        if (extraButton && extraButton.text && extraButton.onClick) {
+            const extraBtn = createPrimaryButton(extraButton.text, () => {
+                extraButton.onClick();
+                popup.remove();
+            });
+            extraBtn.style.flex = '1';
+            buttonContainer.appendChild(extraBtn);
+        }
+        
+        buttonContainer.appendChild(confirmBtn);
+        appendSeveral(content, messageDiv, buttonContainer);
     }
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
      * ║                                                                      ║
-     * ║  🔖 12、同步书签功能  🔖                                                  ║
-     * ║                                                                      ║
-     * ═══════════════════════════════════════════════════════════════════════
-     ******************************************************************************/
-
-    const BOOKMARK_SIGNAL_KEY = "bookmarkSignal"; // 书签创建信号key
-    const BOOKMARK_JUMP_SIGNAL_KEY = "bookmarkJumpSignal"; // 书签跳转信号key
-    const SITE_JUMP_REQUEST_PREFIX = "site-jump-request-"; // 单站点跳转请求信号前缀
-    const SITE_JUMP_ACK_PREFIX = "site-jump-ack-"; // 单站点跳转确认信号前缀
-    const SITE_JUMP_TIMEOUT = 500; // 跳转确认超时时间（毫秒）
-
-    /**
-     * 生成书签key（直接用提问内容）
-     */
-    function generateBookmarkKey(question) {
-        return `${BOOKMARK_PREFIX}${question}`;
-    }
-
-    /**
-     * 获取页面首个提问的内容
-     */
-    function getFirstQuestionContent() {
-        const questions = getQuestionList();
-        if (questions && questions.length > 0) {
-            const firstQuestion = questions[0];
-            return normalizeQuestionText(firstQuestion.textContent || firstQuestion.innerText || '');
-        }
-        return '';
-    }
-
-    /**
-     * 更新书签数据（添加或更新当前站点的URL）
-     * 解决并发写入覆盖问题：写入前重新读取最新数据并合并
-     */
-    function updateBookmarkData(bookmarkKey, siteId, url) {
-        const siteWord = siteToWord[siteId] || siteId;
-
-        // 重新读取最新数据，避免并发覆盖
-        const bookmarkData = getBookmarkData(bookmarkKey) || { sites: [], group: DEFAULT_GROUP_ID };
-        const sites = bookmarkData.sites || [];
-        const existingIndex = sites.findIndex(item => item.site === siteId);
-
-        if (existingIndex >= 0) {
-            sites[existingIndex].url = url;
-        } else {
-            sites.push({ site: siteId, siteName: siteWord, url: url });
-        }
-
-        setBookmarkData(bookmarkKey, sites, bookmarkData.group);
-
-        // 写入后验证，若数据丢失则重试
-        setTimeout(() => {
-            const verifyData = getBookmarkData(bookmarkKey);
-            const verified = verifyData && verifyData.sites && verifyData.sites.some(item => item.site === siteId && item.url === url);
-            if (!verified) {
-                console.log(curDate() + `书签: 检测到数据丢失，重试写入 ${siteWord}`);
-                updateBookmarkData(bookmarkKey, siteId, url);
-            }
-        }, 100 + Math.random() * 200); // 随机延迟避免再次冲突
-
-        console.log(curDate() + `书签: 站点[${siteWord}]的URL已保存`, bookmarkKey);
-    }
-
-    // 监听书签创建信号：将当前站点URL添加到书签
-    GM_addValueChangeListener(BOOKMARK_SIGNAL_KEY, function(name, oldValue, newValue, remote) {
-        if (!remote) return;
-
-        const bookmarkKey = getGV(CURRENT_BOOKMARK_KEY);
-        if (!bookmarkKey) return;
-
-        const sites = getSitesOfStorage();
-        if (!sites.includes(site)) return;
-
-        // 检查：如果勾选站点的第一个问题不等于当前站点的，则不加到同步关系里
-        const bookmarkQuestion = normalizeQuestionText(bookmarkKey.replace(BOOKMARK_PREFIX, ''));
-        const currentSiteFirstQuestion = getFirstQuestionContent();
-        if (bookmarkQuestion !== currentSiteFirstQuestion) {
-            console.log(curDate() + "书签: 当前站点第一个问题与书签问题不一致，不添加到同步关系");
-            return;
-        }
-
-        const currentUrl = getUrl();
-        updateBookmarkData(bookmarkKey, site, currentUrl);
-        console.log(curDate() + "书签: 收到创建信号，已添加URL");
-    });
-
-    // 监听书签跳转信号：如果包含当前站点，执行跳转
-    GM_addValueChangeListener(BOOKMARK_JUMP_SIGNAL_KEY, function(name, oldValue, newValue, remote) {
-        if (!remote || !newValue) return;
-
-        const { jumpData, timestamp } = newValue;
-        if (!jumpData || !jumpData[site]) return;
-
-        const targetUrl = jumpData[site];
-        const currentUrl = getUrl();
-        if (currentUrl !== targetUrl) {
-            console.log(curDate() + `书签跳转: 从 ${currentUrl} 跳转到 ${targetUrl}`);
-            window.location.href = targetUrl;
-        }
-    });
-
-    // 监听单站点跳转请求：当前站点收到跳转请求时，返回确认并执行跳转
-    const siteJumpRequestKey = SITE_JUMP_REQUEST_PREFIX + site;
-    GM_addValueChangeListener(siteJumpRequestKey, function(name, oldValue, newValue, remote) {
-        if (!remote || !newValue) return;
-
-        const { url, timestamp } = newValue;
-        if (!url) return;
-
-        // 立即返回确认信号
-        const ackKey = SITE_JUMP_ACK_PREFIX + site;
-        setGV(ackKey, { timestamp: Date.now() });
-
-        // 判断是否需要跳转
-        const currentUrl = getUrl();
-        if (currentUrl !== url) {
-            console.log(curDate() + `单站点跳转: 从 ${currentUrl} 跳转到 ${url}`);
-            window.location.href = url;
-        }
-    });
-
-    /**
-     * 发送跳转信号，通知所有站点跳转到书签记录的URL
-     */
-    function sendJumpSignalToAll(sites) {
-        const jumpData = {};
-        sites.forEach(s => {
-            jumpData[s.site] = s.url;
-        });
-
-        setGV(BOOKMARK_JUMP_SIGNAL_KEY, {
-            jumpData: jumpData,
-            timestamp: Date.now()
-        });
-
-        // 当前站点直接跳转（不依赖监听器的remote检查）
-        if (jumpData[site]) {
-            const currentUrl = getUrl();
-            if (currentUrl !== jumpData[site]) {
-                console.log(curDate() + `书签跳转: 当前站点从 ${currentUrl} 跳转到 ${jumpData[site]}`);
-                window.location.href = jumpData[site];
-            }
-        }
-
-        console.log(curDate() + `书签: 已发送一键跳转信号`);
-    }
-
-    /**
-     * 跳转到指定站点
-     * @param {Object} siteInfo - 站点信息 {site: 站点ID, url: 目标URL, siteName: 站点名称}
-     */
-    function jumpToSite(siteInfo) {
-        // 当前站点：直接跳转
-        if (siteInfo.site === site) {
-            const currentUrl = getUrl();
-            if (currentUrl !== siteInfo.url) {
-                window.location.href = siteInfo.url;
-            }
-            return;
-        }
-
-        // 其他站点：发送跳转请求并等待确认
-        const requestKey = SITE_JUMP_REQUEST_PREFIX + siteInfo.site;
-        const ackKey = SITE_JUMP_ACK_PREFIX + siteInfo.site;
-
-        // 发送跳转请求
-        setGV(requestKey, {
-            url: siteInfo.url,
-            timestamp: Date.now()
-        });
-
-        // 监听确认信号
-        let ackReceived = false;
-        const listener = GM_addValueChangeListener(ackKey, function(name, oldValue, newValue, remote) {
-            if (newValue && newValue.timestamp) {
-                ackReceived = true;
-                console.log(curDate() + `站点 ${siteInfo.siteName} 已打开，等待其自行跳转`);
-            }
-        });
-
-        // 超时检查
-        setTimeout(() => {
-            if (!ackReceived) {
-                // 未收到确认，说明站点未打开，新开页面
-                console.log(curDate() + `站点 ${siteInfo.siteName} 未打开，新开页面`);
-                window.open(siteInfo.url, '_blank');
-            }
-            // 移除监听器（如果支持）
-            try {
-                if (listener && typeof listener.removeListener === 'function') {
-                    listener.removeListener();
-                }
-            } catch (e) {
-                // 忽略移除监听器时的错误
-            }
-        }, SITE_JUMP_TIMEOUT);
-    }
-
-    /******************************************************************************
-     * ═══════════════════════════════════════════════════════════════════════
-     * ║                                                                      ║
-     * ║  ⚙️ 13、设置弹窗功能  ⚙️                                                   ║
+     * ║  ⚙️ 12、设置弹窗功能  ⚙️                                                   ║
      * ║                                                                      ║
      * ═══════════════════════════════════════════════════════════════════════
      ******************************************************************************/
@@ -3564,16 +3542,16 @@
      * 创建苹果风格开关
      */
     function createToggleSwitch(label, checked, onChange) {
-        const container = createTag('div', '', 'display:flex;justify-content:flex-start;align-items:center;padding:6px 0;border-bottom:1px solid #f0f0f0;gap:12px;');
+        const container = createTag('div', '', SETTINGS_STYLES.toggleContainer);
         
-        const labelDiv = createTag('div', label, 'font-size:14px;color:#333;');
+        const labelDiv = createTag('div', label, SETTINGS_STYLES.labelBase);
         
         const switchContainer = createTag('label', '', 'position:relative;display:inline-block;width:44px;height:26px;cursor:pointer;flex-shrink:0');
         
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.checked = checked;
-        checkbox.style.cssText = 'opacity:0;width:0;height:0;position:absolute;';
+        checkbox.style.cssText = SETTINGS_STYLES.checkboxHidden;
         
         const slider = createTag('span', '', 'position:absolute;top:0;left:0;right:0;bottom:0;background-color:' + (checked ? '#34c759' : '#ccc') + ';transition:0.3s;border-radius:26px;');
         slider.style.cssText += 'cursor:pointer;';
@@ -3598,18 +3576,18 @@
      * 创建 Tab 1: 多选面板自定义
      */
     function createModelSelectionTab(checkboxes) {
-        const tab = createTag('div', '多选面板自定义', 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid #667eea;color:#667eea;font-weight:bold;font-size:14px;background:#e8f0fe;');
+        const tab = createTag('div', '多选面板自定义', SETTINGS_STYLES.tabActive);
         const tabContent = createTag('div', '', '');
         
         // 创建说明文字
-        const tipText = createTag('div', '仅勾选的大模型将出现在多选面板上', 'color:#333;font-size:14px;margin-bottom:15px;line-height:1.5');
+        const tipText = createTag('div', '仅勾选的大模型将出现在多选面板上', SETTINGS_STYLES.tipText);
         appendSeveral(tabContent, tipText);
         
         // 读取当前可见模型列表
-        const visibleModels = getVisibleModels();
+        const visibleSites = getVisibleModels();
         
         // 创建两列容器
-        const columnsContainer = createTag('div', '', 'display:flex;gap:12px;margin-bottom:15px');
+        const columnsContainer = createTag('div', '', SETTINGS_STYLES.columnsContainer);
         const leftColumn = createTag('div', '', 'flex:1');
         const rightColumn = createTag('div', '', 'flex:1');
         
@@ -3619,33 +3597,33 @@
         
         // 创建复选框函数
         function createModelCheckbox(config) {
-            const { word } = config;
-            const isVisible = visibleModels.includes(word);
+            const { word, site } = config;
+            const isVisible = visibleSites.includes(site);
             
-            const checkboxContainer = createTag('div', '', 'display:flex;align-items:center;padding:8px 0;border-bottom:1px solid #f0f0f0');
+            const checkboxContainer = createTag('div', '', SETTINGS_STYLES.itemContainerWithGap);
             
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.checked = isVisible;
-            checkbox.style.cssText = 'margin-right:8px;width:16px;height:16px;cursor:pointer;';
+            checkbox.style.cssText = SETTINGS_STYLES.checkboxSmall;
             
             // 立即保存功能：复选框改变时立即生效
             checkbox.addEventListener('change', () => {
-                const newVisibleModels = wordConfig
+                const newVisibleSites = wordConfig
                     .filter(config => checkboxes[config.word]?.checked)
-                    .map(config => config.word);
+                    .map(config => config.site);
                 
-                if (newVisibleModels.length === 0) {
+                if (newVisibleSites.length === 0) {
                     checkbox.checked = true; // 恢复选中，至少保留一个
                     showMessagePopup('至少需要保留一个模型可见');
                     return;
                 }
                 
                 // 保存配置，退出弹窗后再刷新面板
-                setVisibleModels(newVisibleModels);
+                setVisibleModels(newVisibleSites);
             });
             
-            const label = createTag('label', word, 'font-size:14px;color:#333;cursor:pointer;flex:1;');
+            const label = createTag('label', word, SETTINGS_STYLES.labelWithCursor);
             label.style.cssText += 'user-select:none;';
             label.onclick = () => checkbox.click();
             
@@ -3675,7 +3653,7 @@
      * 创建 Tab 2: 按钮显示设置
      */
     function createButtonDisplayTab() {
-        const tab = createTag('div', '按钮显示', 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid transparent;color:#666;font-size:14px;background:#f5f5f5;');
+        const tab = createTag('div', '按钮显示', SETTINGS_STYLES.tabInactive);
         const tabContent = createTag('div', '', 'display:none;');
         
         // 读取当前设置
@@ -3684,7 +3662,7 @@
         // 书签/列表按钮：默认 false（隐藏），只有显式设置为 true 时才显示
         const showBookmark = getGV(SHOW_BOOKMARK_BUTTON_KEY) === true;
         // 默认隐藏输入框：默认 false（不隐藏）
-        const defaultHideInput = getGV(DEFAULT_HIDE_INPUT_AREA_KEY) === true;
+        const isInputDefaultHided = getGV(DEFAULT_HIDE_INPUT_AREA_KEY) === true;
 
         // 创建三个开关
         const toggleSwitch1 = createToggleSwitch('隐藏输入框的按钮，是否展示', showToggle, (checked) => {
@@ -3692,12 +3670,7 @@
             updateButtonVisibility();
         });
 
-        const toggleSwitch2 = createToggleSwitch('此按钮留着，暂无实用', showBookmark, (checked) => {
-            setGV(SHOW_BOOKMARK_BUTTON_KEY, checked);
-            updateButtonVisibility();
-        });
-
-        const toggleSwitch3 = createToggleSwitch('每次打开页面，输入框将默认隐藏', defaultHideInput, (checked) => {
+        const toggleSwitch2 = createToggleSwitch('每次打开历史对话页面，输入框是否默认隐藏', isInputDefaultHided, (checked) => {
             setGV(DEFAULT_HIDE_INPUT_AREA_KEY, checked);
             // 如果开启，立即应用；如果关闭，恢复显示
             if (checked) {
@@ -3712,6 +3685,11 @@
             }
         });
 
+        const toggleSwitch3 = createToggleSwitch('此按钮留着，暂无实用', showBookmark, (checked) => {
+            setGV(SHOW_BOOKMARK_BUTTON_KEY, checked);
+            updateButtonVisibility();
+        });
+
         appendSeveral(tabContent, toggleSwitch1, toggleSwitch2, toggleSwitch3);
         
         return { tab, tabContent };
@@ -3721,7 +3699,7 @@
      * 创建 Tab 3: 导航变量设置
      */
     function createNavVarsTab() {
-        const tab = createTag('div', '目录设置', 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid transparent;color:#666;font-size:14px;background:#f5f5f5;');
+        const tab = createTag('div', '目录设置', SETTINGS_STYLES.tabInactive);
         const tabContent = createTag('div', '', 'display:none;');
         
         // 读取当前导航变量设置
@@ -3731,15 +3709,14 @@
         const navTopOverflowValue = getGV(NAV_TOP_OVERFLOW_KEY) || DEFAULT_NAV_TOP_OVERFLOW;
         
         // 创建说明文字
-        const tipText = createTag('div', '', 'color:#333;font-size:14px;margin-bottom:15px;line-height:1.5');
-        setInnerHTML(tipText, '修改后立即生效。');
+        const tipText = createHtml('div', '修改后立即生效。', SETTINGS_STYLES.tipText);
         appendSeveral(tabContent, tipText);
         
         // 创建输入框容器
         const configContainer = createTag('div', '', 'display:flex;flex-direction:column;gap:12px');
-        const inputCss = 'width:80px;padding:6px 10px;border:1px solid #ddd;border-radius:4px;font-size:14px;';
-        const itemContainerCss = 'display:flex;align-items:center;padding:10px 0;border-bottom:1px solid #f0f0f0';
-        const labelCss = 'font-size:14px;color:#333;min-width:220px;flex-shrink:0;user-select:none;';
+        const inputCss = SETTINGS_STYLES.inputMedium;
+        const itemContainerCss = SETTINGS_STYLES.itemContainer;
+        const labelCss = SETTINGS_STYLES.labelWithMinWidth;
         const defaultLabelCss = 'font-size:13px;color:#666;margin-left:10px;';
 
         // 导航变量配置
@@ -3797,7 +3774,7 @@
      * 创建 Tab 4: 输入框隐藏范围设置
      */
     function createInputAreaHideLevelTab() {
-        const tab = createTag('div', '输入框隐藏范围设置', 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid transparent;color:#666;font-size:14px;background:#f5f5f5;');
+        const tab = createTag('div', '输入框隐藏范围设置', SETTINGS_STYLES.tabInactive);
         const tabContent = createTag('div', '', 'display:none;');
         
         // 读取用户自定义的层级配置
@@ -3805,12 +3782,11 @@
         const levelInputs = {};
         
         // 创建说明文字
-        const tipText = createTag('div', '', 'color:#333;font-size:14px;margin-bottom:15px;line-height:1.5');
-        setInnerHTML(tipText, '如果官网做了某些改动，则隐藏输入框的范围效果可能不合适；<br>此时可尝试修改下面数值：数值越大，则页面隐藏的内容范围越大，反之越小。');
+        const tipText = createHtml('div', '如果官网做了某些改动，则隐藏输入框的范围效果可能不合适；<br>此时可尝试修改下面数值：数值越大，则页面隐藏的内容范围越大，反之越小。', SETTINGS_STYLES.tipText);
         appendSeveral(tabContent, tipText);
         
         // 创建两列容器
-        const columnsContainer = createTag('div', '', 'display:flex;gap:12px;margin-bottom:15px');
+        const columnsContainer = createTag('div', '', SETTINGS_STYLES.columnsContainer);
         const leftColumn = createTag('div', '', 'flex:1');
         const rightColumn = createTag('div', '', 'flex:1');
         
@@ -3864,16 +3840,16 @@
             const defaultLevel = inputAreaHideParentLevel[siteId];
             const currentLevel = customLevels[siteId] !== undefined ? customLevels[siteId] : defaultLevel;
             
-            const itemContainer = createTag('div', '', 'display:flex;align-items:center;padding:10px 0;border-bottom:1px solid #f0f0f0');
+            const itemContainer = createTag('div', '', SETTINGS_STYLES.itemContainer);
             
-            const label = createTag('label', word, 'font-size:14px;color:#333;min-width:82px;flex-shrink:0;');
+            const label = createTag('label', word, SETTINGS_STYLES.labelWithMinWidthSmall);
             label.style.cssText += 'user-select:none;';
             
             const input = document.createElement('input');
             input.type = 'number';
             input.value = currentLevel;
             input.min = '0';
-            input.style.cssText = 'width:55px;padding:6px 2px;border:1px solid #ddd;border-radius:4px;font-size:14px;text-align:center;';
+            input.style.cssText = SETTINGS_STYLES.inputSmall;
             
             // 立即保存功能：输入框值改变时立即生效
             input.addEventListener('change', () => {
@@ -3938,10 +3914,10 @@
         function switchTab(activeIndex) {
             tabs.forEach((tab, index) => {
                 if (index === activeIndex) {
-                    tab.style.cssText = 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid #667eea;color:#667eea;font-weight:bold;font-size:14px;background:#e8f0fe;';
+                    tab.style.cssText = SETTINGS_STYLES.tabActive;
                     tabContents[index].style.display = '';
                 } else {
-                    tab.style.cssText = 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;border-bottom:3px solid transparent;color:#666;font-size:14px;background:#f5f5f5;';
+                    tab.style.cssText = SETTINGS_STYLES.tabInactive;
                     tabContents[index].style.display = 'none';
                 }
             });
@@ -3963,7 +3939,7 @@
         };
         
         // 关闭按钮
-        const closeBtn = createTag('span', '✕', 'cursor:pointer;font-size:20px;font-weight:bold;color:#999;padding:5px;position:absolute;top:15px;right:15px');
+        const closeBtn = createTag('span', '✕', SETTINGS_STYLES.closeBtn);
         closeBtn.onclick = closePopup;
         
         // 点击背景关闭时也刷新面板
@@ -3979,16 +3955,297 @@
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
      * ║                                                                      ║
-     * ║  📚 14、书签相关功能  📚                                                   ║
+     * ║  📚 13、书签功能  📚                                                      ║
      * ║                                                                      ║
      * ═══════════════════════════════════════════════════════════════════════
      ******************************************************************************/
+
+    const BOOKMARK_SIGNAL_KEY = "bookmarkSignal"; // 书签创建信号key
+    const BOOKMARK_JUMP_SIGNAL_KEY = "bookmarkJumpSignal"; // 书签跳转信号key
+    const SITE_JUMP_REQUEST_PREFIX = "site-jump-request-"; // 单站点跳转请求信号前缀
+    const SITE_JUMP_ACK_PREFIX = "site-jump-ack-"; // 单站点跳转确认信号前缀
+    const SITE_JUMP_TIMEOUT = 500; // 跳转确认超时时间（毫秒）
+    const BOOKMARK_LEN = 100;
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 13.1 工具函数
+    // ──────────────────────────────────────────────────────────────────────
+
+    // 生成书签key（自增ID）
+    function generateBookmarkKey() {
+        let counter = getGV(BOOKMARK_ID_COUNTER) || 0;
+        counter++;
+        setGV(BOOKMARK_ID_COUNTER, counter);
+        return `${BOOKMARK_PREFIX}${counter}`;
+    }
+
+    /**
+     * 获取页面首个提问的内容
+     */
+    function getFirstQuestionContent() {
+        const questions = getQuestionList();
+        if (questions && questions.length > 0) {
+            const firstQuestion = questions[0];
+            const content = normalizeQuestionText(firstQuestion.textContent || firstQuestion.innerText || '');
+            
+            // 如果是 STUDIO 站点且内容为空，从主目录栏获取实质内容
+            if (site === STUDIO && (!content || content.length === 0)) {
+                const navLinkText = getFirstStudioNavLinkText();
+                if (navLinkText) {
+                    return navLinkText;
+                }
+            }
+            
+            return content;
+        }
+        return '';
+    }
+
+    // 从完整URL中提取路径部分（去掉域名前缀，截取第一个斜线为止，排除双斜线）
+    function extractUrlPath(fullUrl) {
+        const match = fullUrl.match(/^https?:\/\/[^\/]+\/(.*)$/);
+        return match ? match[1] : '';
+    }
+
+    // 从路径部分拼接完整URL（加上域名前缀）
+    function buildFullUrl(path, siteId) {
+        const baseUrl = webSites[siteId]?.[0];
+        if (!baseUrl) return path;
+        const match = baseUrl.match(/^(https?:\/\/[^\/]+\/)/);
+        return match ? match[1] + path : baseUrl + path;
+    }
+
+    /**
+     * 更新书签数据（添加或更新当前站点的URL）
+     * 解决并发写入覆盖问题：写入前重新读取最新数据并合并
+     */
+    function updateBookmarkData(bookmarkKey, siteId, url, question) {
+        const siteWord = siteToWord[siteId] || siteId;
+        // 只存储路径部分，去掉域名前缀
+        const urlPath = extractUrlPath(url);
+
+        // 重新读取最新数据，避免并发覆盖
+        const bookmarkData = getBookmarkData(bookmarkKey) || { sites: [], group: DEFAULT_GROUP_ID, question: '' };
+        const sites = bookmarkData.sites || [];
+        const existingIndex = sites.findIndex(item => item.site === siteId);
+
+        if (existingIndex >= 0) {
+            sites[existingIndex].url = urlPath;
+        } else {
+            sites.push({ site: siteId, url: urlPath });
+        }
+
+        // 如果提供了question，则更新question字段
+        const questionToSave = question !== undefined ? question : (bookmarkData.question || '');
+        setBookmarkData(bookmarkKey, sites, bookmarkData.group, questionToSave);
+
+        // 写入后验证，若数据丢失则重试
+        setTimeout(() => {
+            const verifyData = getBookmarkData(bookmarkKey);
+            const verified = verifyData && verifyData.sites && verifyData.sites.some(item => item.site === siteId && item.url === urlPath);
+            if (!verified) {
+                console.log(curDate() + `书签: 检测到数据丢失，重试写入 ${siteWord}`);
+                updateBookmarkData(bookmarkKey, siteId, url);
+            }
+        }, 100 + Math.random() * 200); // 随机延迟避免再次冲突
+
+        console.log(curDate() + `书签: 站点[${siteWord}]的URL已保存`, bookmarkKey);
+    }
+
+    /**
+     * 切换站点星标状态
+     * @param {string} bookmarkKey - 书签key
+     * @param {number} siteId - 站点ID
+     * @returns {boolean} - 是否成功
+     */
+    function toggleSiteStarred(bookmarkKey, siteId) {
+        const bookmarkData = getBookmarkData(bookmarkKey);
+        if (!bookmarkData || !bookmarkData.sites) return false;
+
+        const sites = bookmarkData.sites;
+        const siteIndex = sites.findIndex(item => item.site === siteId);
+        if (siteIndex === -1) return false;
+
+        // 切换星标状态
+        sites[siteIndex].starred = !sites[siteIndex].starred;
+
+        // 保存数据
+        setBookmarkData(bookmarkKey, sites, bookmarkData.group, bookmarkData.question);
+        return true;
+    }
+
+    /**
+     * 从书签中移除站点
+     * @param {string} bookmarkKey - 书签key
+     * @param {number} siteId - 站点ID
+     * @returns {boolean} - 是否成功移除
+     */
+    function removeSiteFromBookmark(bookmarkKey, siteId) {
+        const bookmarkData = getBookmarkData(bookmarkKey);
+        if (!bookmarkData || !bookmarkData.sites) return false;
+
+        const sites = bookmarkData.sites;
+        const siteIndex = sites.findIndex(item => item.site === siteId);
+        if (siteIndex === -1) return false;
+
+        // 移除站点
+        sites.splice(siteIndex, 1);
+
+        // 保存数据
+        setBookmarkData(bookmarkKey, sites, bookmarkData.group, bookmarkData.question);
+        return true;
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 13.2 跨站点同步机制
+    // ──────────────────────────────────────────────────────────────────────
+
+    // 监听书签创建信号：将当前站点URL添加到书签
+    GM_addValueChangeListener(BOOKMARK_SIGNAL_KEY, function(name, oldValue, newValue, remote) {
+        if (!remote) return;
+
+        const bookmarkKey = getGV(CURRENT_BOOKMARK_KEY);
+        if (!bookmarkKey) return;
+
+        // 检查：如果勾选站点的第一个问题不等于当前站点的，则不加到同步关系里
+        const bookmarkData = getBookmarkData(bookmarkKey);
+        if (!bookmarkData) return;
+        const bookmarkQuestion = normalizeQuestionText(bookmarkData.question || '');
+        const currentSiteFirstQuestion = normalizeQuestionText(getFirstQuestionContent() || '');
+        if (bookmarkQuestion !== currentSiteFirstQuestion) {
+            console.log(curDate() + "书签: 当前站点第一个问题与书签问题不一致，不添加到同步关系");
+            return;
+        }
+
+        const currentUrl = getUrl();
+        updateBookmarkData(bookmarkKey, site, currentUrl);
+        console.log(curDate() + "书签: 收到创建信号，已添加URL");
+    });
+
+    // 监听书签跳转信号：如果包含当前站点，执行跳转
+    GM_addValueChangeListener(BOOKMARK_JUMP_SIGNAL_KEY, function(name, oldValue, newValue, remote) {
+        if (!remote || !newValue) return;
+
+        const { jumpData, timestamp } = newValue;
+        if (!jumpData || !jumpData[site]) return;
+
+        const targetUrl = jumpData[site];
+        const currentUrl = getUrl();
+        if (currentUrl !== targetUrl) {
+            console.log(curDate() + `书签跳转: 从 ${currentUrl} 跳转到 ${targetUrl}`);
+            window.location.href = targetUrl;
+        }
+    });
+
+    // 监听单站点跳转请求：当前站点收到跳转请求时，返回确认并执行跳转
+    const siteJumpRequestKey = SITE_JUMP_REQUEST_PREFIX + site;
+    GM_addValueChangeListener(siteJumpRequestKey, function(name, oldValue, newValue, remote) {
+        if (!remote || !newValue) return;
+
+        const { url, timestamp } = newValue;
+        if (!url) return;
+
+        // 立即返回确认信号
+        const ackKey = SITE_JUMP_ACK_PREFIX + site;
+        setGV(ackKey, { timestamp: Date.now() });
+
+        // 判断是否需要跳转
+        const currentUrl = getUrl();
+        if (currentUrl !== url) {
+            console.log(curDate() + `单站点跳转: 从 ${currentUrl} 跳转到 ${url}`);
+            window.location.href = url;
+        }
+    });
+
+    /**
+     * 发送跳转信号，通知所有站点跳转到书签记录的URL
+     */
+    function sendJumpSignalToAll(sites) {
+        const jumpData = {};
+        sites.forEach(s => {
+            // 从路径部分拼接完整URL
+            jumpData[s.site] = buildFullUrl(s.url, s.site);
+        });
+
+        setGV(BOOKMARK_JUMP_SIGNAL_KEY, {
+            jumpData: jumpData,
+            timestamp: Date.now()
+        });
+
+        // 当前站点直接跳转（不依赖监听器的remote检查）
+        if (jumpData[site]) {
+            const currentUrl = getUrl();
+            if (currentUrl !== jumpData[site]) {
+                console.log(curDate() + `书签跳转: 当前站点从 ${currentUrl} 跳转到 ${jumpData[site]}`);
+                window.location.href = jumpData[site];
+            }
+        }
+        console.log(curDate() + `书签: 已发送一键跳转信号`);
+    }
+
+    /**
+     * 跳转到指定站点
+     * @param {Object} siteInfo - 站点信息 {site: 站点ID, url: 路径部分}
+     */
+    function jumpToSite(siteInfo) {
+        // 从路径部分拼接完整URL
+        const fullUrl = buildFullUrl(siteInfo.url, siteInfo.site);
+        
+        // 当前站点：直接跳转
+        if (siteInfo.site === site) {
+            const currentUrl = getUrl();
+            if (currentUrl !== fullUrl) {
+                window.location.href = fullUrl;
+            }
+            return;
+        }
+
+        // 其他站点：发送跳转请求并等待确认
+        const requestKey = SITE_JUMP_REQUEST_PREFIX + siteInfo.site;
+        const ackKey = SITE_JUMP_ACK_PREFIX + siteInfo.site;
+        const siteName = siteToWord[siteInfo.site] || siteInfo.site;
+
+        // 发送跳转请求
+        setGV(requestKey, {
+            url: fullUrl,
+            timestamp: Date.now()
+        });
+
+        // 监听确认信号
+        let ackReceived = false;
+        const listener = GM_addValueChangeListener(ackKey, function(name, oldValue, newValue, remote) {
+            if (newValue && newValue.timestamp) {
+                ackReceived = true;
+                console.log(curDate() + `站点 ${siteName} 已打开，等待其自行跳转`);
+            }
+        });
+
+        // 超时检查
+        setTimeout(() => {
+            if (!ackReceived) {
+                // 未收到确认，说明站点未打开，新开页面
+                console.log(curDate() + `站点 ${siteName} 未打开，新开页面`);
+                window.open(fullUrl, '_blank');
+            }
+            // 移除监听器（如果支持）
+            try {
+                if (listener && typeof listener.removeListener === 'function') {
+                    listener.removeListener();
+                }
+            } catch (e) {
+            }
+        }, SITE_JUMP_TIMEOUT);
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 13.3 书签CRUD操作
+    // ──────────────────────────────────────────────────────────────────────
 
     /**
      * 创建书签（内部函数）
      */
     function createBookmark(questionText) {
-        const bookmarkKey = generateBookmarkKey(questionText);
+        const bookmarkKey = generateBookmarkKey();
         const currentUrl = getUrl();
 
         // 存储书签key
@@ -3996,8 +4253,8 @@
         addBookmarkKeyToList(bookmarkKey);
         console.log(curDate() + "书签: 创建新书签", bookmarkKey);
 
-        // 添加当前站点的URL
-        updateBookmarkData(bookmarkKey, site, currentUrl);
+        // 添加当前站点的URL（同时保存question）
+        updateBookmarkData(bookmarkKey, site, currentUrl, questionText);
 
         // 发送信号通知其他站点添加URL
         setGV(BOOKMARK_SIGNAL_KEY, Date.now());
@@ -4007,7 +4264,10 @@
             const bookmarkData = getBookmarkData(bookmarkKey);
             const actualSites = bookmarkData ? (bookmarkData.sites || []).map(item => item.site) : [];
             const siteNames = actualSites.map(s => siteToWord[s] || s).join(', ');
-            showMessagePopup(`书签已创建！\n【关联站点】${siteNames}\n【书签名】${questionText}`);
+            showMessagePopup(`书签已创建！\n【关联站点】${siteNames}\n【书签名】${questionText}`, null, {
+                text: '立即查看书签列表',
+                onClick: () => showBookmarkWindow(DEFAULT_GROUP_ID, true)
+            });
         }, 1500);
     }
 
@@ -4021,16 +4281,16 @@
             return;
         }
 
-        // 生成书签key
-        const bookmarkKey = generateBookmarkKey(firstQuestion);
         const currentUrl = getUrl();
 
-        // 检查是否已存在
-        const existingData = getBookmarkData(bookmarkKey);
+        // 检查是否已存在相同question的书签（通过遍历所有书签）
+        const allBookmarks = getAllBookmarks();
+        const existingBookmark = allBookmarks.find(b => normalizeQuestionText(b.question) === normalizeQuestionText(firstQuestion));
 
-        if (existingData && existingData.sites && existingData.sites.length > 0) {
-            // 检查是否真的重复：相同site且相同url
-            const isReallyDuplicate = existingData.sites.some(item => item.site === site && item.url === currentUrl);
+        if (existingBookmark) {
+            // 检查是否真的重复：相同site且相同url（比较路径部分）
+            const currentUrlPath = extractUrlPath(currentUrl);
+            const isReallyDuplicate = existingBookmark.sites.some(item => item.site === site && item.url === currentUrlPath);
 
             if (isReallyDuplicate) {
                 // 真的重复，提示用户
@@ -4117,51 +4377,23 @@
     /**
      * 更新书签的提问内容
      */
-    function updateBookmarkQuestion(oldBookmarkKey, newQuestion) {
-        // 获取旧书签数据
-        const oldData = getBookmarkData(oldBookmarkKey);
-        if (!oldData || !oldData.sites || oldData.sites.length === 0) {
-            console.log(curDate() + `书签: 未找到旧书签数据 ${oldBookmarkKey}`);
+    function updateBookmarkQuestion(bookmarkKey, newQuestion) {
+        // 获取书签数据
+        const data = getBookmarkData(bookmarkKey);
+        if (!data || !data.sites || data.sites.length === 0) {
+            console.log(curDate() + `书签: 未找到书签数据 ${bookmarkKey}`);
             return false;
         }
 
-        // 生成新书签key
-        const newBookmarkKey = generateBookmarkKey(newQuestion);
-
-        // 如果新旧key相同，不需要更新
-        if (oldBookmarkKey === newBookmarkKey) {
-            return true;
-        }
-
-        // 检查新key是否已存在
-        const existingData = getBookmarkData(newBookmarkKey);
-        if (existingData && existingData.sites && existingData.sites.length > 0) {
-            showMessagePopup('该提问内容已存在，无法更新');
-            return false;
-        }
-
-        // 获取旧书签在列表中的位置，以便保持顺序
-        let keyList = getGV(BOOKMARK_KEY_LIST) || [];
-        const oldIndex = keyList.indexOf(oldBookmarkKey);
-
-        // 删除旧书签
-        removeBookmark(oldBookmarkKey);
-
-        // 创建新书签并恢复数据
-        setBookmarkData(newBookmarkKey, oldData.sites, oldData.group);
-        
-        // 在相同位置插入新书签，保持顺序不变
-        if (oldIndex !== -1) {
-            keyList = getGV(BOOKMARK_KEY_LIST) || [];
-            keyList.splice(oldIndex, 0, newBookmarkKey);
-            setGV(BOOKMARK_KEY_LIST, keyList);
-        } else {
-            // 如果找不到旧位置，则添加到末尾（兜底逻辑）
-            addBookmarkKeyToList(newBookmarkKey);
-        }
-        console.log(curDate() + `书签: 已更新 ${oldBookmarkKey} -> ${newBookmarkKey}`);
+        // 直接更新question字段，key不变
+        setBookmarkData(bookmarkKey, data.sites, data.group, newQuestion);
+        console.log(curDate() + `书签: 已更新提问内容 ${bookmarkKey}`);
         return true;
     }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // 13.4 数据管理（分组和书签数据存取）
+    // ──────────────────────────────────────────────────────────────────────
 
     /**
      * 分组管理函数
@@ -4274,17 +4506,19 @@
         if (!data) return null;
         return {
             sites: data.sites || [],
-            group: (typeof data.group === 'number') ? data.group : DEFAULT_GROUP_ID
+            group: (typeof data.group === 'number') ? data.group : DEFAULT_GROUP_ID,
+            question: data.question || ''
         };
     }
 
     /**
      * 设置书签数据（group使用代号）
      */
-    function setBookmarkData(bookmarkKey, sites, group) {
+    function setBookmarkData(bookmarkKey, sites, group, question) {
         setGV(bookmarkKey, {
             sites: sites || [],
-            group: (typeof group === 'number') ? group : DEFAULT_GROUP_ID
+            group: (typeof group === 'number') ? group : DEFAULT_GROUP_ID,
+            question: question || ''
         });
     }
 
@@ -4294,7 +4528,7 @@
     function setBookmarkGroup(bookmarkKey, groupId) {
         const data = getBookmarkData(bookmarkKey);
         if (!data) return false;
-        setBookmarkData(bookmarkKey, data.sites, groupId || DEFAULT_GROUP_ID);
+        setBookmarkData(bookmarkKey, data.sites, groupId || DEFAULT_GROUP_ID, data.question);
         return true;
     }
 
@@ -4313,7 +4547,8 @@
                 if (filterGroupId !== null && data.group !== filterGroupId) {
                     continue;
                 }
-                const question = key.replace(BOOKMARK_PREFIX, '');
+                // 从value中读取question
+                const question = data.question || '';
                 // 返回时转换为名称显示
                 bookmarks.push({ 
                     question, 
@@ -4327,14 +4562,18 @@
         return bookmarks;
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // 13.5 UI界面
+    // ──────────────────────────────────────────────────────────────────────
+
     /**
      * 处理编辑书签问题的点击事件
      */
-    function handleEditBookmarkQuestion(question, bookmarkKey, questionText, editBtn, questionContainer) {
+    function editBookmarkQuestion(question, bookmarkKey, questionText, editBtn, questionContainer) {
         // 创建编辑输入框
         const input = document.createElement('textarea');
         input.value = question;
-        input.style.cssText = 'width:100%;min-height:60px;padding:6px;border:1px solid #667eea;border-radius:4px;font-size:13px;font-family:inherit;resize:vertical;box-sizing:border-box';
+        input.style.cssText = SETTINGS_STYLES.inputTextarea;
 
         // 替换显示
         questionText.style.display = 'none';
@@ -4344,7 +4583,7 @@
         inputContainer.appendChild(input);
 
         // 保存按钮
-        const saveBtn = createTag('button', '✓', 'padding:4px 8px;background:#4caf50;color:white;border:none;border-radius:4px;cursor:pointer;font-size:12px;flex-shrink:0');
+        const saveBtn = createTag('button', '✓', SETTINGS_STYLES.saveBtn);
         saveBtn.title = '保存';
         saveBtn.addEventListener('mouseenter', () => saveBtn.style.opacity = '0.85');
         saveBtn.addEventListener('mouseleave', () => saveBtn.style.opacity = '1');
@@ -4362,7 +4601,7 @@
 
             if (updateBookmarkQuestion(bookmarkKey, newQuestion)) {
                 // 刷新弹窗
-                showBookmarkListPopup();
+                showBookmarkWindow();
             }
         });
 
@@ -4372,193 +4611,393 @@
     }
 
     /**
+     * 创建排序列
+     * @param {number} index - 当前索引
+     */
+    function createSortColumn(bookmarkKey, index, bookmarks, currentGroupId, tr) {
+        const TD_SORT_STYLE = 'padding:10px;vertical-align:top;white-space:nowrap;text-align:center';
+        const TOP_BTN_STYLE = 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;margin-right:4px;color:#3498db';
+        const UP_BTN_STYLE = 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;margin-right:4px;color:#95a5a6';
+        const DOWN_BTN_STYLE = 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;color:#95a5a6';
+
+        const tdSort = createTag('td', "", TD_SORT_STYLE);
+
+        // 置顶按钮（显示中最上面，存储中移到最后）
+        const topBtn = createTag('button', '⬆', TOP_BTN_STYLE);
+        topBtn.title = '置顶';
+        // 显示中 index=0 对应存储列表的最后一个，如果已经在最后则不能置顶
+        const keyList = getGV(BOOKMARK_KEY_LIST) || [];
+        const storageIndex = keyList.indexOf(bookmarkKey);
+        const canMoveTop = storageIndex !== -1 && storageIndex < keyList.length - 1;
+        if (!canMoveTop) {
+            topBtn.style.opacity = '0.5';
+            topBtn.style.cursor = 'not-allowed';
+        } else {
+            topBtn.addEventListener('click', () => {
+                if (moveBookmarkInList(bookmarkKey, 'bottom')) {
+                    showBookmarkWindow(currentGroupId);
+                }
+            });
+        }
+
+        // 上移按钮（显示中向上，存储中向下）
+        const upBtn = createTag('button', '↑', UP_BTN_STYLE);
+        upBtn.title = '上移';
+        const canMoveUp = index > 0;
+        if (!canMoveUp) {
+            upBtn.style.opacity = '0.5';
+            upBtn.style.cursor = 'not-allowed';
+        } else {
+            upBtn.addEventListener('click', () => {
+                // 显示中向上 = 存储中向下
+                if (moveBookmarkInList(bookmarkKey, 'down')) {
+                    showBookmarkWindow(currentGroupId);
+                }
+            });
+        }
+
+        // 下移按钮（显示中向下，存储中向上）
+        const downBtn = createTag('button', '↓', DOWN_BTN_STYLE);
+        downBtn.title = '下移';
+        const canMoveDown = index < bookmarks.length - 1;
+        if (!canMoveDown) {
+            downBtn.style.opacity = '0.5';
+            downBtn.style.cursor = 'not-allowed';
+        } else {
+            downBtn.addEventListener('click', () => {
+                // 显示中向下 = 存储中向上
+                if (moveBookmarkInList(bookmarkKey, 'up')) {
+                    showBookmarkWindow(currentGroupId);
+                }
+            });
+        }
+
+        appendSeveral(tdSort, topBtn, upBtn, downBtn);
+        tr.appendChild(tdSort);
+    }
+
+    /**
+     * 创建站点列单元格
+     */
+    function createSitesColumn(sites, bookmarkKey, currentGroupId, linkStyle) {
+        const tdSites = createTag('td', "", 'max-width:300px;padding:5px;vertical-align:middle');
+        
+        // 按星标状态排序：星标的在前
+        const sortedSites = [...sites].sort((a, b) => {
+            const aStarred = a.starred ? 1 : 0;
+            const bStarred = b.starred ? 1 : 0;
+            return bStarred - aStarred;
+        });
+        
+        sortedSites.forEach(s => {
+            // 站点链接容器
+            const siteContainer = createTag('div', "", 'display:inline-flex;align-items:center;margin-right:5px;margin-bottom:2px;position:relative');
+            
+            // 星标emoji（如果已星标）
+            if (s.starred) {
+                const starEmoji = createTag('span', '⭐', 'margin-right:2px;font-size:14px');
+                siteContainer.appendChild(starEmoji);
+            }
+            
+            // 站点链接
+            const siteName = siteToWord[s.site] || s.site;
+            const link = createTag('a', siteName, linkStyle);
+            // 从路径部分拼接完整URL
+            link.href = buildFullUrl(s.url, s.site);
+            link.style.marginRight = '4px';
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                jumpToSite(s);
+            });
+            siteContainer.appendChild(link);
+            
+            // 三点按钮（悬停时显示）
+            const moreBtn = createTag('button', '⋮', 'padding:2px 3px;background:transparent;border:none;cursor:pointer;font-size:20px;color:#666;opacity:0;transition:opacity 0.2s;vertical-align:middle;line-height:1');
+            moreBtn.title = '更多操作';
+            
+            // 菜单容器
+            const menuContainer = createTag('div', "", 'position:absolute;top:100%;right:0;background:white;border:1px solid #ddd;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.15);z-index:1000;display:none;min-width:120px;margin-top:4px');
+            
+            // 点击外部关闭菜单的处理器
+            let closeMenuHandler = null;
+            
+            // 悬停显示三点按钮
+            siteContainer.addEventListener('mouseenter', () => {
+                moreBtn.style.opacity = '1';
+            });
+            siteContainer.addEventListener('mouseleave', () => {
+                setTimeout(() => {
+                    moreBtn.style.opacity = '0';
+                    menuContainer.style.display = 'none';
+                }, 500);
+            });
+            
+            // 星标按钮
+            const starBtn = createTag('button', s.starred ? '⭐ 取消星标' : '⭐ 设为星标', 'width:100%;padding:8px 12px;background:transparent;border:none;cursor:pointer;text-align:left;font-size:13px;color:#333');
+            starBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                // 关闭菜单
+                menuContainer.style.display = 'none';
+                if (closeMenuHandler) {
+                    document.removeEventListener('click', closeMenuHandler);
+                    closeMenuHandler = null;
+                }
+                if (toggleSiteStarred(bookmarkKey, s.site)) {
+                    showBookmarkWindow(currentGroupId);
+                }
+            });
+            starBtn.addEventListener('mouseenter', () => starBtn.style.backgroundColor = '#f5f5f5');
+            starBtn.addEventListener('mouseleave', () => starBtn.style.backgroundColor = 'transparent');
+            menuContainer.appendChild(starBtn);
+            
+            // 移除按钮（只有当站点数量大于1时才显示）
+            if (sites.length > 1) {
+                const removeBtn = createTag('button', '🗑️ 移除', 'width:100%;padding:8px 12px;background:transparent;border:none;cursor:pointer;text-align:left;font-size:13px;color:#333;border-top:1px solid #eee');
+                removeBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // 关闭菜单
+                    menuContainer.style.display = 'none';
+                    if (closeMenuHandler) {
+                        document.removeEventListener('click', closeMenuHandler);
+                        closeMenuHandler = null;
+                    }
+                    if (removeSiteFromBookmark(bookmarkKey, s.site)) {
+                        showBookmarkWindow(currentGroupId);
+                    }
+                });
+                removeBtn.addEventListener('mouseenter', () => removeBtn.style.backgroundColor = '#f5f5f5');
+                removeBtn.addEventListener('mouseleave', () => removeBtn.style.backgroundColor = 'transparent');
+                menuContainer.appendChild(removeBtn);
+            }
+            
+            // 点击三点按钮显示/隐藏菜单
+            moreBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const isVisible = menuContainer.style.display === 'block';
+                if (isVisible) {
+                    menuContainer.style.display = 'none';
+                    if (closeMenuHandler) {
+                        document.removeEventListener('click', closeMenuHandler);
+                        closeMenuHandler = null;
+                    }
+                } else {
+                    menuContainer.style.display = 'block';
+                    // 添加点击外部关闭菜单的监听器
+                    if (!closeMenuHandler) {
+                        closeMenuHandler = (e) => {
+                            if (!siteContainer.contains(e.target)) {
+                                menuContainer.style.display = 'none';
+                                document.removeEventListener('click', closeMenuHandler);
+                                closeMenuHandler = null;
+                            }
+                        };
+                        // 使用setTimeout确保当前点击事件处理完成后再添加监听器
+                        setTimeout(() => {
+                            document.addEventListener('click', closeMenuHandler);
+                        }, 0);
+                    }
+                }
+            });
+            
+            // 右键三点按钮显示菜单
+            moreBtn.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                menuContainer.style.display = 'block';
+                // 设置菜单位置
+                const rect = moreBtn.getBoundingClientRect();
+                menuContainer.style.top = rect.bottom + 'px';
+                menuContainer.style.right = '0';
+                // 添加点击外部关闭菜单的监听器
+                if (!closeMenuHandler) {
+                    closeMenuHandler = (e) => {
+                        if (!siteContainer.contains(e.target)) {
+                            menuContainer.style.display = 'none';
+                            document.removeEventListener('click', closeMenuHandler);
+                            closeMenuHandler = null;
+                        }
+                    };
+                    setTimeout(() => {
+                        document.addEventListener('click', closeMenuHandler);
+                    }, 0);
+                }
+            });
+            
+            siteContainer.appendChild(moreBtn);
+            siteContainer.appendChild(menuContainer);
+            tdSites.appendChild(siteContainer);
+        });
+        
+        return tdSites;
+    }
+
+    /**
      * 渲染书签列表内容（表格部分）
      * @param {HTMLElement} content - 内容容器
      * @param {number|null} currentGroupId - 当前选中的分组代号
      * @param {Array} groups - 分组列表
      */
-    function renderBookmarkListContent(content, currentGroupId, groups) {
+    function renderTableOfBookmark(content, currentGroupId, groups) {
+        // CSS样式变量（属性超过2个的样式）
+        const EMPTY_TABLE_TIP_STYLE = 'color:#666;text-align:center;padding:20px';
+        const TABLE_STYLE = 'width:100%;border-collapse:collapse;font-size:14px';
+        const TH_STYLE = 'padding:10px;text-align:left;border-bottom:2px solid #ddd';
+        const TD_STYLE = 'padding:10px;vertical-align:top;white-space:nowrap';
+        const TD_QUESTION_STYLE = 'padding:10px;max-width:300px;word-break:break-all;vertical-align:top;position:relative';
+        const QUESTION_CONTAINER_STYLE = 'display:flex;align-items:center;gap:0px';
+        const EDIT_BTN_STYLE = 'padding:4px;background:transparent;border:none;cursor:pointer;font-size:16px;flex-shrink:0;color:#666';
+        const LINK_STYLE = 'color:#1e3a8a;text-decoration:none;margin-right:auto 10px;cursor:pointer';
+        const JUMP_BTN_STYLE = 'padding:6px 12px;background:#f5f5f5;color:#000;border:1px solid #ddd;border-radius:4px;cursor:pointer;font-size:12px;margin-right:8px';
+        const DEL_BTN_STYLE = 'padding:6px 10px;background:transparent;border:none;cursor:pointer;font-size:18px;color:#ff6b6b';
+        const GROUP_SELECT_BASE_STYLE = 'padding:4px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;cursor:pointer;min-width:50px';
+
         // 获取书签（根据选中的分组过滤，使用代号）
         const bookmarks = getAllBookmarks(currentGroupId);
 
         if (bookmarks.length === 0) {
-            const emptyTip = createTag('p', '', 'color:#666;text-align:center;padding:20px');
-            setInnerHTML(emptyTip, '暂无多选同步提问的书签，点击屏幕边缘的加书签按钮可添加书签');
-            content.appendChild(emptyTip);
-        } else {
-            // 创建表格
-            const table = createTag('table', "", 'width:100%;border-collapse:collapse;font-size:14px');
-
-            // 表头
-            const thead = createTag('thead', "", "");
-            setInnerHTML(thead, '<tr style="background:#f5f5f5"><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">分组</th><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">提问</th><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">站点链接</th><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">操作</th><th style="padding:10px;text-align:left;border-bottom:2px solid #ddd">排序</th></tr>');
-            table.appendChild(thead);
-
-            // 表体
-            const tbody = createTag('tbody', "", "");
-            bookmarks.forEach((bookmark, index) => {
-                const tr = createTag('tr', "", 'border-bottom:1px solid #eee');
-
-                const bookmarkKey = bookmark.bookmarkKey || (BOOKMARK_PREFIX + bookmark.question);
-                const bookmarkGroupName = bookmark.group || DEFAULT_GROUP_NAME;
-                const bookmarkGroupId = bookmark.groupId !== undefined ? bookmark.groupId : getGroupIdByName(bookmarkGroupName);
-
-                // 分组列（仅下拉框应用对应分组的背景色）
-                const groupBgColor = getGroupBackgroundColor(bookmarkGroupId);
-                const tdGroup = createTag('td', "", 'padding:10px;vertical-align:top;white-space:nowrap');
-                const groupSelect = document.createElement('select');
-                groupSelect.style.cssText = `padding:4px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;cursor:pointer;min-width:50px;background:${groupBgColor}`;
-                
-                // 添加所有分组选项（显示名称，但value存储代号）
-                groups.forEach(group => {
-                    const option = document.createElement('option');
-                    option.value = group.id;
-                    option.textContent = group.name;
-                    groupSelect.appendChild(option);
-                });
-
-                // 选中当前分组（必须在 options 都加完之后再设，使用代号）
-                groupSelect.value = bookmarkGroupId;
-                
-                groupSelect.addEventListener('change', (e) => {
-                    const newGroupId = parseInt(e.target.value);
-                    if (setBookmarkGroup(bookmarkKey, newGroupId)) {
-                        // 保持当前Tab选中状态
-                        showBookmarkListPopup(currentGroupId);
-                    }
-                });
-                
-                tdGroup.appendChild(groupSelect);
-                tr.appendChild(tdGroup);
-
-                // 提问列
-                const tdQuestion = createTag('td', "", 'padding:10px;max-width:300px;word-break:break-all;vertical-align:top;position:relative');
-
-                // 提问内容容器
-                const questionContainer = createTag('div', "", 'display:flex;align-items:center;gap:8px');
-
-                // 提问文本
-                const questionTextContent = bookmark.question.length > 50 ? bookmark.question.substring(0, 50) + '...' : bookmark.question;
-                const questionText = createTag('span', questionTextContent, 'flex:1;word-break:break-all');
-                questionText.title = bookmark.question;
-                questionContainer.appendChild(questionText);
-
-                // 编辑按钮
-                const editBtn = createTag('button', '✏️', 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;flex-shrink:0;color:#666');
-                editBtn.title = '编辑提问内容';
-                editBtn.addEventListener('click', () => {
-                    handleEditBookmarkQuestion(bookmark.question, bookmarkKey, questionText, editBtn, questionContainer);
-                });
-
-                questionContainer.appendChild(editBtn);
-                tdQuestion.appendChild(questionContainer);
-                tr.appendChild(tdQuestion);
-
-                // 站点列
-                const tdSites = createTag('td', "", 'padding:10px;vertical-align:top');
-                bookmark.sites.forEach(s => {
-                    const link = createTag('a', s.siteName, 'color:#3b4cc8;text-decoration:none;margin-right:10px;cursor:pointer');
-                    link.href = s.url;
-                    link.addEventListener('click', (e) => {
-                        e.preventDefault();
-                        jumpToSite(s);
-                    });
-                    tdSites.appendChild(link);
-                });
-                tr.appendChild(tdSites);
-
-                // 操作列
-                const tdAction = createTag('td', "", 'padding:10px;vertical-align:top;white-space:nowrap');
-
-                // 一键跳转按钮
-                const jumpBtn = createTag('button', '一键跳转', 'padding:6px 12px;background:#f5f5f5;color:#000;border:1px solid #ddd;border-radius:4px;cursor:pointer;font-size:12px;margin-right:8px');
-                jumpBtn.title = '前提是已打开各家网页（任意页面皆可）';
-                jumpBtn.addEventListener('click', () => sendJumpSignalToAll(bookmark.sites));
-                jumpBtn.addEventListener('mouseenter', () => jumpBtn.style.opacity = '0.85');
-                jumpBtn.addEventListener('mouseleave', () => jumpBtn.style.opacity = '1');
-
-                // 删除按钮
-                const delBtn = createTag('button', '✕', 'padding:6px 10px;background:transparent;border:none;cursor:pointer;font-size:18px;color:#ff6b6b');
-                delBtn.title = '删除此书签，无法恢复';
-                delBtn.addEventListener('click', () => {
-                    removeBookmark(bookmarkKey);
-                    showBookmarkListPopup();
-                });
-                appendSeveral(tdAction, jumpBtn, delBtn);
-
-                tr.appendChild(tdAction);
-
-                // 排序列
-                const tdSort = createTag('td', "", 'padding:10px;vertical-align:top;white-space:nowrap;text-align:center');
-
-                // 置顶按钮（显示中最上面，存储中移到最后）
-                const topBtn = createTag('button', '⬆', 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;margin-right:4px;color:#3498db');
-                topBtn.title = '置顶';
-                // 显示中 index=0 对应存储列表的最后一个，如果已经在最后则不能置顶
-                const keyList = getGV(BOOKMARK_KEY_LIST) || [];
-                const storageIndex = keyList.indexOf(bookmarkKey);
-                const canMoveTop = storageIndex !== -1 && storageIndex < keyList.length - 1;
-                if (!canMoveTop) {
-                    topBtn.style.opacity = '0.5';
-                    topBtn.style.cursor = 'not-allowed';
-                } else {
-                    topBtn.addEventListener('click', () => {
-                        if (moveBookmarkInList(bookmarkKey, 'bottom')) {
-                            showBookmarkListPopup(currentGroupId);
-                        }
-                    });
-                }
-
-                // 上移按钮（显示中向上，存储中向下）
-                const upBtn = createTag('button', '↑', 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;margin-right:4px;color:#95a5a6');
-                upBtn.title = '上移';
-                const canMoveUp = index > 0;
-                if (!canMoveUp) {
-                    upBtn.style.opacity = '0.5';
-                    upBtn.style.cursor = 'not-allowed';
-                } else {
-                    upBtn.addEventListener('click', () => {
-                        // 显示中向上 = 存储中向下
-                        if (moveBookmarkInList(bookmarkKey, 'down')) {
-                            showBookmarkListPopup(currentGroupId);
-                        }
-                    });
-                }
-
-                // 下移按钮（显示中向下，存储中向上）
-                const downBtn = createTag('button', '↓', 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;color:#95a5a6');
-                downBtn.title = '下移';
-                const canMoveDown = index < bookmarks.length - 1;
-                if (!canMoveDown) {
-                    downBtn.style.opacity = '0.5';
-                    downBtn.style.cursor = 'not-allowed';
-                } else {
-                    downBtn.addEventListener('click', () => {
-                        // 显示中向下 = 存储中向上
-                        if (moveBookmarkInList(bookmarkKey, 'up')) {
-                            showBookmarkListPopup(currentGroupId);
-                        }
-                    });
-                }
-
-                appendSeveral(tdSort, topBtn, upBtn, downBtn);
-                tr.appendChild(tdSort);
-
-                tbody.appendChild(tr);
-            });
-            table.appendChild(tbody);
-            content.appendChild(table);
+            const emptyTableTip = createHtml('p', '暂无多选同步提问的书签，点击屏幕边缘的书签按钮可添加书签', EMPTY_TABLE_TIP_STYLE);
+            content.appendChild(emptyTableTip);
+            return;
         }
+
+        // 创建表格
+        const table = createTag('table', "", TABLE_STYLE);
+
+        // 表头
+        let theadHtml = `<tr style="background:#f5f5f5"><th style="${TH_STYLE}">分组</th><th style="${TH_STYLE}">提问</th><th style="${TH_STYLE}">站点链接</th><th style="${TH_STYLE}">操作</th><th style="${TH_STYLE}">排序</th></tr>`;
+        const thead = createHtml('thead', theadHtml, '');
+        table.appendChild(thead);
+
+        // 表体
+        const tbody = createTag('tbody', "", "");
+        bookmarks.forEach((bookmark, index) => {
+            const tr = createTag('tr', "", 'border-bottom:1px solid #eee');
+
+            const bookmarkKey = bookmark.bookmarkKey;
+            const bookmarkGroupName = bookmark.group || DEFAULT_GROUP_NAME;
+            const bookmarkGroupId = bookmark.groupId !== undefined ? bookmark.groupId : getGroupIdByName(bookmarkGroupName);
+
+            // 1、分组列
+            const groupBgColor = getGroupBackgroundColor(bookmarkGroupId);
+            const tdGroup = createTag('td', "", TD_STYLE);
+            const groupSelect = document.createElement('select');
+            groupSelect.style.cssText = `${GROUP_SELECT_BASE_STYLE};background:${groupBgColor}`;
+
+            // 添加所有分组选项（显示名称，但value存储代号）
+            groups.forEach(group => {
+                const option = document.createElement('option');
+                option.value = group.id;
+                option.textContent = group.name;
+                groupSelect.appendChild(option);
+            });
+
+            // 选中当前分组（必须在 options 都加完之后再设，使用代号）
+            groupSelect.value = bookmarkGroupId;
+
+            groupSelect.addEventListener('change', (e) => {
+                const newGroupId = parseInt(e.target.value);
+                if (setBookmarkGroup(bookmarkKey, newGroupId)) {
+                    // 保持当前Tab选中状态
+                    showBookmarkWindow(currentGroupId);
+                }
+            });
+
+            tdGroup.appendChild(groupSelect);
+            tr.appendChild(tdGroup);
+
+            // 2、提问列
+            const tdQuestion = createTag('td', "", TD_QUESTION_STYLE);
+
+            // 提问内容容器
+            const questionContainer = createTag('div', "", QUESTION_CONTAINER_STYLE);
+
+            // 提问文本
+            const SUB_LEN = 80;
+            const questionTextContent = bookmark.question.length > SUB_LEN ? bookmark.question.substring(0, SUB_LEN) + '...' : bookmark.question;
+            const questionText = createTag('span', questionTextContent, 'flex:1;word-break:break-all');
+            questionText.title = bookmark.question;
+            questionContainer.appendChild(questionText);
+
+            // 编辑按钮
+            const editBtn = createTag('button', '✏️', EDIT_BTN_STYLE);
+            editBtn.title = '编辑提问内容';
+            editBtn.addEventListener('click', () => {
+                editBookmarkQuestion(bookmark.question, bookmarkKey, questionText, editBtn, questionContainer);
+            });
+
+            questionContainer.appendChild(editBtn);
+            tdQuestion.appendChild(questionContainer);
+            tr.appendChild(tdQuestion);
+
+            // 3、站点列
+            const tdSites = createSitesColumn(bookmark.sites, bookmarkKey, currentGroupId, LINK_STYLE);
+            tr.appendChild(tdSites);
+
+            // 4、操作列
+            const tdAction = createTag('td', "", TD_STYLE);
+
+            // 一键跳转按钮
+            const jumpBtn = createTag('button', '一键跳转', JUMP_BTN_STYLE);
+            jumpBtn.title = '前提是已打开各家网页（任意页面皆可）';
+            jumpBtn.addEventListener('click', () => sendJumpSignalToAll(bookmark.sites));
+            jumpBtn.addEventListener('mouseenter', () => jumpBtn.style.opacity = '0.85');
+            jumpBtn.addEventListener('mouseleave', () => jumpBtn.style.opacity = '1');
+
+            // 删除按钮
+            const delBtn = createTag('button', '✕', DEL_BTN_STYLE);
+            delBtn.title = '删除此书签，无法恢复';
+            delBtn.addEventListener('click', () => {
+                removeBookmark(bookmarkKey);
+                showBookmarkWindow();
+            });
+            appendSeveral(tdAction, jumpBtn, delBtn);
+
+            tr.appendChild(tdAction);
+
+            // 5、排序列
+            createSortColumn(bookmarkKey, index, bookmarks, currentGroupId, tr);
+
+            tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        content.appendChild(table);
     }
 
     /**
      * 显示书签列表弹窗
      * @param {number|null} selectedGroupId - 选中的分组代号，null表示"全部"
+     * @param {boolean} skipSaveGroup - 是否跳过保存分组选择，true时不更新GV
      */
-    function showBookmarkListPopup(selectedGroupId = null) {
-        // 保存弹窗尺寸的key（用于跨弹窗生命周期保存，关闭弹窗后重新打开时使用）
-        const POPUP_HEIGHT_KEY = '__bookmark_popup_height__';
-        const POPUP_WIDTH_KEY = '__bookmark_popup_width__';
+    function showBookmarkWindow(selectedGroupId = null, skipSaveGroup = false) {
+        // CSS样式变量（属性超过2个的样式）
+        const POPUP_SIZE_STYLE = 'width:60%;height:80%;overflow:auto';
+        const HEADER_STYLE = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee';
+        const CLOSE_BTN_STYLE = 'cursor:pointer;font-size:20px;color:#999;padding:5px';
+        const TAB_BASE_STYLE = 'padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;color:#333';
+        const TAB_CONTAINER_STYLE = 'display:flex;align-items:center;gap:8px;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee;flex-wrap:wrap';
+        const ADD_GROUP_BTN_STYLE = 'padding:6px 12px;background:#4caf50;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px';
+
+        // 获取分组列表（提前获取，避免重复调用）
+        const groups = getBookmarkGroups();
+        
+        // 如果selectedGroupId为null（首次打开），从存储中读取上次选中的分组ID
+        // 但如果skipSaveGroup为true，则跳过读取，直接使用null（用于"立即查看书签列表"按钮）
+        if (selectedGroupId === null && !skipSaveGroup) {
+            const lastSelectedGroupId = getGV(BOOKMARK_LAST_SELECTED_GROUP);
+            if (lastSelectedGroupId !== null && lastSelectedGroupId !== undefined) {
+                // 检查该分组是否还存在
+                const groupExists = groups.some(g => g.id === lastSelectedGroupId);
+                if (groupExists) {
+                    selectedGroupId = lastSelectedGroupId;
+                } else {
+                    // 分组不存在，清除保存的值，使用null（显示全部）
+                    setGV(BOOKMARK_LAST_SELECTED_GROUP, null);
+                }
+            }
+        }
         
         // 检查弹窗是否已存在
         const existingPopup = document.getElementById('bookmark-popup');
@@ -4570,43 +5009,20 @@
             content = popup.firstElementChild; // content是popup的第一个子元素
             // 清空内容，准备重新填充
             if (content) {
-                // 保存当前尺寸（如果已设置），如果没有则从window读取
-                let currentHeight = content.style.height;
-                let currentWidth = content.style.width;
-                if (!currentHeight && window[POPUP_HEIGHT_KEY]) {
-                    currentHeight = window[POPUP_HEIGHT_KEY] + 'px';
-                }
-                if (!currentWidth && window[POPUP_WIDTH_KEY]) {
-                    currentWidth = window[POPUP_WIDTH_KEY] + 'px';
-                }
                 content.replaceChildren(); // 使用replaceChildren代替innerHTML
-                // 立即恢复尺寸样式（避免闪烁）
-                if (currentHeight) content.style.height = currentHeight;
-                if (currentWidth) content.style.width = currentWidth;
-                if (currentHeight) content.style.overflowY = 'auto';
             }
         } else {
-            // 首次创建弹窗
-            const result = createPopupBase('bookmark-popup', ';max-width:80%;max-height:80%;overflow:auto');
+            // 首次创建弹窗，固定宽度60%，高度80%
+            const result = createPopupBase('bookmark-popup', ';' + POPUP_SIZE_STYLE);
             popup = result.popup;
             content = result.content;
         }
-        
-        // 判断是否是首次打开（显示全部）
-        const isFirstOpen = selectedGroupId === null;
-        
-        // 读取保存的尺寸：优先从content元素读取，如果没有则从window读取
-        let savedHeight = content && content.style.height ? parseFloat(content.style.height) : window[POPUP_HEIGHT_KEY];
-        let savedWidth = content && content.style.width ? parseFloat(content.style.width) : window[POPUP_WIDTH_KEY];
 
         // 标题栏
-        const header = createTag('div', "", 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee');
-        setInnerHTML(header, '<h3 style="margin:0;color:#333">📚 书签列表</h3>');
+        const header = createHtml('div', '<h3 style="margin:0;color:#333">📚 书签列表</h3>', HEADER_STYLE);
 
-        const closeBtn = createTag('span', '✕', 'cursor:pointer;font-size:20px;color:#999;padding:5px');
+        const closeBtn = createTag('span', '✕', CLOSE_BTN_STYLE);
         closeBtn.onclick = () => {
-            delete window[POPUP_HEIGHT_KEY]; // 清除保存的高度
-            delete window[POPUP_WIDTH_KEY]; // 清除保存的宽度
             if (popup && popup.parentNode) {
                 popup.remove();
             }
@@ -4615,35 +5031,49 @@
         content.appendChild(header);
 
         // 分组管理区域
-        const groups = getBookmarkGroups();
         const currentGroupId = selectedGroupId;
         
+        // Tab切换函数（统一处理保存和切换）
+        // 用户主动点击tab时，应该恢复正常保存行为（skipSaveGroup设为false）
+        const switchToGroup = (groupId, skipSave = false) => {
+            if (!skipSave && !skipSaveGroup) {
+                setGV(BOOKMARK_LAST_SELECTED_GROUP, groupId);
+            }
+            // 用户主动点击tab时，重置skipSaveGroup为false，恢复正常保存行为
+            showBookmarkWindow(groupId, skipSave);
+        };
+        
+        // 创建Tab函数（统一处理全部和分组tab）
+        const createGroupTab = (text, groupId, isSelected, bgColor, isBold = false) => {
+            const fontWeight = isBold ? 'font-weight:bold;' : '';
+            const border = isSelected ? '2px solid #667eea' : '1px solid transparent';
+            const tab = createTag('div', text, `${TAB_BASE_STYLE};${fontWeight}background:${bgColor};border:${border}`);
+            tab.addEventListener('click', () => switchToGroup(groupId));
+            return tab;
+        };
+        
         // Tab切换区域
-        const tabContainer = createTag('div', "", 'display:flex;align-items:center;gap:8px;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee;flex-wrap:wrap');
+        const tabContainer = createTag('div', "", TAB_CONTAINER_STYLE);
         
         // 全部Tab
-        const isAllSelected = currentGroupId === null;
-        const allTab = createTag('div', '全部', `padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;font-weight:bold;background:#f0f0f0;color:#333;border:${isAllSelected ? '1px solid #667eea' : '1px solid transparent'}`);
-        allTab.addEventListener('click', () => showBookmarkListPopup(null));
+        const allTab = createGroupTab('全部', null, currentGroupId === null, '#f0f0f0', true);
         tabContainer.appendChild(allTab);
         
         // 各分组Tab
         groups.forEach(group => {
-            const isSelected = currentGroupId === group.id;
             const groupBgColor = getGroupBackgroundColor(group.id);
-            const groupTab = createTag('div', group.name, `padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;background:${groupBgColor};color:#333;border:${isSelected ? '1px solid #667eea' : '1px solid transparent'}`);
-            groupTab.addEventListener('click', () => showBookmarkListPopup(group.id));
+            const groupTab = createGroupTab(group.name, group.id, currentGroupId === group.id, groupBgColor);
             tabContainer.appendChild(groupTab);
         });
         
         // 添加分组按钮
-        const addGroupBtn = createTag('button', '+ 添加分组', 'padding:6px 12px;background:#4caf50;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px');
+        const addGroupBtn = createTag('button', '+ 添加分组', ADD_GROUP_BTN_STYLE);
         addGroupBtn.title = '添加新分组';
         addGroupBtn.addEventListener('click', () => {
             const groupName = prompt('请输入分组名称：');
             if (groupName && groupName.trim()) {
                 if (addBookmarkGroup(groupName.trim())) {
-                    showBookmarkListPopup(currentGroupId);
+                    showBookmarkWindow(currentGroupId);
                 } else {
                     showMessagePopup('分组名称已存在或无效');
                 }
@@ -4656,28 +5086,44 @@
         content.appendChild(tabContainer);
 
         // 渲染书签列表
-        renderBookmarkListContent(content, currentGroupId, groups);
-        
-        // 处理弹窗尺寸：首次打开时记录高度和宽度，切换tab时保持尺寸不变
-        setTimeout(() => {
-            if (isFirstOpen && savedHeight === undefined) {
-                // 首次打开（显示全部），记录初始高度和宽度
-                const rect = content.getBoundingClientRect();
-                window[POPUP_HEIGHT_KEY] = rect.height;
-                window[POPUP_WIDTH_KEY] = rect.width;
-            } else if (!isFirstOpen && savedHeight !== undefined) {
-                // 切换tab时，使用保存的高度和宽度
-                content.style.height = savedHeight + 'px';
-                content.style.overflowY = 'auto';
-                if (savedWidth !== undefined) {
-                    content.style.width = savedWidth + 'px';
-                }
-            }
-        }, 10);
+        renderTableOfBookmark(content, currentGroupId, groups);
+    }
+
+    // 初始化书签按钮
+    setTimeout(() => {
+        if (isBookmarkFeatureEnabled()) {
+            createAddButtonOfBookmark();
+            createViewButtonOfBookmark();
+        }
+        updateButtonVisibility(); // 根据设置更新按钮显示状态
+    }, 1000);
+
+    // 创建加书签按钮
+    function createAddButtonOfBookmark() {
+        createButtonOfBookmark({
+            id: 'bookmark-btn',
+            text: '书签',
+            title: '多家同步提问后的各页面，可一键加书签，方便回看',
+            bottom: '0px',
+            background: 'linear-gradient(135deg,#11998e 0%,#38ef7d 100%)',
+            onClick: onBookmarkButtonClick
+        });
+    }
+
+    // 创建查看书签按钮
+    function createViewButtonOfBookmark() {
+        createButtonOfBookmark({
+            id: 'bookmark-view-btn',
+            text: '列表',
+            title: '书签列表',
+            bottom: '40px',
+            background: 'linear-gradient(135deg,#667eea 0%,#764ba2 100%)',
+            onClick: showBookmarkWindow
+        });
     }
 
     // 创建书签按钮（通用函数）
-    function createBookmarkButton(config) {
+    function createButtonOfBookmark(config) {
         const { id, text, title, bottom, background, onClick } = config;
         const btn = document.createElement('div');
         btn.id = id;
@@ -4692,38 +5138,4 @@
         });
         document.body.appendChild(btn);
     }
-
-    // 创建加书签按钮
-    function createBookmarkAddButton() {
-        createBookmarkButton({
-            id: 'bookmark-btn',
-            text: '书签',
-            title: '多家同步提问后的各页面，可一键加书签，方便回看',
-            bottom: '10px',
-            background: 'linear-gradient(135deg,#11998e 0%,#38ef7d 100%)',
-            onClick: onBookmarkButtonClick
-        });
-    }
-
-    // 创建查看书签按钮
-    function createBookmarkViewButton() {
-        createBookmarkButton({
-            id: 'bookmark-view-btn',
-            text: '列表',
-            title: '书签列表',
-            bottom: '45px',
-            background: 'linear-gradient(135deg,#667eea 0%,#764ba2 100%)',
-            onClick: showBookmarkListPopup
-        });
-    }
-
-    // 初始化书签按钮
-    setTimeout(() => {
-        if (isBookmarkFeatureEnabled()) {
-            createBookmarkAddButton();
-            createBookmarkViewButton();
-        }
-        updateButtonVisibility(); // 根据设置更新按钮显示状态
-    }, 1000);
-
 })();
