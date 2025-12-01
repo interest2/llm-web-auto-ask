@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      4.1.1
+// @version      4.2.0
 // @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://www.kimi.com/*
@@ -24,7 +24,6 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_addValueChangeListener
-// @connect      www.ratetend.com
 // @license      MIT
 // @downloadURL https://update.greasyfork.org/scripts/536504/%E5%A4%9A%E5%AE%B6%E5%A4%A7%E6%A8%A1%E5%9E%8B%E5%90%8C%E6%97%B6%E5%9B%9E%E7%AD%94%EF%BC%8C%E5%8E%9F%E7%AB%99%E6%A0%B7%E5%BC%8F%E5%B1%95%E7%A4%BA.user.js
 // @updateURL https://update.greasyfork.org/scripts/536504/%E5%A4%9A%E5%AE%B6%E5%A4%A7%E6%A8%A1%E5%9E%8B%E5%90%8C%E6%97%B6%E5%9B%9E%E7%AD%94%EF%BC%8C%E5%8E%9F%E7%AB%99%E6%A0%B7%E5%BC%8F%E5%B1%95%E7%A4%BA.meta.js
@@ -37,7 +36,7 @@
     const STUDIO_CONTENT_MAX_WIDTH = "800px"; // ai studio 内容最大宽度
     const GEMINI_MAX_WIDTH = "850px"; // gemini 内容最大宽度
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
-    const version = "4.1.1";
+    const version = "4.2.0";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -280,7 +279,6 @@
     const maxRetries = 200;
     const OPEN_GAP = 300; // 打开网页的间隔
     const HIBERNATE_GAP = 600; // 单位：秒
-    let testLocalFlag = 0;
 
     // 存储时的特征词
     const T = "tool-";
@@ -290,41 +288,22 @@
     const BOOKMARK_PREFIX = "bookmark-";           // 书签存储key前缀
     const BOOKMARK_ID_COUNTER = "bookmarkIdCounter"; // 书签ID计数器
     const CURRENT_BOOKMARK_KEY = "currentBookmarkKey"; // 当前书签key
-    const BOOKMARK_KEY_LIST = "bookmarkKeyList";   // 书签key列表
+    // 已移除BOOKMARK_KEY_LIST，改为从分组映射叠加获取全部书签
     const BOOKMARK_DELETE_CONFIRMED = "bookmarkDeleteConfirmed"; // 是否已首次确认删除
     const BOOKMARK_GROUP_LIST = "bookmarkGroupList"; // 分组列表
+    const BOOKMARK_GROUP_MAP = "bookmarkGroupMap"; // 分组到书签ID的映射 {groupId: [bookmarkId数组]}，存储时移除"bookmark-"前缀以节省空间
     const BOOKMARK_LAST_SELECTED_GROUP = "bookmarkLastSelectedGroup"; // 上次选中的分组ID
     const DEFAULT_GROUP_NAME = "默认"; // 默认分组名称
     const DEFAULT_GROUP_ID = 0; // 默认分组代号
+    const BOOKMARK_QUESTION_MAX_LENGTH = 150; // 书签question最大长度
     // 书签按钮公共样式（不包含 bottom 和 background）
     const BOOKMARK_BTN_BASE_STYLE = "position:fixed;right:0;color:white;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:10000;border-radius:6px 0 0 6px;box-shadow:-2px 2px 8px rgba(0,0,0,0.2);user-select:none;padding:3px 5px";
-
-    let DOMAIN = "https://www.ratetend.com:5001";
-    const DEVELOPER_USERID = "7bca846c-be51-4c49-ba2b6"
 
     let userid = getGV("userid");
     if(isEmpty(userid)){
         userid = guid();
         setGV("userid", userid);
     }
-
-    setTimeout(developTest, 2000);
-    function developTest(){
-        // kimi 表格太窄，自测调大用
-        if(DEVELOPER_USERID === userid && site === KIMI){
-            // let kimiPage = document.getElementsByClassName("chat-content-list")[0];
-            // kimiPage.style.maxWidth = TEST_KIMI_WIDTH;
-        }
-    }
-
-
-    let startUrl = DOMAIN + "/start";
-    let startData = {
-        "userid": userid,
-        "site": site,
-        "version": version
-    };
-    remoteHttp(startUrl, startData);
 
     // 生成映射
     const wordToSite = {};
@@ -378,23 +357,7 @@
         if(isDisable){
             return;
         }
-        let remoteUrl = DOMAIN + "/masterQ";
-        let sites = getSitesExcludeCurrent();
-        let data = {
-            "userid": userid,
-            "sites": sites
-        };
-        remoteHttp(remoteUrl, data);
-
-        sites.forEach(site => {
-            let lastHeartbeat = getGV(HEART_KEY_PREFIX + site);
-            // 如果从节点 xx 秒没有更新心跳时刻，则认为已经关闭，需打开
-            if(isEmpty(lastHeartbeat) || Date.now() - lastHeartbeat > 1000 * HIBERNATE_GAP){
-                setTimeout(function(){
-                    window.open(newSites[site], '_blank');
-                }, OPEN_GAP);
-            }
-        });
+   
     }
 
     let lastQuestion = "";
@@ -2716,7 +2679,8 @@
         emptyMessage: `padding:1px;text-align:center;color:#888;font-size:14px;`,
         headline: `font-weight:bold;`,
         hint: `color:#275fe6;width:0;height:0;padding-left:3px;margin-top:5px;margin-bottom:5px;border-top:8px solid transparent;border-right:8px solid #3498db;border-bottom:8px solid transparent;`,
-        settingsBtn: `background:#667eea;color:white;border:none;border-radius:4px;padding:4px 8px;font-size:16px;cursor:pointer;margin-bottom:4px;width:100%;`
+        settingsBtn: `text-align:left;background:#667eea;color:white;border:none;border-radius:4px;padding:4px 8px;font-size:16px;cursor:pointer;margin-bottom:4px;width:100%;`,
+        newChatBtn: `text-align:left;background:#48bb78;color:white;border:none;border-radius:4px;padding:4px 8px;font-size:16px;cursor:pointer;margin-bottom:4px;width:100%;`
     };
 
     // 面板数据
@@ -2736,8 +2700,12 @@
     let disable = createTag('div', DISABLE, PANEL_STYLES.disable);
     disable.id = "tool-disable";
     disable.addEventListener('click', (e) => disableEvent(e));
+    disable.addEventListener('mouseenter', () => disable.style.opacity = '0.85');
+    disable.addEventListener('mouseleave', () => disable.style.opacity = '1');
+    disable.title = '禁用/启用自动同步提问功能';
 
     const settingsBtn = createSettingsButton();
+    const newChatBtn = createNewChatButton();
 
     // 根据word在words数组中的索引获取背景色
     const getItemBgColor = (word) => {
@@ -2792,6 +2760,71 @@
     }
 
     /**
+     * 创建新对话按钮
+     */
+    function createNewChatButton() {
+        const btn = createTag('button', '新对话', PANEL_STYLES.newChatBtn);
+        btn.id = 'tool-new-chat';
+        btn.title = '对于已勾选且已打开的站点，将批量跳转到新对话页面';
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            jumpToNewChat();
+        });
+        btn.addEventListener('mouseenter', () => btn.style.opacity = '0.85');
+        btn.addEventListener('mouseleave', () => btn.style.opacity = '1');
+        return btn;
+    }
+
+    /**
+     * 跳转到新对话页面（仅限多选面板勾选的站点）
+     */
+    function jumpToNewChat() {
+        // 获取已勾选的站点（优先从DOM读取，如果读取不到则从存储读取）
+        let selectedSites = [];
+        const visibleSites = getVisibleModels();
+        const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
+        const checkedWords = visibleWords.filter(word => document.getElementById(`word-${word}`)?.checked);
+        
+        if (checkedWords.length > 0) {
+            // 从DOM读取已勾选的站点
+            selectedSites = checkedWords.map(word => wordToSite[word]);
+        } else {
+            // 如果从DOM读取不到，则从存储读取
+            selectedSites = getSitesAndCurrent();
+        }
+
+        if (selectedSites.length === 0) {
+            console.log('没有勾选的站点');
+            return;
+        }
+
+        // 构建已勾选站点的跳转数据
+        const jumpData = {};
+        selectedSites.forEach(siteId => {
+            const baseUrl = webSites[siteId]?.[0];
+            if (baseUrl) {
+                jumpData[siteId] = baseUrl;
+            }
+        });
+
+        // 发送跳转信号，已勾选的站点会自动监听到并响应
+        setGV(NEW_CHAT_JUMP_SIGNAL_KEY, {
+            jumpData: jumpData,
+            timestamp: Date.now()
+        });
+
+        // 当前站点直接跳转（如果已勾选）
+        const currentUrl = getUrl();
+        const targetUrl = jumpData[site];
+        if (targetUrl && currentUrl !== targetUrl) {
+            console.log(curDate() + `新对话跳转: 从 ${currentUrl} 跳转到 ${targetUrl}`);
+            window.location.href = targetUrl;
+        }
+
+        console.log(curDate() + `新对话: 已发送跳转信号到 ${selectedSites.length} 个已勾选站点`);
+    }
+
+    /**
      * 渲染面板内容（公共函数，用于初始化和刷新）
      */
     function renderPanelContent() {
@@ -2808,7 +2841,7 @@
 
     // 初始化面板内容
     renderPanelContent();
-    appendSeveral(panel, settingsBtn, contentContainer);
+    appendSeveral(panel, settingsBtn, newChatBtn, contentContainer);
 
     const settingsBtnText = '设置 ⚙️';
     // 首次加载多选面板 是展开状态，后续刷新网页默认缩略状态
@@ -2817,6 +2850,8 @@
     } else {
         // 如果不是第一次运行，面板保持展开状态，更新设置按钮文字
         settingsBtn.textContent = settingsBtnText;
+        newChatBtn.style.display = 'block';
+        disable.style.padding = '4px 8px';
     }
 
     // 面板相关函数
@@ -2975,6 +3010,7 @@
 
         // 确保按钮状态正确
         settingsBtn.style.display = 'none';
+        newChatBtn.style.display = 'none';
         if (contentContainer.contains(disable)) {
             disable.remove();
         }
@@ -2982,6 +3018,7 @@
             panel.insertBefore(disable, contentContainer);
         }
         disable.style.display = 'block';
+        disable.style.padding = '2px 1px';
 
         let selectedSites = getSitesAndCurrent();
         let selectedWords = selectedSites.map(site => siteToWord[site]).filter(word => word);
@@ -3023,8 +3060,9 @@
             selectedWords = visibleWords.filter(word => wordsFromStorage.includes(word));
         }
 
-        // 隐藏设置按钮，显示禁用按钮
+        // 隐藏设置按钮和新对话按钮，显示禁用按钮
         settingsBtn.style.display = 'none';
+        newChatBtn.style.display = 'none';
         // 如果disable在contentContainer中，先移除
         if (contentContainer.contains(disable)) {
             disable.remove();
@@ -3034,6 +3072,7 @@
             panel.insertBefore(disable, contentContainer);
         }
         disable.style.display = 'block';
+        disable.style.padding = '2px 1px';
 
         if (selectedWords.length === 0) {
             const emptyMsg = createTag('div', '未选模型', PANEL_STYLES.emptyMessage);
@@ -3073,21 +3112,27 @@
         contentContainer.replaceChildren();
         renderPanelContent();
         
-        // 如果是展开模式，确保设置按钮状态正确
+        // 如果是展开模式，确保设置按钮和新对话按钮状态正确
         if (!isCompactMode) {
             settingsBtn.style.display = 'block';
             settingsBtn.textContent = settingsBtnText;
-            // 确保设置按钮在panel层面，在contentContainer之前
-            if (!panel.contains(settingsBtn) || settingsBtn.nextSibling !== contentContainer) {
+            newChatBtn.style.display = 'block';
+            // 确保设置按钮和新对话按钮在panel层面，在contentContainer之前
+            if (!panel.contains(settingsBtn) || settingsBtn.nextSibling !== newChatBtn || newChatBtn.nextSibling !== contentContainer) {
                 if (panel.contains(settingsBtn)) {
                     settingsBtn.remove();
                 }
+                if (panel.contains(newChatBtn)) {
+                    newChatBtn.remove();
+                }
                 panel.insertBefore(settingsBtn, contentContainer);
+                panel.insertBefore(newChatBtn, contentContainer);
             }
             // 如果disable在panel层面，需要移除（它应该在contentContainer内）
             if (panel.contains(disable) && !contentContainer.contains(disable)) {
                 disable.remove();
             }
+            disable.style.padding = '4px 8px';
         }
     }
 
@@ -3095,15 +3140,20 @@
     function switchToOriginalMode() {
         if (!isCompactMode) return;
 
-        // 显示设置按钮，隐藏禁用按钮（禁用按钮会在renderPanelContent中添加到contentContainer）
+        // 显示设置按钮和新对话按钮，隐藏禁用按钮（禁用按钮会在renderPanelContent中添加到contentContainer）
         settingsBtn.style.display = 'block';
         settingsBtn.textContent = settingsBtnText;
-        // 确保设置按钮在panel层面，在contentContainer之前
-        if (!panel.contains(settingsBtn) || settingsBtn.nextSibling !== contentContainer) {
+        newChatBtn.style.display = 'block';
+        // 确保设置按钮和新对话按钮在panel层面，在contentContainer之前
+        if (!panel.contains(settingsBtn) || settingsBtn.nextSibling !== newChatBtn || newChatBtn.nextSibling !== contentContainer) {
             if (panel.contains(settingsBtn)) {
                 settingsBtn.remove();
             }
+            if (panel.contains(newChatBtn)) {
+                newChatBtn.remove();
+            }
             panel.insertBefore(settingsBtn, contentContainer);
+            panel.insertBefore(newChatBtn, contentContainer);
         }
         if (panel.contains(disable)) {
             disable.remove();
@@ -3113,6 +3163,7 @@
         renderPanelContent();
         updateBoxFromStorage();
 
+        disable.style.padding = '4px 8px';
         isCompactMode = false;
         panel.style.cssText = PANEL_STYLES.panel;
     };
@@ -3253,24 +3304,6 @@
      */
     function isMaxWidth() {
         return window.outerWidth >= screen.availWidth - 50;
-    }
-
-    // 远程HTTP请求
-    function remoteHttp(remoteUrl, data){
-        GM_xmlhttpRequest({
-            method: "POST",
-            url: remoteUrl,
-            data: JSON.stringify(data),
-            headers: {
-                "Content-Type": "application/json"
-            },
-            onload: function(response) {
-                console.log(response.responseText);
-            },
-            onerror: function(error) {
-                console.error('请求失败:', error);
-            }
-        });
     }
 
     /**
@@ -3967,6 +4000,7 @@
 
     const BOOKMARK_SIGNAL_KEY = "bookmarkSignal"; // 书签创建信号key
     const BOOKMARK_JUMP_SIGNAL_KEY = "bookmarkJumpSignal"; // 书签跳转信号key
+    const NEW_CHAT_JUMP_SIGNAL_KEY = "newChatJumpSignal"; // 新对话跳转信号key
     const SITE_JUMP_REQUEST_PREFIX = "site-jump-request-"; // 单站点跳转请求信号前缀
     const SITE_JUMP_ACK_PREFIX = "site-jump-ack-"; // 单站点跳转确认信号前缀
     const SITE_JUMP_TIMEOUT = 500; // 跳转确认超时时间（毫秒）
@@ -4012,12 +4046,107 @@
         return match ? match[1] : '';
     }
 
+    /**
+     * 截取书签question（超过最大长度则截取）
+     */
+    function truncateBookmarkQuestion(question) {
+        if (!question) return '';
+        return question.length > BOOKMARK_QUESTION_MAX_LENGTH ? question.substring(0, BOOKMARK_QUESTION_MAX_LENGTH) : question;
+    }
+
+    /**
+     * 生成书签标题
+     * 从 document.title 移除当前站点的 word 前缀或后缀后，如果字数大于7则采用，否则复用提问内容
+     */
+    function generateBookmarkTitle(question) {
+        let title = document.title || '';
+        
+        // 查找当前站点的 word
+        const currentSiteConfig = wordConfig.find(config => config.site === site);
+        if (currentSiteConfig) {
+            const word = currentSiteConfig.word;
+            // 移除前缀
+            if (title.startsWith(word)) {
+                title = title.substring(word.length).trim();
+            }
+            // 移除后缀
+            if (title.endsWith(word)) {
+                title = title.substring(0, title.length - word.length).trim();
+            }
+        }
+        
+        // 如果字数大于7，则采用它，否则复用提问内容
+        if (title.length > 7) {
+            return title;
+        } else {
+            return question || '';
+        }
+    }
+
     // 从路径部分拼接完整URL（加上域名前缀）
     function buildFullUrl(path, siteId) {
         const baseUrl = webSites[siteId]?.[0];
         if (!baseUrl) return path;
         const match = baseUrl.match(/^(https?:\/\/[^\/]+\/)/);
         return match ? match[1] + path : baseUrl + path;
+    }
+
+    /**
+     * 根据URL识别站点ID
+     * @param {string} url - 完整URL
+     * @returns {number|null} - 站点ID，如果无法识别则返回null
+     */
+    function identifySiteFromUrl(url) {
+        if (!url || typeof url !== 'string') return null;
+        
+        // 如果没有协议前缀，自动添加https://
+        let normalizedUrl = url.trim();
+        if (!normalizedUrl.match(/^https?:\/\//i)) {
+            normalizedUrl = 'https://' + normalizedUrl;
+        }
+        
+        try {
+            const urlObj = new URL(normalizedUrl);
+            const urlHost = urlObj.hostname.toLowerCase();
+            
+            // 移除www前缀进行比较（更灵活的匹配）
+            const urlHostWithoutWww = urlHost.replace(/^www\./, '');
+            
+            // 遍历webSites，匹配域名
+            for (const [siteId, baseUrls] of Object.entries(webSites)) {
+                if (!baseUrls || !Array.isArray(baseUrls) || baseUrls.length === 0) continue;
+                
+                const baseUrl = baseUrls[0];
+                if (!baseUrl) continue;
+                
+                try {
+                    const baseUrlObj = new URL(baseUrl);
+                    const baseHost = baseUrlObj.hostname.toLowerCase();
+                    const baseHostWithoutWww = baseHost.replace(/^www\./, '');
+                    
+                    // 精确匹配域名（考虑www前缀）
+                    if (urlHost === baseHost || urlHostWithoutWww === baseHostWithoutWww) {
+                        return parseInt(siteId);
+                    }
+                } catch (e) {
+                    // 如果baseUrl解析失败，尝试字符串匹配
+                    if (normalizedUrl.indexOf(baseUrl) === 0 || url.indexOf(baseUrl) === 0) {
+                        return parseInt(siteId);
+                    }
+                }
+            }
+        } catch (e) {
+            // URL解析失败，尝试字符串匹配
+            for (const [siteId, baseUrls] of Object.entries(webSites)) {
+                if (!baseUrls || !Array.isArray(baseUrls) || baseUrls.length === 0) continue;
+                const baseUrl = baseUrls[0];
+                if (baseUrl && (normalizedUrl.indexOf(baseUrl) === 0 || url.indexOf(baseUrl) === 0)) {
+                    return parseInt(siteId);
+                }
+            }
+        }
+        
+        return null;
     }
 
     /**
@@ -4030,7 +4159,7 @@
         const urlPath = extractUrlPath(url);
 
         // 重新读取最新数据，避免并发覆盖
-        const bookmarkData = getBookmarkData(bookmarkKey) || { sites: [], group: DEFAULT_GROUP_ID, question: '' };
+        const bookmarkData = getBookmarkData(bookmarkKey) || { sites: [], group: DEFAULT_GROUP_ID, question: '', title: '' };
         const sites = bookmarkData.sites || [];
         const existingIndex = sites.findIndex(item => item.site === siteId);
 
@@ -4041,8 +4170,10 @@
         }
 
         // 如果提供了question，则更新question字段
-        const questionToSave = question !== undefined ? question : (bookmarkData.question || '');
-        setBookmarkData(bookmarkKey, sites, bookmarkData.group, questionToSave);
+        const questionToSave = question !== undefined ? truncateBookmarkQuestion(question) : (bookmarkData.question || '');
+        // 如果提供了question且没有title，则生成title
+        const titleToSave = bookmarkData.title || (questionToSave ? generateBookmarkTitle(questionToSave) : '');
+        setBookmarkData(bookmarkKey, sites, bookmarkData.group, questionToSave, titleToSave);
 
         // 写入后验证，若数据丢失则重试
         setTimeout(() => {
@@ -4075,7 +4206,7 @@
         sites[siteIndex].starred = !sites[siteIndex].starred;
 
         // 保存数据
-        setBookmarkData(bookmarkKey, sites, bookmarkData.group, bookmarkData.question);
+        setBookmarkData(bookmarkKey, sites, bookmarkData.group, bookmarkData.question, bookmarkData.title);
         return true;
     }
 
@@ -4097,7 +4228,7 @@
         sites.splice(siteIndex, 1);
 
         // 保存数据
-        setBookmarkData(bookmarkKey, sites, bookmarkData.group, bookmarkData.question);
+        setBookmarkData(bookmarkKey, sites, bookmarkData.group, bookmarkData.question, bookmarkData.title);
         return true;
     }
 
@@ -4115,8 +4246,8 @@
         // 检查：如果勾选站点的第一个问题不等于当前站点的，则不加到同步关系里
         const bookmarkData = getBookmarkData(bookmarkKey);
         if (!bookmarkData) return;
-        const bookmarkQuestion = normalizeQuestionText(bookmarkData.question || '');
-        const currentSiteFirstQuestion = normalizeQuestionText(getFirstQuestionContent() || '');
+        const bookmarkQuestion = truncateBookmarkQuestion(normalizeQuestionText(bookmarkData.question || ''));
+        const currentSiteFirstQuestion = truncateBookmarkQuestion(normalizeQuestionText(getFirstQuestionContent() || ''));
         if (bookmarkQuestion !== currentSiteFirstQuestion) {
             console.log(curDate() + "书签: 当前站点第一个问题与书签问题不一致，不添加到同步关系");
             return;
@@ -4138,6 +4269,21 @@
         const currentUrl = getUrl();
         if (currentUrl !== targetUrl) {
             console.log(curDate() + `书签跳转: 从 ${currentUrl} 跳转到 ${targetUrl}`);
+            window.location.href = targetUrl;
+        }
+    });
+
+    // 监听新对话跳转信号：所有已打开站点收到信号后跳转到新对话页面
+    GM_addValueChangeListener(NEW_CHAT_JUMP_SIGNAL_KEY, function(name, oldValue, newValue, remote) {
+        if (!remote || !newValue) return;
+
+        const { jumpData, timestamp } = newValue;
+        if (!jumpData || !jumpData[site]) return;
+
+        const targetUrl = jumpData[site];
+        const currentUrl = getUrl();
+        if (currentUrl !== targetUrl) {
+            console.log(curDate() + `新对话跳转: 从 ${currentUrl} 跳转到 ${targetUrl}`);
             window.location.href = targetUrl;
         }
     });
@@ -4258,8 +4404,18 @@
         addBookmarkKeyToList(bookmarkKey);
         console.log(curDate() + "书签: 创建新书签", bookmarkKey);
 
-        // 添加当前站点的URL（同时保存question）
-        updateBookmarkData(bookmarkKey, site, currentUrl, questionText);
+        // 截取question
+        const truncatedQuestion = truncateBookmarkQuestion(questionText);
+        
+        // 生成标题
+        const title = generateBookmarkTitle(truncatedQuestion);
+        
+        // 先设置初始数据（包含title），然后再调用updateBookmarkData
+        // updateBookmarkData会读取已有的title，不会重复生成
+        setBookmarkData(bookmarkKey, [], DEFAULT_GROUP_ID, truncatedQuestion, title);
+        
+        // 添加当前站点的URL（同时保存question和title）
+        updateBookmarkData(bookmarkKey, site, currentUrl, truncatedQuestion);
 
         // 发送信号通知其他站点添加URL
         setGV(BOOKMARK_SIGNAL_KEY, Date.now());
@@ -4290,7 +4446,8 @@
 
         // 检查是否已存在相同question的书签（通过遍历所有书签）
         const allBookmarks = getAllBookmarks();
-        const existingBookmark = allBookmarks.find(b => normalizeQuestionText(b.question) === normalizeQuestionText(firstQuestion));
+        const normalizedFirstQuestion = truncateBookmarkQuestion(normalizeQuestionText(firstQuestion));
+        const existingBookmark = allBookmarks.find(b => truncateBookmarkQuestion(normalizeQuestionText(b.question)) === normalizedFirstQuestion);
 
         if (existingBookmark) {
             // 检查是否真的重复：相同site且相同url（比较路径部分）
@@ -4312,32 +4469,45 @@
      * 添加书签key到列表
      */
     function addBookmarkKeyToList(bookmarkKey) {
-        let keyList = getGV(BOOKMARK_KEY_LIST) || [];
-        if (!keyList.includes(bookmarkKey)) {
-            keyList.push(bookmarkKey);
-            setGV(BOOKMARK_KEY_LIST, keyList);
-        }
+        // 已移除bookmarkKeyList，书签通过分组映射管理
+        // 此函数保留以兼容调用，但不执行任何操作
     }
 
     /**
      * 删除书签
      */
     function removeBookmark(bookmarkKey) {
-        // 列表中移除、移除 json
-        let keyList = getGV(BOOKMARK_KEY_LIST) || [];
-        keyList = keyList.filter(k => k !== bookmarkKey);
-        setGV(BOOKMARK_KEY_LIST, keyList);
-
+        // 从分组映射中移除
+        const data = getBookmarkData(bookmarkKey);
+        if (data) {
+            removeBookmarkFromGroupMap(bookmarkKey, data.group);
+        }
+        
+        // 移除 json（分组映射已在removeBookmarkFromGroupMap中处理）
         GM_deleteValue(bookmarkKey);
         console.log(curDate() + `书签: 已删除 ${bookmarkKey}`);
     }
 
     /**
-     * 移动书签在列表中的位置（上移或下移）
+     * 移动书签在分组中的位置（上移或下移）
+     * @param {string} bookmarkKey - 书签完整key
+     * @param {string} direction - 移动方向：'top', 'bottom', 'up', 'down'
+     * @param {number|null} groupId - 分组ID，null表示"全部"视图（使用书签所在分组）
      */
-    function moveBookmarkInList(bookmarkKey, direction) {
-        let keyList = getGV(BOOKMARK_KEY_LIST) || [];
-        const currentIndex = keyList.indexOf(bookmarkKey);
+    function moveBookmarkInList(bookmarkKey, direction, groupId = null) {
+        // 获取书签所在分组
+        const data = getBookmarkData(bookmarkKey);
+        if (!data) {
+            console.log(curDate() + `书签: 未找到书签数据 ${bookmarkKey}`);
+            return false;
+        }
+        // 如果groupId为null（全部视图），使用书签实际所在的分组
+        const targetGroupId = groupId !== null ? groupId : (data.group || DEFAULT_GROUP_ID);
+        
+        const groupMap = getGroupMap();
+        const bookmarkIds = groupMap[targetGroupId] || [];
+        const bookmarkId = getBookmarkId(bookmarkKey);
+        const currentIndex = bookmarkIds.indexOf(bookmarkId);
         
         if (currentIndex === -1) {
             console.log(curDate() + `书签: 未找到书签 ${bookmarkKey}`);
@@ -4348,51 +4518,37 @@
         if (direction === 'top') {
             if (currentIndex === 0) return false; // 已经在最顶部
             // 移除当前元素，插入到最前面
-            keyList.splice(currentIndex, 1);
-            keyList.unshift(bookmarkKey);
-            setGV(BOOKMARK_KEY_LIST, keyList);
+            bookmarkIds.splice(currentIndex, 1);
+            bookmarkIds.unshift(bookmarkId);
+            groupMap[targetGroupId] = bookmarkIds;
+            setGroupMap(groupMap);
             console.log(curDate() + `书签: 置顶 ${bookmarkKey}`);
             return true;
         } else if (direction === 'bottom') {
-            if (currentIndex === keyList.length - 1) return false; // 已经在最底部
+            if (currentIndex === bookmarkIds.length - 1) return false; // 已经在最底部
             // 移除当前元素，插入到最后面（显示时在最上面）
-            keyList.splice(currentIndex, 1);
-            keyList.push(bookmarkKey);
-            setGV(BOOKMARK_KEY_LIST, keyList);
+            bookmarkIds.splice(currentIndex, 1);
+            bookmarkIds.push(bookmarkId);
+            groupMap[targetGroupId] = bookmarkIds;
+            setGroupMap(groupMap);
             console.log(curDate() + `书签: 移到底部（显示置顶） ${bookmarkKey}`);
             return true;
         } else if (direction === 'up') {
             if (currentIndex === 0) return false; // 已经在最顶部
             newIndex = currentIndex - 1;
         } else if (direction === 'down') {
-            if (currentIndex === keyList.length - 1) return false; // 已经在最底部
+            if (currentIndex === bookmarkIds.length - 1) return false; // 已经在最底部
             newIndex = currentIndex + 1;
         } else {
             return false;
         }
 
         // 交换位置
-        [keyList[currentIndex], keyList[newIndex]] = [keyList[newIndex], keyList[currentIndex]];
-        setGV(BOOKMARK_KEY_LIST, keyList);
+        [bookmarkIds[currentIndex], bookmarkIds[newIndex]] = [bookmarkIds[newIndex], bookmarkIds[currentIndex]];
+        groupMap[targetGroupId] = bookmarkIds;
+        setGroupMap(groupMap);
         
         console.log(curDate() + `书签: ${direction === 'up' ? '上移' : '下移'} ${bookmarkKey}`);
-        return true;
-    }
-
-    /**
-     * 更新书签的提问内容
-     */
-    function updateBookmarkQuestion(bookmarkKey, newQuestion) {
-        // 获取书签数据
-        const data = getBookmarkData(bookmarkKey);
-        if (!data || !data.sites || data.sites.length === 0) {
-            console.log(curDate() + `书签: 未找到书签数据 ${bookmarkKey}`);
-            return false;
-        }
-
-        // 直接更新question字段，key不变
-        setBookmarkData(bookmarkKey, data.sites, data.group, newQuestion);
-        console.log(curDate() + `书签: 已更新提问内容 ${bookmarkKey}`);
         return true;
     }
 
@@ -4492,15 +4648,151 @@
         groups.splice(index, 1);
         setGV(BOOKMARK_GROUP_LIST, groups);
         
-        // 将该分组下的所有书签移到默认分组
-        const keyList = getGV(BOOKMARK_KEY_LIST) || [];
-        keyList.forEach(key => {
+        // 将该分组下的所有书签移到默认分组（使用映射快速获取）
+        const groupMap = getGroupMap();
+        const bookmarkIds = groupMap[groupId] || [];
+        bookmarkIds.forEach(id => {
+            const key = getBookmarkKey(id);
             const data = getBookmarkData(key);
-            if (data && data.group === groupId) {
-                setBookmarkData(key, data.sites, DEFAULT_GROUP_ID);
+            if (data) {
+                setBookmarkData(key, data.sites, DEFAULT_GROUP_ID, data.question, data.title);
             }
         });
+        
+        // 清理映射中的该分组
+        delete groupMap[groupId];
+        setGroupMap(groupMap);
+        
         return true;
+    }
+
+    /**
+     * 分组映射管理函数（性能优化：维护groupId到bookmarkKey数组的映射）
+     * 存储时移除"bookmark-"前缀以节省空间
+     */
+    // 从bookmarkKey提取ID（移除前缀）
+    function getBookmarkId(bookmarkKey) {
+        if (typeof bookmarkKey === 'string' && bookmarkKey.startsWith(BOOKMARK_PREFIX)) {
+            return bookmarkKey.substring(BOOKMARK_PREFIX.length);
+        }
+        return bookmarkKey; // 如果已经是ID格式，直接返回
+    }
+
+    // 从ID构建bookmarkKey（添加前缀）
+    function getBookmarkKey(id) {
+        if (typeof id === 'string' && id.startsWith(BOOKMARK_PREFIX)) {
+            return id; // 如果已经是完整key，直接返回
+        }
+        return `${BOOKMARK_PREFIX}${id}`;
+    }
+
+    // 获取分组映射
+    function getGroupMap() {
+        let groupMap = getGV(BOOKMARK_GROUP_MAP);
+        if (!groupMap || typeof groupMap !== 'object') {
+            groupMap = {};
+        }
+        return groupMap;
+    }
+
+    // 保存分组映射
+    function setGroupMap(groupMap) {
+        setGV(BOOKMARK_GROUP_MAP, groupMap);
+    }
+
+    // 将书签添加到分组映射（存储时移除前缀）
+    function addBookmarkToGroupMap(bookmarkKey, groupId) {
+        const groupMap = getGroupMap();
+        const normalizedGroupId = (typeof groupId === 'number') ? groupId : DEFAULT_GROUP_ID;
+        const bookmarkId = getBookmarkId(bookmarkKey);
+        
+        if (!groupMap[normalizedGroupId]) {
+            groupMap[normalizedGroupId] = [];
+        }
+        
+        // 如果不在数组中，则添加（存储ID而非完整key）
+        if (!groupMap[normalizedGroupId].includes(bookmarkId)) {
+            groupMap[normalizedGroupId].push(bookmarkId);
+            setGroupMap(groupMap);
+        }
+    }
+
+    // 从分组映射中移除书签（比较时移除前缀）
+    function removeBookmarkFromGroupMap(bookmarkKey, groupId) {
+        const groupMap = getGroupMap();
+        const normalizedGroupId = (typeof groupId === 'number') ? groupId : DEFAULT_GROUP_ID;
+        const bookmarkId = getBookmarkId(bookmarkKey);
+        
+        if (groupMap[normalizedGroupId]) {
+            groupMap[normalizedGroupId] = groupMap[normalizedGroupId].filter(k => k !== bookmarkId);
+            setGroupMap(groupMap);
+        }
+    }
+
+    // 将书签从一个分组移动到另一个分组
+    function moveBookmarkInGroupMap(bookmarkKey, oldGroupId, newGroupId) {
+        const normalizedOldGroupId = (typeof oldGroupId === 'number') ? oldGroupId : DEFAULT_GROUP_ID;
+        const normalizedNewGroupId = (typeof newGroupId === 'number') ? newGroupId : DEFAULT_GROUP_ID;
+        
+        if (normalizedOldGroupId === normalizedNewGroupId) {
+            return; // 分组未变化，无需更新
+        }
+        
+        removeBookmarkFromGroupMap(bookmarkKey, normalizedOldGroupId);
+        addBookmarkToGroupMap(bookmarkKey, normalizedNewGroupId);
+    }
+
+    // 从所有分组叠加获取全部书签ID（用于"全部"视图）
+    function getAllBookmarkIds() {
+        const groupMap = getGroupMap();
+        const allIds = [];
+        Object.values(groupMap).forEach(ids => {
+            allIds.push(...ids);
+        });
+        return allIds;
+    }
+
+    // 初始化分组映射（确保映射完整性，从所有书签数据构建）
+    function initGroupMap() {
+        const groupMap = getGroupMap();
+        // 获取所有可能的书签key（通过遍历所有GV key，查找bookmark-前缀的）
+        const allKeys = [];
+        // 由于无法直接遍历所有GV key，我们通过已知的bookmarkIdCounter来推断
+        const counter = getGV(BOOKMARK_ID_COUNTER) || 0;
+        let needUpdate = false;
+        
+        // 检查所有可能存在的书签
+        for (let i = 1; i <= counter; i++) {
+            const key = getBookmarkKey(i.toString());
+            const data = getBookmarkData(key);
+            if (data) {
+                allKeys.push(key);
+                const groupId = (typeof data.group === 'number') ? data.group : DEFAULT_GROUP_ID;
+                const bookmarkId = getBookmarkId(key);
+                const groupArray = groupMap[groupId] || [];
+                if (!groupArray.includes(bookmarkId)) {
+                    addBookmarkToGroupMap(key, groupId);
+                    needUpdate = true;
+                }
+            }
+        }
+        
+        // 清理映射中不存在的书签
+        Object.keys(groupMap).forEach(groupId => {
+            const bookmarkIds = groupMap[groupId];
+            const validIds = bookmarkIds.filter(id => {
+                const key = getBookmarkKey(id);
+                return getBookmarkData(key) !== null;
+            });
+            if (validIds.length !== bookmarkIds.length) {
+                groupMap[groupId] = validIds;
+                needUpdate = true;
+            }
+        });
+        
+        if (needUpdate) {
+            setGroupMap(groupMap);
+        }
     }
 
     /**
@@ -4512,19 +4804,33 @@
         return {
             sites: data.sites || [],
             group: (typeof data.group === 'number') ? data.group : DEFAULT_GROUP_ID,
-            question: data.question || ''
+            question: data.question || '',
+            title: data.title || ''
         };
     }
 
     /**
      * 设置书签数据（group使用代号）
      */
-    function setBookmarkData(bookmarkKey, sites, group, question) {
+    function setBookmarkData(bookmarkKey, sites, group, question, title) {
+        const oldData = getBookmarkData(bookmarkKey);
+        const oldGroupId = oldData ? oldData.group : DEFAULT_GROUP_ID;
+        const newGroupId = (typeof group === 'number') ? group : DEFAULT_GROUP_ID;
+        
         setGV(bookmarkKey, {
             sites: sites || [],
-            group: (typeof group === 'number') ? group : DEFAULT_GROUP_ID,
-            question: question || ''
+            group: newGroupId,
+            question: truncateBookmarkQuestion(question || ''),
+            title: title || ''
         });
+        
+        // 更新分组映射（如果分组发生变化）
+        if (oldGroupId !== newGroupId) {
+            moveBookmarkInGroupMap(bookmarkKey, oldGroupId, newGroupId);
+        } else if (!oldData) {
+            // 新书签，直接添加到映射
+            addBookmarkToGroupMap(bookmarkKey, newGroupId);
+        }
     }
 
     /**
@@ -4533,30 +4839,56 @@
     function setBookmarkGroup(bookmarkKey, groupId) {
         const data = getBookmarkData(bookmarkKey);
         if (!data) return false;
-        setBookmarkData(bookmarkKey, data.sites, groupId || DEFAULT_GROUP_ID, data.question);
+        const oldGroupId = data.group;
+        const newGroupId = groupId || DEFAULT_GROUP_ID;
+        setBookmarkData(bookmarkKey, data.sites, newGroupId, data.question, data.title);
+        // 更新分组映射
+        moveBookmarkInGroupMap(bookmarkKey, oldGroupId, newGroupId);
         return true;
     }
 
     /**
-     * 获取所有书签数据
+     * 获取所有书签数据（性能优化：使用分组映射快速获取）
      */
     function getAllBookmarks(filterGroupId = null) {
-        const keyList = getGV(BOOKMARK_KEY_LIST) || [];
+        let bookmarkIds;
+        if (filterGroupId === null) {
+            // 全部：从所有分组叠加获取，按ID降序排序
+            bookmarkIds = getAllBookmarkIds();
+            // 按ID数字降序排序（ID大的在前面，即最新的在前面）
+            bookmarkIds.sort((a, b) => {
+                const numA = parseInt(a, 10) || 0;
+                const numB = parseInt(b, 10) || 0;
+                return numB - numA; // 降序
+            });
+        } else {
+            // 指定分组：使用映射快速获取
+            const groupMap = getGroupMap();
+            bookmarkIds = groupMap[filterGroupId] || [];
+        }
+        // 将ID转换为完整key
+        const keyList = bookmarkIds.map(id => getBookmarkKey(id));
+        
         const bookmarks = [];
-        // 倒序遍历，让最新的在上面
-        for (let i = keyList.length - 1; i >= 0; i--) {
+        // 全部视图已排序，直接遍历；分组视图倒序遍历（让最新的在上面）
+        const startIndex = filterGroupId === null ? 0 : keyList.length - 1;
+        const endIndex = filterGroupId === null ? keyList.length - 1 : -1;
+        const step = filterGroupId === null ? 1 : -1;
+        for (let i = startIndex; i !== endIndex; i += step) {
             const key = keyList[i];
             const data = getBookmarkData(key);
             if (data && data.sites && data.sites.length > 0) {
-                // 如果指定了分组过滤，则只返回该分组的书签（使用代号比较）
+                // 如果指定了分组过滤，再次验证（双重保险）
                 if (filterGroupId !== null && data.group !== filterGroupId) {
                     continue;
                 }
-                // 从value中读取question
+                // 从value中读取question和title
                 const question = data.question || '';
+                const title = data.title || '';
                 // 返回时转换为名称显示
                 bookmarks.push({ 
-                    question, 
+                    question,
+                    title, 
                     sites: data.sites,
                     group: getGroupNameById(data.group || DEFAULT_GROUP_ID),
                     groupId: data.group || DEFAULT_GROUP_ID, // 同时保存代号用于操作
@@ -4570,21 +4902,23 @@
     // ──────────────────────────────────────────────────────────────────────
     // 13.5 UI界面
     // ──────────────────────────────────────────────────────────────────────
+    let TITLE_SUB_LEN = 40;
 
     /**
-     * 处理编辑书签问题的点击事件
+     * 处理编辑书签标题的点击事件
      */
-    function editBookmarkQuestion(question, bookmarkKey, questionText, editBtn, questionContainer) {
+    function editBookmarkTitle(title, bookmarkKey, titleText, editBtn, titleContainer) {
         // 创建编辑输入框
-        const input = document.createElement('textarea');
-        input.value = question;
-        input.style.cssText = SETTINGS_STYLES.inputTextarea;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = title;
+        input.style.cssText = 'flex:1;padding:4px;border:1px solid #ddd;border-radius:4px;font-size:14px';
 
         // 替换显示
-        questionText.style.display = 'none';
+        titleText.style.display = 'none';
         editBtn.style.display = 'none';
 
-        const inputContainer = createTag('div', "", 'flex:1;display:flex;gap:4px;align-items:flex-start');
+        const inputContainer = createTag('div', "", 'flex:1;display:flex;gap:4px;align-items:center');
         inputContainer.appendChild(input);
 
         // 保存按钮
@@ -4594,20 +4928,23 @@
         saveBtn.addEventListener('mouseleave', () => saveBtn.style.opacity = '1');
         inputContainer.appendChild(saveBtn);
 
-        questionContainer.appendChild(inputContainer);
+        titleContainer.appendChild(inputContainer);
 
         // 保存逻辑
         saveBtn.addEventListener('click', () => {
-            const newQuestion = input.value.trim();
-            if (!newQuestion) {
-                showMessagePopup('提问内容不能为空');
-                return;
-            }
+            const newTitle = input.value.trim();
+            const data = getBookmarkData(bookmarkKey);
+            if (!data) return;
 
-            if (updateBookmarkQuestion(bookmarkKey, newQuestion)) {
-                // 刷新弹窗
-                showBookmarkWindow();
-            }
+            setBookmarkData(bookmarkKey, data.sites, data.group, data.question, newTitle);
+            // 更新显示（只显示前xx字）
+            const displayTitle = newTitle.length > TITLE_SUB_LEN ? newTitle.substring(0, TITLE_SUB_LEN) + '...' : newTitle;
+            titleText.textContent = displayTitle;
+            titleText.title = newTitle;
+            // 恢复显示
+            titleText.style.display = '';
+            editBtn.style.display = '';
+            titleContainer.removeChild(inputContainer);
         });
 
         // 自动聚焦
@@ -4620,33 +4957,35 @@
      * @param {number} index - 当前索引
      */
     function createSortColumn(bookmarkKey, index, bookmarks, currentGroupId, tr) {
-        const TD_SORT_STYLE = 'padding:10px;vertical-align:top;white-space:nowrap;text-align:center';
-        const TOP_BTN_STYLE = 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;margin-right:4px;color:#3498db';
-        const UP_BTN_STYLE = 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;margin-right:4px;color:#95a5a6';
-        const DOWN_BTN_STYLE = 'padding:4px 8px;background:transparent;border:none;cursor:pointer;font-size:16px;color:#95a5a6';
+        const TD_SORT_STYLE =    'padding:2px;vertical-align:top;white-space:nowrap;text-align:left;border:1px solid #ddd';
+        const TOP_BTN_STYLE =    'padding:4px 2px;background:transparent;border:none;cursor:pointer;font-size:16px;color:#3498db';
+        const UP_DOWN_BTN_STYLE ='padding:4px 2px;background:transparent;border:none;cursor:pointer;font-size:16px;color:#95a5a6';
 
         const tdSort = createTag('td', "", TD_SORT_STYLE);
 
         // 置顶按钮（显示中最上面，存储中移到最后）
         const topBtn = createTag('button', '⬆', TOP_BTN_STYLE);
         topBtn.title = '置顶';
+        // 获取当前分组内的书签列表
+        const groupMap = getGroupMap();
+        const bookmarkIds = currentGroupId !== null ? (groupMap[currentGroupId] || []) : getAllBookmarkIds();
+        const bookmarkId = getBookmarkId(bookmarkKey);
+        const storageIndex = bookmarkIds.indexOf(bookmarkId);
         // 显示中 index=0 对应存储列表的最后一个，如果已经在最后则不能置顶
-        const keyList = getGV(BOOKMARK_KEY_LIST) || [];
-        const storageIndex = keyList.indexOf(bookmarkKey);
-        const canMoveTop = storageIndex !== -1 && storageIndex < keyList.length - 1;
+        const canMoveTop = storageIndex !== -1 && storageIndex < bookmarkIds.length - 1;
         if (!canMoveTop) {
             topBtn.style.opacity = '0.5';
             topBtn.style.cursor = 'not-allowed';
         } else {
             topBtn.addEventListener('click', () => {
-                if (moveBookmarkInList(bookmarkKey, 'bottom')) {
+                if (moveBookmarkInList(bookmarkKey, 'bottom', currentGroupId)) {
                     showBookmarkWindow(currentGroupId);
                 }
             });
         }
 
         // 上移按钮（显示中向上，存储中向下）
-        const upBtn = createTag('button', '↑', UP_BTN_STYLE);
+        const upBtn = createTag('button', '↑', UP_DOWN_BTN_STYLE);
         upBtn.title = '上移';
         const canMoveUp = index > 0;
         if (!canMoveUp) {
@@ -4655,14 +4994,14 @@
         } else {
             upBtn.addEventListener('click', () => {
                 // 显示中向上 = 存储中向下
-                if (moveBookmarkInList(bookmarkKey, 'down')) {
+                if (moveBookmarkInList(bookmarkKey, 'down', currentGroupId)) {
                     showBookmarkWindow(currentGroupId);
                 }
             });
         }
 
         // 下移按钮（显示中向下，存储中向上）
-        const downBtn = createTag('button', '↓', DOWN_BTN_STYLE);
+        const downBtn = createTag('button', '↓', UP_DOWN_BTN_STYLE);
         downBtn.title = '下移';
         const canMoveDown = index < bookmarks.length - 1;
         if (!canMoveDown) {
@@ -4671,7 +5010,7 @@
         } else {
             downBtn.addEventListener('click', () => {
                 // 显示中向下 = 存储中向上
-                if (moveBookmarkInList(bookmarkKey, 'up')) {
+                if (moveBookmarkInList(bookmarkKey, 'up', currentGroupId)) {
                     showBookmarkWindow(currentGroupId);
                 }
             });
@@ -4685,7 +5024,7 @@
      * 创建站点列单元格
      */
     function createSitesColumn(sites, bookmarkKey, currentGroupId, linkStyle) {
-        const tdSites = createTag('td', "", 'max-width:300px;padding:5px;vertical-align:middle');
+        const tdSites = createTag('td', "", 'max-width:160px;padding:5px;vertical-align:middle;border:1px solid #ddd');
         
         // 按星标状态排序：星标的在前
         const sortedSites = [...sites].sort((a, b) => {
@@ -4836,6 +5175,146 @@
             tdSites.appendChild(siteContainer);
         });
         
+        // 添加加号按钮容器
+        const addBtnContainer = createTag('div', "", 'display:inline-flex;align-items:center;margin-right:5px;margin-bottom:2px;position:relative');
+        
+        // 加号按钮
+        const addBtn = createTag('button', '+', 'padding:2px;background:transparent;border:none;cursor:pointer;font-size:24px;color:#666;border-radius:3px;font-weight:bold;line-height:1');
+        addBtn.title = '添加链接';
+        addBtn.style.marginRight = '4px';
+        
+        // 保存当前打开的输入框引用
+        let currentInputContainer = null;
+        let closeInputHandler = null;
+        
+        // 关闭输入框的函数
+        const closeInput = () => {
+            if (currentInputContainer) {
+                currentInputContainer.remove();
+                currentInputContainer = null;
+            }
+            if (closeInputHandler) {
+                document.removeEventListener('click', closeInputHandler);
+                closeInputHandler = null;
+            }
+        };
+        
+        // 点击加号按钮显示输入框
+        addBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // 如果已有输入框打开，先关闭
+            if (currentInputContainer) {
+                closeInput();
+                return;
+            }
+            
+            // 创建输入框容器
+            currentInputContainer = createTag('div', "", 'position:absolute;top:100%;left:0;background:white;border:1px solid #ddd;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.15);z-index:1000;padding:10px;min-width:300px;margin-top:4px');
+            
+            // 输入框标签
+            const label = createTag('label', '添加链接：', 'display:block;margin-bottom:5px;font-size:13px;color:#333');
+            currentInputContainer.appendChild(label);
+            
+            // 输入框
+            const input = createTag('input', '', 'width:100%;padding:6px;border:1px solid #ddd;border-radius:3px;font-size:13px;box-sizing:border-box');
+            input.type = 'text';
+            input.placeholder = 'https://...';
+            currentInputContainer.appendChild(input);
+            
+            // 按钮容器
+            const btnContainer = createTag('div', "", 'display:flex;gap:8px;margin-top:8px;justify-content:flex-end');
+            
+            // 保存链接的函数
+            const saveLink = () => {
+                let url = input.value.trim();
+                if (!url) {
+                    alert('请输入链接');
+                    return;
+                }
+                
+                // 如果没有协议前缀，自动添加https://
+                if (!url.match(/^https?:\/\//i)) {
+                    url = 'https://' + url;
+                }
+                
+                // 识别站点
+                const siteId = identifySiteFromUrl(url);
+                if (siteId === null) {
+                    alert('无法识别链接所属站点，请确保链接来自支持的站点');
+                    return;
+                }
+                
+                // 检查是否已存在该站点
+                const existingSite = sites.find(s => s.site === siteId);
+                if (existingSite) {
+                    alert(`该站点（${siteToWord[siteId] || siteId}）已存在`);
+                    closeInput();
+                    return;
+                }
+                
+                // 保存链接
+                updateBookmarkData(bookmarkKey, siteId, url);
+                
+                // 关闭输入框
+                closeInput();
+                
+                // 刷新显示
+                showBookmarkWindow(currentGroupId);
+            };
+            
+            // 取消按钮
+            const cancelBtn = createTag('button', '取消', 'padding:6px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:3px;cursor:pointer;font-size:13px;color:#333');
+            cancelBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                closeInput();
+            });
+            btnContainer.appendChild(cancelBtn);
+            
+            // 确定按钮
+            const confirmBtn = createTag('button', '确定', 'padding:6px 12px;background:#4CAF50;border:none;border-radius:3px;cursor:pointer;font-size:13px;color:white');
+            confirmBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                saveLink();
+            });
+            btnContainer.appendChild(confirmBtn);
+            
+            currentInputContainer.appendChild(btnContainer);
+            addBtnContainer.appendChild(currentInputContainer);
+            
+            // 按Enter键确认
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    saveLink();
+                } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeInput();
+                }
+            });
+            
+            // 点击外部关闭输入框
+            closeInputHandler = (e) => {
+                if (!currentInputContainer.contains(e.target) && e.target !== addBtn) {
+                    closeInput();
+                }
+            };
+            setTimeout(() => {
+                document.addEventListener('click', closeInputHandler);
+            }, 0);
+            
+            // 聚焦输入框
+            setTimeout(() => {
+                input.focus();
+            }, 0);
+        });
+        
+        addBtnContainer.appendChild(addBtn);
+        tdSites.appendChild(addBtnContainer);
+        
         return tdSites;
     }
 
@@ -4849,14 +5328,15 @@
         // CSS样式变量（属性超过2个的样式）
         const EMPTY_TABLE_TIP_STYLE = 'color:#666;text-align:center;padding:20px';
         const TABLE_STYLE = 'width:100%;border-collapse:collapse;font-size:14px';
-        const TH_STYLE = 'padding:10px;text-align:left;border-bottom:2px solid #ddd';
-        const TD_STYLE = 'padding:10px;vertical-align:top;white-space:nowrap';
-        const TD_QUESTION_STYLE = 'padding:10px;max-width:300px;word-break:break-all;vertical-align:top;position:relative';
+        const TH_STYLE = 'padding:10px;text-align:left;border:1px solid #ddd';
+        const TD_STYLE = 'padding:5px;vertical-align:top;white-space:nowrap;border:1px solid #ddd';
+        const TD_OPERATION_STYLE = 'max-width:150px;padding:5px;vertical-align:top;white-space:nowrap;border:1px solid #ddd';
+        const TD_QUESTION_STYLE = 'padding:10px;max-width:300px;word-break:break-all;vertical-align:top;position:relative;border:1px solid #ddd';
         const QUESTION_CONTAINER_STYLE = 'display:flex;align-items:center;gap:0px';
         const EDIT_BTN_STYLE = 'padding:4px;background:transparent;border:none;cursor:pointer;font-size:16px;flex-shrink:0;color:#666';
         const LINK_STYLE = 'color:#1e3a8a;text-decoration:none;margin-right:auto 10px;cursor:pointer';
         const JUMP_BTN_STYLE = 'padding:6px 12px;background:#f5f5f5;color:#000;border:1px solid #ddd;border-radius:4px;cursor:pointer;font-size:12px;margin-right:8px';
-        const DEL_BTN_STYLE = 'padding:6px 10px;background:transparent;border:none;cursor:pointer;font-size:18px;color:#ff6b6b';
+        const DEL_BTN_STYLE = 'padding:6px 3px;background:transparent;border:none;cursor:pointer;font-size:18px;color:#ff6b6b';
         const GROUP_SELECT_BASE_STYLE = 'padding:4px 8px;border:1px solid #ddd;border-radius:4px;font-size:13px;cursor:pointer;min-width:50px';
 
         // 获取书签（根据选中的分组过滤，使用代号）
@@ -4916,25 +5396,42 @@
             // 2、提问列
             const tdQuestion = createTag('td', "", TD_QUESTION_STYLE);
 
-            // 提问内容容器
-            const questionContainer = createTag('div', "", QUESTION_CONTAINER_STYLE);
+            // 标题容器（在上）
+            const titleContainer = createTag('div', "", 'display:flex;align-items:center;gap:0px;margin-bottom:8px');
+            const fullTitle = bookmark.title || bookmark.question || '';
+            const titleDisplay = fullTitle.length > TITLE_SUB_LEN ? fullTitle.substring(0, TITLE_SUB_LEN) + '...' : fullTitle;
+            const titleText = createTag('span', titleDisplay, 'flex:1;word-break:break-all;font-weight:bold;color:#333');
+            titleText.title = fullTitle;
+            titleContainer.appendChild(titleText);
 
-            // 提问文本
-            const SUB_LEN = 80;
-            const questionTextContent = bookmark.question.length > SUB_LEN ? bookmark.question.substring(0, SUB_LEN) + '...' : bookmark.question;
-            const questionText = createTag('span', questionTextContent, 'flex:1;word-break:break-all');
-            questionText.title = bookmark.question;
-            questionContainer.appendChild(questionText);
-
-            // 编辑按钮
-            const editBtn = createTag('button', '✏️', EDIT_BTN_STYLE);
-            editBtn.title = '编辑提问内容';
-            editBtn.addEventListener('click', () => {
-                editBookmarkQuestion(bookmark.question, bookmarkKey, questionText, editBtn, questionContainer);
+            // 标题编辑按钮
+            const titleEditBtn = createTag('button', '✏️', EDIT_BTN_STYLE);
+            titleEditBtn.title = '编辑标题';
+            titleEditBtn.addEventListener('click', () => {
+                editBookmarkTitle(fullTitle, bookmarkKey, titleText, titleEditBtn, titleContainer);
             });
+            titleContainer.appendChild(titleEditBtn);
+            tdQuestion.appendChild(titleContainer);
 
-            questionContainer.appendChild(editBtn);
-            tdQuestion.appendChild(questionContainer);
+            // 如果 title 和 question 内容相同，只显示 title，否则显示提问内容
+            // 兼容历史情况：title 为空时，使用 question 作为 title，此时不显示 question（避免重复）
+            const questionContent = bookmark.question || '';
+            // fullTitle 是实际显示的标题（兼容历史数据：title 为空时用 question）
+            // 如果 fullTitle 和 questionContent 相同，则不显示 question
+            if (fullTitle !== questionContent) {
+                // 提问内容容器（在下）
+                const questionContainer = createTag('div', "", QUESTION_CONTAINER_STYLE);
+
+                // 提问文本（不可编辑）
+                const SUB_LEN = 80;
+                const questionTextContent = questionContent.length > SUB_LEN ? questionContent.substring(0, SUB_LEN) + '...' : questionContent;
+                const questionText = createTag('span', questionTextContent, 'flex:1;word-break:break-all;color:#666');
+                questionText.title = questionContent;
+                questionContainer.appendChild(questionText);
+
+                tdQuestion.appendChild(questionContainer);
+            }
+
             tr.appendChild(tdQuestion);
 
             // 3、站点列
@@ -4942,7 +5439,7 @@
             tr.appendChild(tdSites);
 
             // 4、操作列
-            const tdAction = createTag('td', "", TD_STYLE);
+            const tdAction = createTag('td', "", TD_OPERATION_STYLE);
 
             // 一键跳转按钮
             const jumpBtn = createTag('button', '一键跳转', JUMP_BTN_STYLE);
@@ -4978,7 +5475,7 @@
      */
     function showBookmarkWindow(selectedGroupId = null, skipSaveGroup = false) {
         // CSS样式变量（属性超过2个的样式）
-        const POPUP_SIZE_STYLE = 'width:60%;height:80%;overflow:auto';
+        const POPUP_SIZE_STYLE = 'width:65%;height:90%;overflow:auto';
         const HEADER_STYLE = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee';
         const CLOSE_BTN_STYLE = 'cursor:pointer;font-size:20px;color:#999;padding:5px';
         const TAB_BASE_STYLE = 'padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;color:#333';
