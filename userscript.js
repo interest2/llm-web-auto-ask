@@ -4,9 +4,8 @@
 // @version      4.2.0
 // @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
-// @match        https://www.kimi.com/*
 // @match        https://chat.deepseek.com/*
-// @match        https://www.tongyi.com/*
+// @match        https://www.kimi.com/*
 // @match        https://www.qianwen.com/*
 // @match        https://chat.qwen.ai/*
 // @match        https://www.doubao.com/*
@@ -1322,6 +1321,8 @@
     const SUB_NAV_HEADING_SELECTOR = SUB_NAV_HEADING_LEVELS.map(level => `h${level}`).join(', '); // 生成选择器字符串，如 "h1, h2, h3, h4"
     const SUB_NAV_HEADING_TAGS = SUB_NAV_HEADING_LEVELS.map(level => `H${level}`); // 生成标签数组，如 ["H1", "H2", "H3", "H4"]
     const SUB_POS_RIGHT = "25px";
+    // 启用 Markdown 标题查找的站点列表
+    const ENABLE_MARKDOWN_HEADING_SITES = [CLAUDE];
 
     // 获取导航样式（动态生成，支持运行时修改变量）
     const getNavStyles = () => {
@@ -1745,6 +1746,108 @@
         return normalized.replace(/[:：]+$/, '');
     };
 
+    /**
+     * 查找 Markdown 格式的标题（如 # 标题、## 标题、### 标题）
+     * 支持标题被分割在多个元素中的情况（如 <span>## 五、</span><span>标题内容</span>）
+     * 兼容代码块未正确闭合的情况：即使标题在代码块内（因代码块未正确闭合导致的），也要识别为标题
+     */
+    const findMarkdownHeadings = (contentEl, headingList, startDomOrder) => {
+        const markdownHeadingPatterns = [
+            { level: 2, prefix: '## ' },   // h2: ## 标题
+            { level: 3, prefix: '### ' }   // h3: ### 标题
+        ];
+
+        // 检查纯文本节点（包括合并后的文本，如分割在多个span中的标题在textContent中会合并成一行）
+        const walker = document.createTreeWalker(
+            contentEl,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+        
+        let textNode;
+        let domOrder = startDomOrder; // 继续使用传入的domOrder，保持顺序连续
+        const processedElements = new Set(); // 记录已处理的元素，避免重复处理
+        
+        while (textNode = walker.nextNode()) {
+            const text = textNode.textContent;
+            if (!text) continue;
+            
+            // 获取文本节点的父元素（通常是 span）
+            const parentSpan = textNode.parentElement;
+            if (!parentSpan || parentSpan === contentEl) continue;
+            
+            // 如果已经处理过这个 span，跳过（避免重复）
+            if (processedElements.has(parentSpan)) continue;
+            
+            // 检查父元素是否是 span 标签
+            if (parentSpan.tagName !== 'SPAN') continue;
+            
+            // 获取 span 的文本内容（去空后）
+            const spanText = (parentSpan.textContent || '').trim();
+            
+            // 检查所有 markdown 标题模式
+            for (const { level, prefix } of markdownHeadingPatterns) {
+                if (!SUB_NAV_HEADING_LEVELS.includes(level)) continue;
+                
+                let titleElement = null;
+                let titleText = '';
+                
+                // 情况1：span 文本去空后仅包含标记（如 "###" 或 "##"）
+                if (spanText === prefix.trim()) {
+                    // 找到标记 span，使用其父元素作为标题元素
+                    titleElement = parentSpan.parentElement;
+                    if (!titleElement || titleElement === contentEl) continue;
+                    
+                    // 从父元素的 textContent 中提取完整标题文本（去掉标记前缀）
+                    const fullText = (titleElement.textContent || '').trim();
+                    titleText = fullText.replace(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), '').trim();
+                }
+                // 情况2：span 文本以标记开头（如 "##二、请求处理全景图"）
+                else if (spanText.startsWith(prefix.trim())) {
+                    // 直接使用该 span 作为标题元素
+                    titleElement = parentSpan;
+                    // 从 span 的文本中提取标题文本（去掉标记前缀）
+                    titleText = spanText.substring(prefix.trim().length).trim();
+                }
+                
+                // 如果找到了标题元素和文本，进行处理
+                if (titleElement && titleText) {
+                    const rect = titleElement.getBoundingClientRect();
+                    if (rect.width === 0 || rect.height === 0) continue;
+                    
+                    // 规范化标题文本
+                    const normalizedText = normalizeHeadingText(titleText);
+                    if (!normalizedText) continue;
+                    
+                    // 检查是否已经存在相同文本和级别的标题（避免重复）
+                    // 使用 position 来判断，更准确
+                    const exists = headingList.some(h => 
+                        h.text === normalizedText && 
+                        h.level === level &&
+                        h.position !== undefined &&
+                        Math.abs(h.position - rect.top) < 30
+                    );
+                    
+                    if (!exists) {
+                        headingList.push({
+                            element: titleElement,
+                            tagName: `H${level}`,
+                            text: normalizedText,
+                            level: level,
+                            position: rect.top, // 记录位置，用于排序
+                            domOrder: domOrder++ // 记录DOM顺序（每个匹配的标题单独分配）
+                        });
+                        // 标记该 span 已处理，避免重复
+                        processedElements.add(parentSpan);
+                    }
+                    break; // 找到匹配后退出模式循环
+                }
+            }
+        }
+        
+        return domOrder; // 返回更新后的domOrder
+    };
 
     // 在回答内容区域中查找所有配置的标题级别
     const findHeadingsInContent = (contentEl) => {
@@ -1753,7 +1856,7 @@
         const headingList = [];
 
         // 1. 查找现有的 h2~h4 标签标题
-        let domOrder = 0; // 初始化DOM顺序计数器（HTML标签标题用）
+        let domOrder = 0; // 初始化DOM顺序计数器（HTML标签标题和Markdown标题共用）
         const headings = contentEl.querySelectorAll(SUB_NAV_HEADING_SELECTOR);
         Array.from(headings).forEach(h => {
             // 确保标题是可见的
@@ -1771,21 +1874,40 @@
                 tagName: h.tagName,
                 text: text,
                 level: level,
+                position: rect.top, // 记录位置，用于排序
                 domOrder: domOrder++ // 为HTML标签标题也添加domOrder，确保排序正确
             });
         });
 
-        // 2. 去重并排序（按DOM顺序，保持文档中的原始顺序）
+        // 2. 查找文本中以 "# "、"## " 或 "### " 开头的 Markdown 标题
+        // 性能优化：仅对配置的站点启用此功能，避免对其他站点造成性能占用
+        if (ENABLE_MARKDOWN_HEADING_SITES.includes(site)) {
+            domOrder = findMarkdownHeadings(contentEl, headingList, domOrder);
+        }
+
+        // 3. 去重并排序（按DOM位置，保持文档中的原始顺序）
         const uniqueHeadings = [];
         const seenKeys = new Set();
 
-        // 按DOM顺序排序（TreeWalker遍历的顺序）
-        headingList.sort((a, b) => a.domOrder - b.domOrder);
+        // 按位置排序（使用 position，这样 Markdown 标题会插入到正确的位置）
+        // 如果 position 不存在，使用 domOrder 作为备选排序依据
+        headingList.sort((a, b) => {
+            const posA = a.position !== undefined ? a.position : Infinity;
+            const posB = b.position !== undefined ? b.position : Infinity;
+            if (posA !== Infinity && posB !== Infinity) {
+                return posA - posB;
+            }
+            // 如果某个标题没有 position，使用 domOrder 排序
+            const orderA = a.domOrder !== undefined ? a.domOrder : Infinity;
+            const orderB = b.domOrder !== undefined ? b.domOrder : Infinity;
+            return orderA - orderB;
+        });
 
         headingList.forEach(heading => {
-            // 使用文本、级别和domOrder作为唯一标识，避免重复
-            // domOrder是稳定的，不会随页面滚动而变化
-            const key = `${heading.text}_${heading.level}_${heading.domOrder}`;
+            // 使用文本、级别和位置作为唯一标识，避免重复
+            // 使用更小的位置区间（5像素）来区分不同的标题
+            const positionKey = heading.position !== undefined ? Math.floor(heading.position / 5) : heading.domOrder;
+            const key = `${heading.text}_${heading.level}_${positionKey}`;
 
             if (!seenKeys.has(key)) {
                 seenKeys.add(key);
