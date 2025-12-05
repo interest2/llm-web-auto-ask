@@ -1255,6 +1255,7 @@
     const DEFAULT_NAV_TOP_OVERFLOW = "7%";
     const DEFAULT_SUB_NAV_MAX_WIDTH = "260px";
     const DEFAULT_SUB_NAV_TOP = "20%";
+    const DEFAULT_SUB_NAV_TOP_OVERFLOW = "7%";
     
     // 存储键名
     const NAV_MAX_WIDTH_KEY = "navMaxWidth";
@@ -1262,6 +1263,7 @@
     const NAV_TOP_KEY = "navTop";
     const NAV_TOP_OVERFLOW_KEY = "navTopOverflow";
     const SUB_NAV_TOP_KEY = "subNavTop";
+    const SUB_NAV_TOP_OVERFLOW_KEY = "subNavTopOverflow";
     
     // 从GM存储读取导航变量，如果没有则使用默认值
     const getNavMaxWidth = () => {
@@ -1286,6 +1288,23 @@
             return saved;
         }
         return site === STUDIO ? "35%" : DEFAULT_SUB_NAV_TOP;
+    };
+    
+    const getSubNavTopOverflow = () => {
+        return getGV(SUB_NAV_TOP_OVERFLOW_KEY) || DEFAULT_SUB_NAV_TOP_OVERFLOW;
+    };
+    
+    // 根据top值计算max-height，使总和为99vh
+    const calculateSubNavMaxHeight = (topValue) => {
+        // 从top值中提取百分比数字（如"7%" -> 7）
+        const match = topValue.toString().match(/(\d+(?:\.\d+)?)/);
+        if (match) {
+            const topPercent = parseFloat(match[1]);
+            const maxHeightPercent = 99 - topPercent;
+            return `${maxHeightPercent}vh`;
+        }
+        // 如果无法解析，返回默认值
+        return "98vh";
     };
     
     const NAV_TOP_THRESHOLD = 7;    // 主目录条目超过此阈值时，top位置抬高
@@ -1330,6 +1349,7 @@
         const navMaxWidth = getNavMaxWidth();
         const subNavTop = getSubNavTop();
         const subNavMaxWidth = getSubNavMaxWidth();
+        const subNavMaxHeight = calculateSubNavMaxHeight(subNavTop);
         
         return {
             // 主目录样式
@@ -1345,7 +1365,7 @@
             waveIconNormal: `background-color:transparent;color:#333;`,
 
             // 副目录样式
-            subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${subNavTop};max-width:${subNavMaxWidth};min-width:220px;max-height:94vh;background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+            subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${subNavTop};max-width:${subNavMaxWidth};min-width:220px;max-height:${subNavMaxHeight};background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
             subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
             subNavCloseBtn: `position:absolute;top:0;right:5px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
 
@@ -1752,9 +1772,10 @@
      * 兼容代码块未正确闭合的情况：即使标题在代码块内（因代码块未正确闭合导致的），也要识别为标题
      */
     const findMarkdownHeadings = (contentEl, headingList, startDomOrder) => {
+        // 按前缀长度降序排列，确保先匹配更长的前缀（如 ###），再匹配短的前缀（如 ##）
         const markdownHeadingPatterns = [
-            { level: 2, prefix: '## ' },   // h2: ## 标题
-            { level: 3, prefix: '### ' }   // h3: ### 标题
+            { level: 3, prefix: '### ' },   // h3: ### 标题
+            { level: 2, prefix: '## ' }    // h2: ## 标题
         ];
 
         // 检查纯文本节点（包括合并后的文本，如分割在多个span中的标题在textContent中会合并成一行）
@@ -1805,10 +1826,44 @@
                 }
                 // 情况2：span 文本以标记开头（如 "##二、请求处理全景图"）
                 else if (spanText.startsWith(prefix.trim())) {
-                    // 直接使用该 span 作为标题元素
-                    titleElement = parentSpan;
                     // 从 span 的文本中提取标题文本（去掉标记前缀）
                     titleText = spanText.substring(prefix.trim().length).trim();
+                    
+                    // 检查该 span 之后的所有兄弟元素，如果有文本，拼接到标题文本
+                    let nextSibling = parentSpan.nextSibling;
+                    while (nextSibling) {
+                        let siblingText = '';
+                        if (nextSibling.nodeType === Node.ELEMENT_NODE) {
+                            siblingText = (nextSibling.textContent || '').trim();
+                        } else if (nextSibling.nodeType === Node.TEXT_NODE) {
+                            siblingText = (nextSibling.textContent || '').trim();
+                        }
+                        
+                        // 如果遇到 ```（三个反引号），终止拼接
+                        if (siblingText === '```') {
+                            break;
+                        }
+                        
+                        // 如果兄弟元素以 ## 或 ### 开头，视为新的标题元素，终止拼接
+                        // 先检查更长的模式，避免 ### 被 ## 匹配
+                        if (siblingText.startsWith('###') || siblingText.startsWith('##')) {
+                            break;
+                        }
+                        
+                        // 如果有文本，拼接到标题文本
+                        if (siblingText) {
+                            titleText += siblingText;
+                        }
+                        
+                        nextSibling = nextSibling.nextSibling;
+                    }
+                    
+                    // 使用该 span 的父元素作为标题元素（因为可能需要包含所有兄弟元素）
+                    titleElement = parentSpan.parentElement;
+                    if (!titleElement || titleElement === contentEl) {
+                        // 如果父元素无效，则使用该 span 本身
+                        titleElement = parentSpan;
+                    }
                 }
                 
                 // 如果找到了标题元素和文本，进行处理
@@ -2025,7 +2080,9 @@
     // 根据副目录条目数量动态设置top位置
     const updateSubNavTop = () => {
         const subNavItemCount = subNavBar.querySelectorAll('.sub-nav-item').length;
-        subNavBar.style.top = subNavItemCount > SUB_NAV_TOP_THRESHOLD ? "7%" : getSubNavTop();
+        const topValue = subNavItemCount > SUB_NAV_TOP_THRESHOLD ? getSubNavTopOverflow() : getSubNavTop();
+        subNavBar.style.top = topValue;
+        subNavBar.style.maxHeight = calculateSubNavMaxHeight(topValue);
     };
 
     // 更新副目录状态
@@ -3867,6 +3924,7 @@
         const subNavMaxWidthValue = getGV(SUB_NAV_MAX_WIDTH_KEY) || DEFAULT_SUB_NAV_MAX_WIDTH;
         const navTopValue = getGV(NAV_TOP_KEY) || DEFAULT_NAV_TOP;
         const navTopOverflowValue = getGV(NAV_TOP_OVERFLOW_KEY) || DEFAULT_NAV_TOP_OVERFLOW;
+        const subNavTopOverflowValue = getGV(SUB_NAV_TOP_OVERFLOW_KEY) || DEFAULT_SUB_NAV_TOP_OVERFLOW;
         
         // 创建说明文字
         const tipText = createHtml('div', '修改后立即生效。', SETTINGS_STYLES.tipText);
@@ -3884,7 +3942,8 @@
             { label: '主目录最大宽度', value: navMaxWidthValue, placeholder: DEFAULT_NAV_MAX_WIDTH, key: NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_NAV_MAX_WIDTH },
             { label: '副目录最大宽度', value: subNavMaxWidthValue, placeholder: DEFAULT_SUB_NAV_MAX_WIDTH, key: SUB_NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_SUB_NAV_MAX_WIDTH },
             { label: '主目录（默认）垂直位置', value: navTopValue, placeholder: DEFAULT_NAV_TOP, key: NAV_TOP_KEY, defaultVal: DEFAULT_NAV_TOP },
-            { label: '主目录（条数较多时）垂直位置', value: navTopOverflowValue, placeholder: DEFAULT_NAV_TOP_OVERFLOW, key: NAV_TOP_OVERFLOW_KEY, defaultVal: DEFAULT_NAV_TOP_OVERFLOW }
+            { label: '主目录（条数较多时）垂直位置', value: navTopOverflowValue, placeholder: DEFAULT_NAV_TOP_OVERFLOW, key: NAV_TOP_OVERFLOW_KEY, defaultVal: DEFAULT_NAV_TOP_OVERFLOW },
+            { label: '副目录最高的垂直位置', value: subNavTopOverflowValue, placeholder: DEFAULT_SUB_NAV_TOP_OVERFLOW, key: SUB_NAV_TOP_OVERFLOW_KEY, defaultVal: DEFAULT_SUB_NAV_TOP_OVERFLOW }
         ];
 
         // 创建输入框项的函数
