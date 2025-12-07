@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      4.3.0
+// @version      5.0.0
 // @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://chat.deepseek.com/*
@@ -74,10 +74,27 @@
     };
 
     // 通用输入框选择器，两类：textarea标签、lexical
+    const TEXTAREA_CACHE_KEY = 'textarea_input_cache';
     const getTextareaInput = () => {
         const textareas = document.getElementsByTagName('textarea');
         if (textareas.length === 0) return null;
         if (textareas.length === 1) return textareas[0];
+        
+        // 尝试从缓存获取
+        const cacheStr = getS(TEXTAREA_CACHE_KEY);
+        if (cacheStr) {
+            try {
+                const cache = JSON.parse(cacheStr);
+                if (cache && cache.id) {
+                    const cachedElement = document.getElementById(cache.id);
+                    if (cachedElement) {
+                        return cachedElement;
+                    }
+                }
+            } catch (e) {
+                // 解析失败，继续执行查找逻辑
+            }
+        }
         
         // 如果有多个textarea，返回高度最大的
         let maxHeight = 0;
@@ -89,6 +106,15 @@
                 maxTextarea = textareas[i];
             }
         }
+        
+        // 存储找到的最大textarea的id
+        if (maxTextarea) {
+            const cacheData = {
+                id: maxTextarea.id || ''
+            };
+            setS(TEXTAREA_CACHE_KEY, JSON.stringify(cacheData));
+        }
+        
         return maxTextarea;
     };
     const getContenteditableInput = () => document.querySelector('[contenteditable="true"]:has(p)');
