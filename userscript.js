@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      4.2.0
+// @version      4.3.0
 // @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://chat.deepseek.com/*
@@ -35,7 +35,11 @@
     const STUDIO_CONTENT_MAX_WIDTH = "800px"; // ai studio 内容最大宽度
     const GEMINI_MAX_WIDTH = "850px"; // gemini 内容最大宽度
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
-    const version = "4.2.0";
+    const MODEL_GROUP_INDEX = 6;
+    const PANEL_BUTTON_WIDTH = "90px"; // 面板按钮固定宽度（顶部主按钮）
+    const PANEL_COLUMN_WIDTH = "135px"; // 面板模型列固定宽度
+    const PANEL_SMALL_BUTTON_WIDTH = "40px"; // 全选/清空等小按钮宽度
+    const PANEL_DISABLE_BUTTON_COMPACT_WIDTH = "24px"; // 缩略模式下禁用按钮宽度
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -70,7 +74,23 @@
     };
 
     // 通用输入框选择器，两类：textarea标签、lexical
-    const getTextareaInput = () => document.getElementsByTagName('textarea')[0];
+    const getTextareaInput = () => {
+        const textareas = document.getElementsByTagName('textarea');
+        if (textareas.length === 0) return null;
+        if (textareas.length === 1) return textareas[0];
+        
+        // 如果有多个textarea，返回高度最大的
+        let maxHeight = 0;
+        let maxTextarea = textareas[0];
+        for (let i = 0; i < textareas.length; i++) {
+            const height = textareas[i].offsetHeight || textareas[i].clientHeight;
+            if (height > maxHeight) {
+                maxHeight = height;
+                maxTextarea = textareas[i];
+            }
+        }
+        return maxTextarea;
+    };
     const getContenteditableInput = () => document.querySelector('[contenteditable="true"]:has(p)');
 
     // 选择器配置
@@ -85,7 +105,7 @@
             [DEEPSEEK]: () => ((btns) => btns[btns.length - 1])(document.querySelectorAll('[role="button"]')),
             [KIMI]: () => document.getElementsByClassName('send-button')[0],
             [TONGYI]: () => document.querySelector('[class^="operateBtn-"], [class*=" operateBtn-"]'),
-            [QWEN]: () => document.getElementById('send-message-button'),
+            [QWEN]: () => document.querySelector('.chat-prompt-send-button'),
             [DOUBAO]: () => document.getElementById('flow-end-msg-send'),
             [YUANBAO]: () => document.getElementById('yuanbao-send-btn'),
 
@@ -208,6 +228,8 @@
 
     // 面板数据常量
     const CHOSEN_SITE = "chosenSite";
+    const COMMON_COMBINATIONS_KEY = "commonCombinations";
+    const ADD_COMBINATION_BUTTON_CLICKED_KEY = "addCombinationButtonClicked"; // 设定组合按钮是否已点击过
     
     // 按钮显示状态存储键名（GM存储，所有站点共享）
     const SHOW_TOGGLE_BUTTON_KEY = "showToggleButton";
@@ -222,6 +244,9 @@
     
     // 输入框隐藏层级自定义配置存储键名（GM存储，所有站点共享）
     const INPUT_AREA_HIDE_PARENT_LEVEL_KEY = "inputAreaHideParentLevel";
+    
+    // 站点图标存储键名前缀（GM存储，所有站点共享）
+    const SITE_ICON_KEY_PREFIX = "siteIcon_";
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -789,6 +814,8 @@
     }
     // 标记输入框是否处于隐藏状态
     let isInputAreaHidden = false;
+    // 标记用户是否手动点击了"显示"按钮（页面刷新前有效）
+    let userManuallyShown = false;
 
     // 监听URL变化，重新添加监听器
     function checkUrlChange() {
@@ -797,6 +824,8 @@
         if (currentUrl !== lastUrl) {
             console.log("URL已变化，重新添加监听器");
             lastUrl = currentUrl;
+
+            userManuallyShown = false;
 
             let nthInputArea = getNthInputArea();
             if(site === GEMINI){
@@ -939,6 +968,9 @@
      */
     let FIRST_RUN_KEY = "firstRun";
         setTimeout(function(){
+        // 页面加载时获取并保存站点图标
+        getAndSaveSiteIcon(site);
+        
         appendSeveral(document.body, panel, toggleButton, subNavBar);
         reloadDisableStatus();
         updateButtonVisibility(); // 根据设置更新按钮显示状态
@@ -1015,7 +1047,7 @@
         return getNthParent(inputArea, level);
     }
 
-    // 按钮点击事件 - 切换面板显示/隐藏
+    // 按钮点击事件 - 切换显示/隐藏
     toggleButton.addEventListener('click', (e) => {
         e.stopPropagation();
         toggleInput();
@@ -1027,6 +1059,10 @@
         const isHidden = aroundInputArea.style.display === 'none';
         // 更新隐藏状态标记
         isInputAreaHidden = !isHidden;
+        // 如果用户手动点击了"显示"按钮，设置标记
+        if (isHidden) {
+            userManuallyShown = true;
+        }
 
         const state = isHidden ? TOGGLE_STATES.show : TOGGLE_STATES.hide;
         toggleBtnStatus(isHidden);
@@ -1052,7 +1088,11 @@
             return;
         }
 
-        
+        // 如果用户手动点击了"显示"按钮，则不执行自动隐藏
+        if (userManuallyShown) {
+            return;
+        }
+
         const aroundInputArea = getNthInputArea();
         if (aroundInputArea && aroundInputArea.style.display !== 'none') {
             aroundInputArea.style.display = TOGGLE_STATES.hide.display;
@@ -1308,7 +1348,7 @@
     };
     
     const NAV_TOP_THRESHOLD = 7;    // 主目录条目超过此阈值时，top位置抬高
-    const NAV_COUNT_THRESHOLD = 12; // 主目录条数超过此阈值时，会显示"共xx条"
+    const NAV_COUNT_THRESHOLD = 10; // 主目录条数超过此阈值时，会显示"共xx条"
 
     const SUB_NAV_LEFT = "270px";     // 副目录的水平位置（距离屏幕左侧）
     const SUB_NAV_MIN_ITEMS = 2;      // 副目录标题总条数超过此阈值才显示
@@ -1365,7 +1405,7 @@
             waveIconNormal: `background-color:transparent;color:#333;`,
 
             // 副目录样式
-            subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${subNavTop};max-width:${subNavMaxWidth};min-width:220px;max-height:${subNavMaxHeight};background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+            subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${subNavTop};max-width:${subNavMaxWidth};min-width:200px;max-height:${subNavMaxHeight};background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
             subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
             subNavCloseBtn: `position:absolute;top:0;right:5px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
 
@@ -1841,6 +1881,11 @@
                         
                         // 如果遇到 ```（三个反引号），终止拼接
                         if (siblingText === '```') {
+                            break;
+                        }
+                        
+                        // 如果是空字符，终止匹配
+                        if (!siblingText) {
                             break;
                         }
                         
@@ -2849,17 +2894,37 @@
 
     // 面板样式集中定义
     const PANEL_STYLES = {
-        panel: `z-index:9999;cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:430px;background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);overflow-y:auto;padding:2px;display:flex;flex-direction:column;`,
-        panelCompact: `min-width:120px;`,
-        disable: `background:#ec7258;color:white;border-radius:6px;padding:2px 1px;`,
-        item: `display:flex;align-items:center;padding:3px 0 3px 3px;border-bottom:1px solid #eee;`,
-        wordSpan: `flex:1;margin-right:10px;font-size:14px;`,
-        checkbox: `margin-right:1px;font-size:20px;`,
-        emptyMessage: `padding:1px;text-align:center;color:#888;font-size:14px;`,
-        headline: `font-weight:bold;`,
-        hint: `color:#275fe6;width:0;height:0;padding-left:3px;margin-top:5px;margin-bottom:5px;border-top:8px solid transparent;border-right:8px solid #3498db;border-bottom:8px solid transparent;`,
-        settingsBtn: `text-align:left;background:#667eea;color:white;border:none;border-radius:4px;padding:4px 8px;font-size:16px;cursor:pointer;margin-bottom:4px;width:100%;`,
-        newChatBtn: `text-align:left;background:#48bb78;color:white;border:none;border-radius:4px;padding:4px 8px;font-size:16px;cursor:pointer;margin-bottom:4px;width:100%;`
+        // 固定多选面板宽度（同时保留高度自适应）
+        panel: `z-index:9999;cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:450px;width:calc(${PANEL_COLUMN_WIDTH} * 2 + 110px);background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);overflow-y:auto;padding:6px 4px;display:flex;flex-direction:column;align-items:flex-start;`,
+        panelCompact: `width:auto;`,
+        buttonContainer: `display:flex;gap:16px;width:calc(${PANEL_BUTTON_WIDTH} + ${PANEL_BUTTON_WIDTH} + ${PANEL_BUTTON_WIDTH} + 12px);margin:6px 0`,
+        buttonBase: `text-align:center;color:white;border:none;border-radius:6px;padding:4px 6px;font-size:13px;cursor:pointer;width:${PANEL_BUTTON_WIDTH};flex-shrink:0;`,
+        // 禁用按钮单独统一字体大小
+        disable: `background:#ec7258;font-size:14px;`,
+        settingsBtn: `background:#667eea;`,
+        newChatBtn: `background:#48bb78;`,
+        // 全选、清空按钮尺寸更紧凑，且使用单独宽度
+        selectAllBtn: `background:#3498db;width:${PANEL_SMALL_BUTTON_WIDTH};padding:3px 6px;font-size:12px;`,
+        clearBtn: `background:#95a5a6;width:${PANEL_SMALL_BUTTON_WIDTH};padding:3px 6px;font-size:12px;`,
+        addCombinationBtn: `background:#48bb78;margin:6px 2px`,
+        // 组合按钮基础样式：宽度自适应，不使用固定 PANEL_BUTTON_WIDTH
+        combinationBtnBase: `text-align:center;color:white;border:none;border-radius:6px;padding:4px 6px;font-size:13px;cursor:pointer;width:auto;flex-shrink:1;`,
+        // 组合按钮：宽度自适应，不使用固定 PANEL_BUTTON_WIDTH
+        combinationBtn: `background:transparent;border:1px solid #ddd;margin:2px;padding:4px 8px;font-size:12px;min-width:40px;white-space:nowrap;position:relative;`,
+        deleteBtn: `position:absolute;top:-6px;right:-6px;width:16px;height:16px;background:#ff4444;border-radius:50%;border:none;color:white;font-size:10px;line-height:1;cursor:pointer;display:none;z-index:10;padding:0;text-align:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);`,
+        combinationContainer: `display:flex;flex-wrap:wrap;gap:4px;width:100%;margin-top:4px;`,
+        item: `display:flex;align-items:center;padding:4px 0 4px 4px;border-bottom:1px solid #eee;`,
+        iconImg: `width:16px;height:16px;margin-right:6px;flex-shrink:0;`,
+        iconImgCompact: `width:16px;height:16px;flex-shrink:0;`,
+        iconImgCombination: `width:16px;height:16px;margin:0 2px;flex-shrink:0;vertical-align:middle;`,
+        wordSpan: `flex:1;margin-right:8px;font-size:14px;`,
+        checkbox: `margin-right:4px;font-size:18px;`,
+        emptyMessage: `padding:8px;text-align:center;color:#888;font-size:14px;`,
+        headline: `font-weight:bold;font-size:15px;margin-bottom:4px;`,
+        modelColumns: `display:flex;gap:25px;align-items:flex-start;`,
+        modelColumn: `width:${PANEL_COLUMN_WIDTH};flex-shrink:0;`,
+        modelListWithButtons: `display:flex;gap:12px;align-items:flex-start;width:100%;`,
+        selectClearContainerVertical: `display:flex;flex-direction:column;gap:6px;flex-shrink:0;`
     };
 
     // 面板数据
@@ -2870,27 +2935,140 @@
     // 创建面板容器
     panel.style.cssText = PANEL_STYLES.panel;
     panel.id = TOOL_PANEL_ID;
-    let hint = createTag('div', "", "");
 
     const DISABLE = "禁用";
     const ENABLE = "开启";
+    const DISABLED_ICON = "🚫";
+    const ENABLED_ICON = "💡";
     
     // 创建禁用按钮
-    let disable = createTag('div', DISABLE, PANEL_STYLES.disable);
+    let disable = createTag('div', DISABLE, PANEL_STYLES.buttonBase + PANEL_STYLES.disable);
     disable.id = "tool-disable";
     disable.addEventListener('click', (e) => disableEvent(e));
     disable.addEventListener('mouseenter', () => disable.style.opacity = '0.85');
     disable.addEventListener('mouseleave', () => disable.style.opacity = '1');
-    disable.title = '禁用/启用自动同步提问功能';
+    disable.title = '同步提问开关';
 
     const settingsBtn = createSettingsButton();
     const newChatBtn = createNewChatButton();
+    
+    // 创建按钮容器
+    const buttonContainer = createTag('div', "", PANEL_STYLES.buttonContainer);
+    appendSeveral(buttonContainer, disable, settingsBtn, newChatBtn);
+
+    // 创建全选和清空按钮
+    const selectAllBtn = createTag('button', '全选', PANEL_STYLES.buttonBase + PANEL_STYLES.selectAllBtn);
+    selectAllBtn.id = 'tool-select-all';
+    selectAllBtn.title = '全选所有可见模型';
+    selectAllBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        selectAllModels();
+    });
+    selectAllBtn.addEventListener('mouseenter', () => selectAllBtn.style.opacity = '0.85');
+    selectAllBtn.addEventListener('mouseleave', () => selectAllBtn.style.opacity = '1');
+
+    const clearBtn = createTag('button', '清空', PANEL_STYLES.buttonBase + PANEL_STYLES.clearBtn);
+    clearBtn.id = 'tool-clear';
+    clearBtn.title = '清空所有已选模型';
+    clearBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        clearAllModels();
+    });
+    clearBtn.addEventListener('mouseenter', () => clearBtn.style.opacity = '0.85');
+    clearBtn.addEventListener('mouseleave', () => clearBtn.style.opacity = '1');
+
+    // 创建全选/清空按钮容器（垂直排列，用于放在模型列表右侧）
+    const selectClearContainer = createTag('div', "", PANEL_STYLES.selectClearContainerVertical);
+    appendSeveral(selectClearContainer, selectAllBtn, clearBtn);
+
+    // 创建"添加常用组合"按钮
+    const addCombinationBtn = createTag('button', '保存勾选组合 📌', PANEL_STYLES.buttonBase + PANEL_STYLES.addCombinationBtn);
+    addCombinationBtn.id = 'tool-add-combination';
+    addCombinationBtn.title = '保存当前勾选的模型组合，后续可一键勾选此组合';
+    // 检查GM存储中的状态，如果已点击过就只显示emoji并自适应宽度
+    if (getGV(ADD_COMBINATION_BUTTON_CLICKED_KEY)) {
+        addCombinationBtn.textContent = '📌';
+        addCombinationBtn.style.width = 'auto';
+        addCombinationBtn.style.flexShrink = '1';
+    }
+    addCombinationBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        saveCurrentCombination();
+        // 点击后只保留emoji并自适应宽度
+        addCombinationBtn.textContent = '📌';
+        addCombinationBtn.style.width = 'auto';
+        addCombinationBtn.style.flexShrink = '1';
+        // 保存状态到GM存储
+        setGV(ADD_COMBINATION_BUTTON_CLICKED_KEY, true);
+    });
+    addCombinationBtn.addEventListener('mouseenter', () => addCombinationBtn.style.opacity = '0.85');
+    addCombinationBtn.addEventListener('mouseleave', () => addCombinationBtn.style.opacity = '1');
+
+    // 创建组合按钮容器
+    const combinationContainer = createTag('div', "", PANEL_STYLES.combinationContainer);
+    combinationContainer.id = 'combination-container';
 
     // 根据word在words数组中的索引获取背景色
     const getItemBgColor = (word) => {
         const index = typeof word === 'number' ? word : words.indexOf(word);
-        return index < 6 ? '#f0f8ff' : '#fffcf0';
+        return index < MODEL_GROUP_INDEX ? '#fffcf0' : '#fffcf0';
     };
+
+    /**
+     * 将图标URL转换为base64并保存（使用Image+Canvas方式）
+     */
+    function convertIconUrlToBase64(iconUrl, iconKey, siteId, logMessage) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = function() {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.width;
+                canvas.height = img.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                const base64DataUri = canvas.toDataURL('image/png');
+                setGV(iconKey, base64DataUri);
+                console.log(logMessage || `站点图标已保存(base64): site=${siteId}`);
+            } catch (error) {
+                console.error(`转换图标为base64失败: site=${siteId}`, error);
+            }
+        };
+        img.onerror = function(error) {
+            console.error(`加载图标失败: site=${siteId}`, error);
+        };
+        img.src = iconUrl;
+    }
+
+    /**
+     * 创建站点图标元素（复用函数）
+     * @param {string} word - 模型名称
+     * @param {string} iconStyle - 图标样式（展开模式或缩略模式）
+     * @returns {HTMLElement|null} 图标元素，如果没有图标则返回null
+     */
+    function createSiteIcon(word, iconStyle) {
+        const siteId = wordToSite[word];
+        if (siteId === undefined || siteId === null) {
+            return null;
+        }
+        
+        const iconKey = SITE_ICON_KEY_PREFIX + siteId;
+        const iconBase64 = getGV(iconKey);
+        
+        if (!iconBase64) {
+            return null;
+        }
+        
+        const iconImg = document.createElement('img');
+        iconImg.src = iconBase64;
+        iconImg.style.cssText = iconStyle;
+        iconImg.alt = word;
+        iconImg.onerror = function() {
+            // 图标加载失败时隐藏图标
+            this.style.display = 'none';
+        };
+        return iconImg;
+    }
 
     /**
      * 创建单个面板项
@@ -2901,7 +3079,17 @@
         item.className = 'panel-item';
         item.dataset.word = word;
 
+        // 创建元素数组，用于 appendSeveral
+        const elements = [];
+
+        // 如果有图标URL，创建图标元素
+        const iconImg = createSiteIcon(word, PANEL_STYLES.iconImg);
+        if (iconImg) {
+            elements.push(iconImg);
+        }
+
         const wordSpan = createTag('span', word, PANEL_STYLES.wordSpan);
+        elements.push(wordSpan);
 
         const checkbox = createTag('input', "", PANEL_STYLES.checkbox);
         checkbox.type = 'checkbox';
@@ -2919,7 +3107,8 @@
             updateStorageSites(word);
         });
 
-        appendSeveral(item, wordSpan, checkbox);
+        elements.push(checkbox);
+        appendSeveral(item, ...elements);
         return item;
     }
 
@@ -2927,7 +3116,7 @@
      * 创建设置按钮
      */
     function createSettingsButton() {
-        const btn = createTag('button', '设置', PANEL_STYLES.settingsBtn);
+        const btn = createTag('button', '设置', PANEL_STYLES.buttonBase + PANEL_STYLES.settingsBtn);
         btn.id = 'tool-settings';
         btn.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -2942,7 +3131,7 @@
      * 创建新对话按钮
      */
     function createNewChatButton() {
-        const btn = createTag('button', '新对话', PANEL_STYLES.newChatBtn);
+        const btn = createTag('button', '新对话', PANEL_STYLES.buttonBase + PANEL_STYLES.newChatBtn);
         btn.id = 'tool-new-chat';
         btn.title = '对于已勾选且已打开的站点，将批量跳转到新对话页面';
         btn.addEventListener('click', (e) => {
@@ -3010,17 +3199,45 @@
         const selectedSites = getSitesAndCurrent();
         const visibleSites = getVisibleModels();
         const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
-        const items = visibleWords.map(word => createPanelItem(word, selectedSites));
+        
+        // 以MODEL_GROUP_INDEX为界，将模型列表分为两列
+        const firstGroupWords = visibleWords.filter((word, index) => {
+            const originalIndex = words.indexOf(word);
+            return originalIndex < MODEL_GROUP_INDEX;
+        });
+        const secondGroupWords = visibleWords.filter((word, index) => {
+            const originalIndex = words.indexOf(word);
+            return originalIndex >= MODEL_GROUP_INDEX;
+        });
+        
+        const firstGroupItems = firstGroupWords.map(word => createPanelItem(word, selectedSites));
+        const secondGroupItems = secondGroupWords.map(word => createPanelItem(word, selectedSites));
 
         const headline = createTag('div', "全部模型", PANEL_STYLES.headline);
+        
+        // 创建两列容器
+        const modelColumns = createTag('div', "", PANEL_STYLES.modelColumns);
+        const firstColumn = createTag('div', "", PANEL_STYLES.modelColumn);
+        const secondColumn = createTag('div', "", PANEL_STYLES.modelColumn);
+        
+        appendSeveral(firstColumn, ...firstGroupItems);
+        appendSeveral(secondColumn, ...secondGroupItems);
+        appendSeveral(modelColumns, firstColumn, secondColumn);
 
-        appendSeveral(contentContainer, disable, headline, ...items);
+        // 创建模型列表和按钮的横向容器
+        const modelListWithButtons = createTag('div', "", PANEL_STYLES.modelListWithButtons);
+        appendSeveral(modelListWithButtons, modelColumns, selectClearContainer);
+
+        appendSeveral(contentContainer, headline, modelListWithButtons);
         originalHTML = contentContainer.innerHTML;
     }
 
     // 初始化面板内容
     renderPanelContent();
-    appendSeveral(panel, settingsBtn, newChatBtn, contentContainer);
+    appendSeveral(panel, buttonContainer, contentContainer, addCombinationBtn, combinationContainer);
+
+    // 加载保存的组合
+    loadCombinations();
 
     const settingsBtnText = '设置 ⚙️';
     // 首次加载多选面板 是展开状态，后续刷新网页默认缩略状态
@@ -3029,26 +3246,48 @@
     } else {
         // 如果不是第一次运行，面板保持展开状态，更新设置按钮文字
         settingsBtn.textContent = settingsBtnText;
-        newChatBtn.style.display = 'block';
-        disable.style.padding = '4px 8px';
     }
 
     // 面板相关函数
     function disableEvent(event){
         event.stopPropagation();
-        if(disable.textContent === DISABLE){
+        // 使用存储的状态或原始文字判断，而不是textContent（缩略模式下是符号）
+        const isCurrentlyDisabled = getGV("disable");
+        const originalText = disable.dataset.originalText || disable.textContent;
+        if(originalText === DISABLE || !isCurrentlyDisabled){
             changeDisable(true);
         }else{
             changeDisable(false);
         }
     }
 
+    // 统一更新禁用按钮的文案和 emoji
+    function updateDisableButtonLabel(isDisabled){
+        // 文案仍然表示下一步操作：禁用 / 开启
+        const baseText = isDisabled ? ENABLE : DISABLE;
+        // 始终保留纯文字，供点击事件判断使用
+        disable.dataset.originalText = baseText;
+
+        if(isCompactMode){
+            // 缩略模式：仅展示当前状态对应的图标
+            disable.textContent = isDisabled ? DISABLED_ICON : ENABLED_ICON;
+        }else{
+            // 展开模式：按钮文字 + 当前状态对应的 emoji
+            const stateIcon = isDisabled ? DISABLED_ICON : ENABLED_ICON;
+            disable.textContent = `${baseText} ${stateIcon}`;
+        }
+    }
+
+    // 使用 CSS 滤镜整体控制多选面板启用/禁用的视觉效果
     function changeDisable(status){
         if(status === true){
             setGV("disable", true);
-            disable.textContent = ENABLE;
-            disable.style.background = "#f5a088";
+            updateDisableButtonLabel(true);
+            // 简略模式下不显示背景色
+            disable.style.background = isCompactMode ? "transparent" : "#f5a088";
             contentContainer.style.color = "lightgray";
+            contentContainer.style.filter = "grayscale(100%)";
+            contentContainer.style.opacity = "0.5";
             // 禁用状态下，缩略模式的背景色改为白色
             if(isCompactMode){
                 const items = contentContainer.querySelectorAll('[data-word]');
@@ -3058,9 +3297,12 @@
             }
         }else{
             setGV("disable", false);
-            disable.textContent = DISABLE;
-            disable.style.background = "#ec7258";
+            updateDisableButtonLabel(false);
+            // 简略模式下不显示背景色
+            disable.style.background = isCompactMode ? "transparent" : "#ec7258";
             contentContainer.style.color = "black";
+            contentContainer.style.filter = "";
+            contentContainer.style.opacity = "1";
             // 恢复启用状态，缩略模式的背景色恢复为彩色
             if(isCompactMode){
                 const items = contentContainer.querySelectorAll('[data-word]');
@@ -3069,6 +3311,48 @@
                     item.style.background = getItemBgColor(word);
                 });
             }
+        }
+    }
+
+    // 全选所有可见模型
+    function selectAllModels() {
+        changeDisable(false);
+        const visibleSites = getVisibleModels();
+        const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
+        const selectedSites = visibleWords.map(word => wordToSite[word]);
+        setGV(CHOSEN_SITE, selectedSites);
+        
+        visibleWords.forEach(word => {
+            const checkbox = document.getElementById(`word-${word}`);
+            if (checkbox) {
+                checkbox.checked = true;
+            }
+        });
+        
+        updateBoxFromStorage();
+        if (isCompactMode) {
+            reloadCompactMode();
+        }
+    }
+
+    // 清空所有已选模型（取消所有复选框的勾选状态）
+    function clearAllModels() {
+        changeDisable(false);
+        
+        const visibleSites = getVisibleModels();
+        const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
+        visibleWords.forEach(word => {
+            const checkbox = document.getElementById(`word-${word}`);
+            if (checkbox) {
+                checkbox.checked = false;
+            }
+        });
+        
+        // 根据复选框状态更新存储
+        getSitesFromDomAndSave();
+        
+        if (isCompactMode) {
+            reloadCompactMode();
         }
     }
 
@@ -3188,17 +3472,24 @@
         if (!isCompactMode) return;
 
         // 确保按钮状态正确
-        settingsBtn.style.display = 'none';
-        newChatBtn.style.display = 'none';
-        if (contentContainer.contains(disable)) {
+        buttonContainer.style.display = 'none';
+        selectClearContainer.style.display = 'none';
+        addCombinationBtn.style.display = 'none';
+        combinationContainer.style.display = 'none';
+        // 如果disable在buttonContainer中，先移除
+        if (buttonContainer.contains(disable)) {
             disable.remove();
         }
         if (!panel.contains(disable)) {
             panel.insertBefore(disable, contentContainer);
         }
         disable.style.display = 'block';
-        disable.style.padding = '2px 1px';
-
+        // 缩略模式下减小按钮宽度，只显示图标或符号
+        disable.style.width = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
+        disable.style.minWidth = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
+        disable.style.maxWidth = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
+        disable.style.padding = '4px 2px';
+        // 文案与 emoji 统一由 changeDisable 控制
         let selectedSites = getSitesAndCurrent();
         let selectedWords = selectedSites.map(site => siteToWord[site]).filter(word => word);
         // 按照可见模型列表的顺序排序
@@ -3219,6 +3510,7 @@
     // 切换到简略模式
     function switchToCompactMode(){
         if (isCompactMode) return;
+        // 先按展开模式刷新一次，保证整体状态正确
         reloadDisableStatus();
 
         // 保存原始内容
@@ -3239,11 +3531,13 @@
             selectedWords = visibleWords.filter(word => wordsFromStorage.includes(word));
         }
 
-        // 隐藏设置按钮和新对话按钮，显示禁用按钮
-        settingsBtn.style.display = 'none';
-        newChatBtn.style.display = 'none';
-        // 如果disable在contentContainer中，先移除
-        if (contentContainer.contains(disable)) {
+        // 隐藏按钮容器，单独显示禁用按钮
+        buttonContainer.style.display = 'none';
+        selectClearContainer.style.display = 'none';
+        addCombinationBtn.style.display = 'none';
+        combinationContainer.style.display = 'none';
+        // 如果disable在buttonContainer中，先移除
+        if (buttonContainer.contains(disable)) {
             disable.remove();
         }
         // 将disable添加到panel顶部
@@ -3251,8 +3545,11 @@
             panel.insertBefore(disable, contentContainer);
         }
         disable.style.display = 'block';
-        disable.style.padding = '2px 1px';
-
+        // 缩略模式下减小按钮宽度，只显示图标或符号
+        disable.style.width = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
+        disable.style.minWidth = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
+        disable.style.maxWidth = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
+        disable.style.padding = '4px 2px';
         if (selectedWords.length === 0) {
             const emptyMsg = createTag('div', '未选模型', PANEL_STYLES.emptyMessage);
             contentContainer.replaceChildren();
@@ -3262,14 +3559,14 @@
         }
 
         isCompactMode = true;
-        panel.style.cssText = PANEL_STYLES.panel;
+        panel.style.cssText = PANEL_STYLES.panel + PANEL_STYLES.panelCompact;
+        // 进入缩略模式后，再根据禁用状态刷新一次按钮文案和背景（此时 isCompactMode=true）
+        reloadDisableStatus();
     };
 
     // 绘制缩略模式面板
     function drawCompactPanel(selectedWords){
         contentContainer.replaceChildren();
-        hint.style.cssText = PANEL_STYLES.hint;
-        contentContainer.appendChild(hint);
 
         let isDisable = getGV("disable");
         selectedWords.forEach(word => {
@@ -3278,12 +3575,220 @@
             const item = createTag('div', "", PANEL_STYLES.item + `background:${bgColor};`);
             item.dataset.word = word;
 
+            // 如果有图标，使用图标替换alias；否则使用alias
+            const iconImg = createSiteIcon(word, PANEL_STYLES.iconImgCompact);
+            if (iconImg) {
+                item.appendChild(iconImg);
+            } else {
             let alias = wordToAlias[word];
             const wordSpan = createTag('span', alias, PANEL_STYLES.wordSpan);
-
             item.appendChild(wordSpan);
+            }
+            
             contentContainer.appendChild(item);
         });
+    }
+
+    /**
+     * 根据sites数组生成alias组合名称
+     */
+    function generateCombinationName(sites) {
+        const aliasList = sites
+            .map(site => siteToAlias[site])
+            .filter(alias => alias)
+            .sort();
+        return aliasList.join(', ');
+    }
+
+    /**
+     * 根据sites数组生成图标组合元素
+     * @param {Array<number>} sites - 站点ID数组
+     * @returns {HTMLElement} 包含图标的容器元素
+     */
+    function createCombinationIcons(sites) {
+        const container = document.createElement('div');
+        container.style.cssText = 'display:inline-flex;align-items:center;gap:2px;';
+        
+        // 保持保存时的原始顺序，不排序
+        sites.forEach(site => {
+            const word = siteToWord[site];
+            if (!word) {
+                return;
+            }
+            
+            const iconImg = createSiteIcon(word, PANEL_STYLES.iconImgCombination);
+            if (iconImg) {
+                container.appendChild(iconImg);
+            } else {
+                // 如果没有图标，使用alias作为fallback
+                const alias = siteToAlias[site];
+                if (alias) {
+                    const aliasSpan = document.createElement('span');
+                    aliasSpan.textContent = alias;
+                    aliasSpan.style.cssText = 'font-size:11px;margin:0 1px;color:#333;font-size:14px';
+                    container.appendChild(aliasSpan);
+                }
+            }
+        });
+        
+        return container;
+    }
+
+    /**
+     * 保存当前勾选的模型组合
+     */
+    function saveCurrentCombination() {
+        const selectedSites = getSitesFromDomAndSave();
+        if (selectedSites.length === 0) {
+            alert('请先勾选至少一个模型');
+            return;
+        }
+
+        // 获取已保存的组合
+        let combinations = getGV(COMMON_COMBINATIONS_KEY) || [];
+        if (!Array.isArray(combinations)) {
+            combinations = [];
+        }
+
+        // 检查是否已存在相同组合（使用排序后的数组进行比较）
+        const selectedSitesSorted = [...selectedSites].sort();
+        const existingIndex = combinations.findIndex(combo => {
+            const comboSitesSorted = [...combo].sort();
+            return JSON.stringify(comboSitesSorted) === JSON.stringify(selectedSitesSorted);
+        });
+
+        if (existingIndex >= 0) {
+            // 如果已存在，不重复添加
+            return;
+        } else {
+            // 如果不存在，添加新组合（只存sites数组）
+            combinations.push(selectedSites);
+        }
+
+        // 保存到存储
+        setGV(COMMON_COMBINATIONS_KEY, combinations);
+        
+        // 刷新组合按钮显示
+        loadCombinations();
+    }
+
+    /**
+     * 删除指定索引的组合
+     */
+    function deleteCombination(index) {
+        const combinations = getGV(COMMON_COMBINATIONS_KEY) || [];
+        if (!Array.isArray(combinations) || index < 0 || index >= combinations.length) {
+            return;
+        }
+        
+        combinations.splice(index, 1);
+        setGV(COMMON_COMBINATIONS_KEY, combinations);
+        loadCombinations();
+    }
+
+    /**
+     * 加载并显示保存的组合按钮
+     */
+    function loadCombinations() {
+        const combinations = getGV(COMMON_COMBINATIONS_KEY) || [];
+        if (!Array.isArray(combinations)) {
+            return;
+        }
+
+        // 清空容器
+        combinationContainer.replaceChildren();
+
+        // 为每个组合创建按钮
+        combinations.forEach((sites, index) => {
+            if (!Array.isArray(sites) || sites.length === 0) {
+                return;
+            }
+
+            // 根据sites动态生成alias组合名称（用于title提示）
+            const combinationName = generateCombinationName(sites);
+            
+            const btn = createTag('button', '', PANEL_STYLES.combinationBtnBase + PANEL_STYLES.combinationBtn);
+            btn.title = `点击一键勾选此组合`;
+            
+            // 创建图标组合并添加到按钮
+            const iconContainer = createCombinationIcons(sites);
+            btn.appendChild(iconContainer);
+            
+            // 创建删除按钮（红叉）
+            const deleteBtn = createTag('button', '×', PANEL_STYLES.deleteBtn);
+            deleteBtn.title = '删除组合';
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                deleteCombination(index);
+            });
+            btn.appendChild(deleteBtn);
+            
+            btn.dataset.combinationIndex = index;
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                applyCombination(sites);
+            });
+            
+            // 鼠标悬停显示删除按钮
+            let hoverTimer = null;
+            btn.addEventListener('mouseenter', () => {
+                // 清除之前的定时器（如果存在）
+                if (hoverTimer) {
+                    clearTimeout(hoverTimer);
+                }
+                hoverTimer = setTimeout(() => {
+                    btn.style.opacity = '0.85';
+                    deleteBtn.style.display = 'block';
+                    hoverTimer = null;
+                }, 500);
+            });
+            btn.addEventListener('mouseleave', () => {
+                // 清除定时器，防止延迟回调执行
+                if (hoverTimer) {
+                    clearTimeout(hoverTimer);
+                    hoverTimer = null;
+                }
+                btn.style.opacity = '1';
+                deleteBtn.style.display = 'none';
+            });
+            
+            combinationContainer.appendChild(btn);
+        });
+    }
+
+    /**
+     * 应用组合（一键设置勾选状态）
+     */
+    function applyCombination(sites) {
+        changeDisable(false);
+
+        // 获取可见模型
+        const visibleSites = getVisibleModels();
+        const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
+
+        // 更新复选框状态
+        visibleWords.forEach(word => {
+            const checkbox = document.getElementById(`word-${word}`);
+            if (checkbox) {
+                const wordSite = wordToSite[word];
+                checkbox.checked = sites.includes(wordSite);
+            }
+        });
+
+        // 保存到存储
+        const selectedSites = visibleWords
+            .filter(word => {
+                const checkbox = document.getElementById(`word-${word}`);
+                return checkbox && checkbox.checked;
+            })
+            .map(word => wordToSite[word]);
+        setGV(CHOSEN_SITE, selectedSites);
+
+        // 更新存储并刷新
+        updateBoxFromStorage();
+        if (isCompactMode) {
+            reloadCompactMode();
+        }
     }
 
     // 刷新多选面板（重新生成面板内容）
@@ -3291,27 +3796,41 @@
         contentContainer.replaceChildren();
         renderPanelContent();
         
-        // 如果是展开模式，确保设置按钮和新对话按钮状态正确
+        // 如果是展开模式，确保按钮容器正确显示
         if (!isCompactMode) {
-            settingsBtn.style.display = 'block';
             settingsBtn.textContent = settingsBtnText;
-            newChatBtn.style.display = 'block';
-            // 确保设置按钮和新对话按钮在panel层面，在contentContainer之前
-            if (!panel.contains(settingsBtn) || settingsBtn.nextSibling !== newChatBtn || newChatBtn.nextSibling !== contentContainer) {
-                if (panel.contains(settingsBtn)) {
-                    settingsBtn.remove();
+            buttonContainer.style.display = 'flex';
+            selectClearContainer.style.display = 'flex';
+            addCombinationBtn.style.display = 'block';
+            combinationContainer.style.display = 'flex';
+            // 确保按钮容器在panel层面，在contentContainer之前
+            if (!panel.contains(buttonContainer) || buttonContainer.nextSibling !== contentContainer) {
+                if (panel.contains(buttonContainer)) {
+                    buttonContainer.remove();
                 }
-                if (panel.contains(newChatBtn)) {
-                    newChatBtn.remove();
+                panel.insertBefore(buttonContainer, contentContainer);
+            }
+            // 确保contentContainer在addCombinationBtn之前
+            if (!panel.contains(contentContainer) || contentContainer.nextSibling !== addCombinationBtn) {
+                if (panel.contains(contentContainer)) {
+                    contentContainer.remove();
                 }
-                panel.insertBefore(settingsBtn, contentContainer);
-                panel.insertBefore(newChatBtn, contentContainer);
+                panel.insertBefore(contentContainer, addCombinationBtn);
             }
-            // 如果disable在panel层面，需要移除（它应该在contentContainer内）
-            if (panel.contains(disable) && !contentContainer.contains(disable)) {
-                disable.remove();
+            // 确保addCombinationBtn在combinationContainer之前
+            if (!panel.contains(addCombinationBtn) || addCombinationBtn.nextSibling !== combinationContainer) {
+                if (panel.contains(addCombinationBtn)) {
+                    addCombinationBtn.remove();
+                }
+                panel.insertBefore(addCombinationBtn, combinationContainer);
             }
-            disable.style.padding = '4px 8px';
+            // 确保disable在buttonContainer中
+            if (!buttonContainer.contains(disable)) {
+                if (panel.contains(disable)) {
+                    disable.remove();
+                }
+                buttonContainer.insertBefore(disable, settingsBtn);
+            }
         }
     }
 
@@ -3319,32 +3838,59 @@
     function switchToOriginalMode() {
         if (!isCompactMode) return;
 
-        // 显示设置按钮和新对话按钮，隐藏禁用按钮（禁用按钮会在renderPanelContent中添加到contentContainer）
-        settingsBtn.style.display = 'block';
+        // 显示按钮容器
         settingsBtn.textContent = settingsBtnText;
-        newChatBtn.style.display = 'block';
-        // 确保设置按钮和新对话按钮在panel层面，在contentContainer之前
-        if (!panel.contains(settingsBtn) || settingsBtn.nextSibling !== newChatBtn || newChatBtn.nextSibling !== contentContainer) {
-            if (panel.contains(settingsBtn)) {
-                settingsBtn.remove();
+        buttonContainer.style.display = 'flex';
+        selectClearContainer.style.display = 'flex';
+        addCombinationBtn.style.display = 'block';
+        combinationContainer.style.display = 'flex';
+        // 确保按钮容器在panel层面，在contentContainer之前
+        if (!panel.contains(buttonContainer) || buttonContainer.nextSibling !== contentContainer) {
+            if (panel.contains(buttonContainer)) {
+                buttonContainer.remove();
             }
-            if (panel.contains(newChatBtn)) {
-                newChatBtn.remove();
-            }
-            panel.insertBefore(settingsBtn, contentContainer);
-            panel.insertBefore(newChatBtn, contentContainer);
+            panel.insertBefore(buttonContainer, contentContainer);
         }
-        if (panel.contains(disable)) {
-            disable.remove();
+        // 确保contentContainer在addCombinationBtn之前
+        if (!panel.contains(contentContainer) || contentContainer.nextSibling !== addCombinationBtn) {
+            if (panel.contains(contentContainer)) {
+                contentContainer.remove();
+            }
+            panel.insertBefore(contentContainer, addCombinationBtn);
+        }
+        // 确保addCombinationBtn在combinationContainer之前
+        if (!panel.contains(addCombinationBtn) || addCombinationBtn.nextSibling !== combinationContainer) {
+            if (panel.contains(addCombinationBtn)) {
+                addCombinationBtn.remove();
+            }
+            panel.insertBefore(addCombinationBtn, combinationContainer);
+        }
+        // 确保disable在buttonContainer中
+        if (!buttonContainer.contains(disable)) {
+            if (panel.contains(disable)) {
+                disable.remove();
+            }
+            buttonContainer.insertBefore(disable, settingsBtn);
+        }
+        // 恢复禁用按钮的原始宽度和文字（字体大小统一由 PANEL_STYLES.disable 控制）
+        disable.style.width = PANEL_BUTTON_WIDTH;
+        disable.style.minWidth = '';
+        disable.style.maxWidth = '';
+        disable.style.padding = '6px 8px';
+        // 如果设定组合按钮已点击过，保持自适应宽度
+        if (getGV(ADD_COMBINATION_BUTTON_CLICKED_KEY)) {
+            addCombinationBtn.style.width = 'auto';
+            addCombinationBtn.style.flexShrink = '1';
         }
 
         contentContainer.replaceChildren();
         renderPanelContent();
         updateBoxFromStorage();
 
-        disable.style.padding = '4px 8px';
         isCompactMode = false;
         panel.style.cssText = PANEL_STYLES.panel;
+        // 从缩略切回展开后，立即按当前禁用状态刷新按钮文案和背景
+        reloadDisableStatus();
     };
 
     // 点击面板切换模式
@@ -3357,6 +3903,8 @@
             e.target.tagName === 'BUTTON' || 
             e.target.id === 'tool-disable' || 
             e.target.id === 'tool-settings' ||
+            e.target.id === 'tool-select-all' ||
+            e.target.id === 'tool-clear' ||
             e.target.closest('.panel-item')) {
             return;
         }
@@ -3531,6 +4079,46 @@
     }
     function getGV(key){
         return GM_getValue(key);
+    }
+
+    /**
+     * 获取站点图标并保存到GM（base64格式）
+     * @param {number} siteId - 站点ID
+     */
+    function getAndSaveSiteIcon(siteId) {
+        const iconKey = SITE_ICON_KEY_PREFIX + siteId;
+        
+        // 如果已经保存过图标，直接返回
+        if (getGV(iconKey)) {
+            return;
+        }
+
+        // 获取站点图标（按优先级尝试多个选择器，取第一个匹配到的）
+        const iconSelectors = [
+            "link[rel*='icon']",
+            "link[rel='apple-touch-startup-image']"
+        ];
+        let iconLink = null;
+        for (const selector of iconSelectors) {
+            const candidate = document.querySelector(selector);
+            if (candidate && candidate.href) {
+                iconLink = candidate;
+                break;
+            }
+        }
+        if (iconLink && iconLink.href) {
+            const iconUrl = iconLink.href;
+            
+            // 如果已经是base64格式，直接保存
+            if (iconUrl.startsWith('data:')) {
+                setGV(iconKey, iconUrl);
+                console.log(`站点图标已保存(base64): site=${siteId}`);
+                return;
+            }
+            
+            // 将URL转换为base64（使用Image+Canvas方式）
+            convertIconUrlToBase64(iconUrl, iconKey, siteId, `站点图标已保存(base64): site=${siteId}`);
+        }
     }
 
     // 获取可见模型列表（返回site值列表）
@@ -3755,6 +4343,7 @@
         }
     }
 
+
     /**
      * 创建苹果风格开关
      */
@@ -3902,7 +4491,7 @@
             }
         });
 
-        const toggleSwitch3 = createToggleSwitch('此按钮留着，暂无实用', showBookmark, (checked) => {
+        const toggleSwitch3 = createToggleSwitch('此按钮暂无实用', showBookmark, (checked) => {
             setGV(SHOW_BOOKMARK_BUTTON_KEY, checked);
             updateButtonVisibility();
         });
@@ -3940,9 +4529,9 @@
         // 导航变量配置
         const navConfigs = [
             { label: '主目录最大宽度', value: navMaxWidthValue, placeholder: DEFAULT_NAV_MAX_WIDTH, key: NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_NAV_MAX_WIDTH },
-            { label: '副目录最大宽度', value: subNavMaxWidthValue, placeholder: DEFAULT_SUB_NAV_MAX_WIDTH, key: SUB_NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_SUB_NAV_MAX_WIDTH },
             { label: '主目录（默认）垂直位置', value: navTopValue, placeholder: DEFAULT_NAV_TOP, key: NAV_TOP_KEY, defaultVal: DEFAULT_NAV_TOP },
             { label: '主目录（条数较多时）垂直位置', value: navTopOverflowValue, placeholder: DEFAULT_NAV_TOP_OVERFLOW, key: NAV_TOP_OVERFLOW_KEY, defaultVal: DEFAULT_NAV_TOP_OVERFLOW },
+            { label: '副目录最大宽度（最低 200px）', value: subNavMaxWidthValue, placeholder: DEFAULT_SUB_NAV_MAX_WIDTH, key: SUB_NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_SUB_NAV_MAX_WIDTH },
             { label: '副目录最高的垂直位置', value: subNavTopOverflowValue, placeholder: DEFAULT_SUB_NAV_TOP_OVERFLOW, key: SUB_NAV_TOP_OVERFLOW_KEY, defaultVal: DEFAULT_SUB_NAV_TOP_OVERFLOW }
         ];
 
@@ -4106,7 +4695,7 @@
      * 显示设置弹窗
      */
     function showSettingsPopup() {
-        const { popup, content } = createPopupBase('settings-popup', '');
+        const { popup, content } = createPopupBase('settings-popup', ';width:600px;height:600px;overflow:auto');
 
         // 标题
         const title = createTag('div', '设置', 'font-size:18px;font-weight:bold;margin-bottom:20px;color:#333');
@@ -5821,4 +6410,5 @@
         });
         document.body.appendChild(btn);
     }
+
 })();
