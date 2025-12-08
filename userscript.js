@@ -744,7 +744,6 @@
                     // 只有up前内容非空时才进行检测
                     if (!isEmpty(pendingQuestion)) {
                         isProcessingMouseUp = true;
-                        const questionToCheck = pendingQuestion;
 
                         // 延迟检测输入框是否被清空
                         setTimeout(function() {
@@ -753,7 +752,11 @@
                                 const contentAfterUp = getInputContent(inputArea);
                                 // 如果up前内容非空且up后内容为空，认为是发送
                                 if (!isEmpty(pendingQuestion) && isEmpty(contentAfterUp)) {
-                                    const questionToSend = questionToCheck;
+                                    if(getUrl() !== lastUrl){
+                                        return;
+                                    }
+
+                                    const questionToSend = pendingQuestion;
                                     pendingQuestion = null;
                                     isProcessingMouseUp = false;
 
@@ -763,6 +766,7 @@
                                 } else {
                                     // 输入框未被清空，不是发送
                                     isProcessingMouseUp = false;
+                                    pendingQuestion = null;
                                 }
                             }
                         }, 300);
@@ -1422,6 +1426,8 @@
     // 启用 Markdown 标题查找的站点列表
     const ENABLE_MARKDOWN_HEADING_SITES = [CLAUDE];
 
+    const subNavMinWidth = "210px";
+
     // 获取导航样式（动态生成，支持运行时修改变量）
     const getNavStyles = () => {
         const navTop = getNavTop();
@@ -1444,7 +1450,7 @@
             waveIconNormal: `background-color:transparent;color:#333;`,
 
             // 副目录样式
-            subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${subNavTop};max-width:${subNavMaxWidth};min-width:200px;max-height:${subNavMaxHeight};background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+            subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${subNavTop};max-width:${subNavMaxWidth};min-width:${subNavMinWidth};max-height:${subNavMaxHeight};background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
             subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
             subNavCloseBtn: `position:absolute;top:0;right:5px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
 
@@ -4582,7 +4588,7 @@
             { label: '主目录最大宽度', value: navMaxWidthValue, placeholder: DEFAULT_NAV_MAX_WIDTH, key: NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_NAV_MAX_WIDTH },
             { label: '主目录（默认）垂直位置', value: navTopValue, placeholder: DEFAULT_NAV_TOP, key: NAV_TOP_KEY, defaultVal: DEFAULT_NAV_TOP },
             { label: '主目录（条数较多时）垂直位置', value: navTopOverflowValue, placeholder: DEFAULT_NAV_TOP_OVERFLOW, key: NAV_TOP_OVERFLOW_KEY, defaultVal: DEFAULT_NAV_TOP_OVERFLOW },
-            { label: '副目录最大宽度（最低 200px）', value: subNavMaxWidthValue, placeholder: DEFAULT_SUB_NAV_MAX_WIDTH, key: SUB_NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_SUB_NAV_MAX_WIDTH },
+            { label: '副目录最大宽度（最低 ' + subNavMinWidth + '）', value: subNavMaxWidthValue, placeholder: DEFAULT_SUB_NAV_MAX_WIDTH, key: SUB_NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_SUB_NAV_MAX_WIDTH },
             { label: '副目录最高的垂直位置', value: subNavTopOverflowValue, placeholder: DEFAULT_SUB_NAV_TOP_OVERFLOW, key: SUB_NAV_TOP_OVERFLOW_KEY, defaultVal: DEFAULT_SUB_NAV_TOP_OVERFLOW }
         ];
 
@@ -6303,8 +6309,10 @@
         const TAB_CONTAINER_STYLE = 'display:flex;align-items:center;gap:8px;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee;flex-wrap:wrap';
         const ADD_GROUP_BTN_STYLE = 'padding:6px 12px;background:#4caf50;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px';
 
-        // 获取分组列表（提前获取，避免重复调用）
-        const groups = getBookmarkGroups();
+        // 获取分组列表（提前获取，避免重复调用），按名称排序
+        const groups = getBookmarkGroups()
+            .slice()
+            .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'zh-Hans'));
 
         // 如果selectedGroupId为null（首次打开），从存储中读取上次选中的分组ID
         // 但如果skipSaveGroup为true，则跳过读取，直接使用null（用于"立即查看书签列表"按钮）
