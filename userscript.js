@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多家大模型网页同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      5.0.0
-// @description  输入一次问题，就能自动同步在各家大模型官网提问，免去到处粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
+// @version      5.1.0
+// @description  一键自动同时在各家大模型官网提问，免去复制粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
 // @author       interest2
 // @match        https://chat.deepseek.com/*
 // @match        https://www.kimi.com/*
@@ -33,7 +33,7 @@
     console.log("ai script, start");
 
     const STUDIO_CONTENT_MAX_WIDTH = "800px"; // ai studio 内容最大宽度
-    const GEMINI_MAX_WIDTH = "850px"; // gemini 内容最大宽度
+    const GEMINI_MAX_WIDTH = "830px"; // gemini 内容最大宽度
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
     const MODEL_GROUP_INDEX = 6;
     const PANEL_BUTTON_WIDTH = "90px"; // 面板按钮固定宽度（顶部主按钮）
@@ -64,9 +64,6 @@
     const CLAUDE = 14;
     const GROK = 15;
 
-    // 默认不启用的站点列表，移除元素可启用对应站点
-    const DISABLE_SITES = [];
-
     // 输入框类型分类
     const inputAreaTypes = {
         textarea: [DEEPSEEK, TONGYI, DOUBAO, QWEN, STUDIO],
@@ -74,49 +71,6 @@
     };
 
     // 通用输入框选择器，两类：textarea标签、lexical
-    const TEXTAREA_CACHE_KEY = 'textarea_input_cache';
-    const getTextareaInput = () => {
-        const textareas = document.getElementsByTagName('textarea');
-        if (textareas.length === 0) return null;
-        if (textareas.length === 1) return textareas[0];
-        
-        // 尝试从缓存获取
-        const cacheStr = getS(TEXTAREA_CACHE_KEY);
-        if (cacheStr) {
-            try {
-                const cache = JSON.parse(cacheStr);
-                if (cache && cache.id) {
-                    const cachedElement = document.getElementById(cache.id);
-                    if (cachedElement) {
-                        return cachedElement;
-                    }
-                }
-            } catch (e) {
-                // 解析失败，继续执行查找逻辑
-            }
-        }
-        
-        // 如果有多个textarea，返回高度最大的
-        let maxHeight = 0;
-        let maxTextarea = textareas[0];
-        for (let i = 0; i < textareas.length; i++) {
-            const height = textareas[i].offsetHeight || textareas[i].clientHeight;
-            if (height > maxHeight) {
-                maxHeight = height;
-                maxTextarea = textareas[i];
-            }
-        }
-        
-        // 存储找到的最大textarea的id
-        if (maxTextarea) {
-            const cacheData = {
-                id: maxTextarea.id || ''
-            };
-            setS(TEXTAREA_CACHE_KEY, JSON.stringify(cacheData));
-        }
-        
-        return maxTextarea;
-    };
     const getContenteditableInput = () => document.querySelector('[contenteditable="true"]:has(p)');
 
     // 选择器配置
@@ -125,22 +79,6 @@
         inputArea: {
             ...Object.fromEntries(inputAreaTypes.textarea.map(site => [site, getTextareaInput])),
             ...Object.fromEntries(inputAreaTypes.lexical.map(site => [site, getContenteditableInput]))
-        },
-        // 输入框里的发送按钮
-        sendBtn: {
-            [DEEPSEEK]: () => ((btns) => btns[btns.length - 1])(document.querySelectorAll('[role="button"]')),
-            [KIMI]: () => document.getElementsByClassName('send-button')[0],
-            [TONGYI]: () => document.querySelector('[class^="operateBtn-"], [class*=" operateBtn-"]'),
-            [QWEN]: () => document.querySelector('.chat-prompt-send-button'),
-            [DOUBAO]: () => document.getElementById('flow-end-msg-send'),
-            [YUANBAO]: () => document.getElementById('yuanbao-send-btn'),
-
-            [ZCHAT]: () => document.getElementById('composer-submit-button'),
-            [CHATGPT]: () => document.getElementById('composer-submit-button'),
-            [GEMINI]: () => document.querySelector('button.send-button'),
-            [STUDIO]: () => document.querySelector('.run-button-content'),
-            [CLAUDE]: () => document.querySelector('[aria-label^="Send"]'),
-            [GROK]: () => document.querySelector('button[type="submit"]')
         },
         // 已提问的列表（官网样式变更不会影响同步提问功能，只影响目录功能）
         questionList: {
@@ -159,6 +97,50 @@
             [GROK]: () => document.querySelectorAll('div.items-end .message-bubble')
         }
     };
+
+    function getTextareaInput() {
+        const textareas = document.getElementsByTagName('textarea');
+        if (textareas.length === 0) return null;
+        if (textareas.length === 1) return textareas[0];
+
+        // 尝试从缓存获取
+        const TEXTAREA_CACHE_KEY = 'textarea_input_cache';
+        const cacheStr = getS(TEXTAREA_CACHE_KEY);
+        if (cacheStr) {
+            try {
+                const cache = JSON.parse(cacheStr);
+                if (cache && cache.id) {
+                    const cachedElement = document.getElementById(cache.id);
+                    if (cachedElement) {
+                        return cachedElement;
+                    }
+                }
+            } catch (e) {
+                // 解析失败，继续执行查找逻辑
+            }
+        }
+
+        // 如果有多个textarea，返回高度最大的
+        let maxHeight = 0;
+        let maxTextarea = textareas[0];
+        for (let i = 0; i < textareas.length; i++) {
+            const height = textareas[i].offsetHeight || textareas[i].clientHeight;
+            if (height > maxHeight) {
+                maxHeight = height;
+                maxTextarea = textareas[i];
+            }
+        }
+
+        // 存储找到的最大textarea的id
+        if (maxTextarea) {
+            const cacheData = {
+                id: maxTextarea.id || ''
+            };
+            setS(TEXTAREA_CACHE_KEY, JSON.stringify(cacheData));
+        }
+
+        return maxTextarea;
+    }
 
     // url里关键词与各站点的对应关系
     const keywords = {
@@ -210,7 +192,9 @@
         { site: CLAUDE, word: 'Claude', alias: 'Cl' },
         { site: GROK, word: 'Grok', alias: 'Gr' }
     ];
+
     // 过滤掉被禁用的站点
+    const DISABLE_SITES = [];
     wordConfig = wordConfig.filter(item => !DISABLE_SITES.includes(item.site));
 
     // （可选）隐藏输入框及周边区域，所需隐藏的元素，是输入框本体的第几层父元素？以下数字即层数（后续应改为半自动配置）
@@ -252,25 +236,30 @@
         return;
     }
 
+    // 判断是否需要修饰键（Ctrl/Command）来发送消息
+    function needModifierForEnter() {
+        return site === STUDIO;
+    }
+
     // 面板数据常量
     const CHOSEN_SITE = "chosenSite";
     const COMMON_COMBINATIONS_KEY = "commonCombinations";
     const ADD_COMBINATION_BUTTON_CLICKED_KEY = "addCombinationButtonClicked"; // 设定组合按钮是否已点击过
-    
+
     // 按钮显示状态存储键名（GM存储，所有站点共享）
     const SHOW_TOGGLE_BUTTON_KEY = "showToggleButton";
     const SHOW_BOOKMARK_BUTTON_KEY = "showBookmarkButton"; // 同时控制"书签"和"历史"两个按钮
     const DEFAULT_HIDE_INPUT_AREA_KEY = "defaultHideInputArea"; // 默认隐藏输入框
-    
+
     // 书签功能总开关存储键名（GM存储，所有站点共享）
     const ENABLE_BOOKMARK_FEATURE_KEY = "enableBookmarkFeature";
-    
+
     // 多选面板可见模型列表存储键名（GM存储，所有站点共享）
     const VISIBLE_MODELS_KEY = "visibleModels";
-    
+
     // 输入框隐藏层级自定义配置存储键名（GM存储，所有站点共享）
     const INPUT_AREA_HIDE_PARENT_LEVEL_KEY = "inputAreaHideParentLevel";
-    
+
     // 站点图标存储键名前缀（GM存储，所有站点共享）
     const SITE_ICON_KEY_PREFIX = "siteIcon_";
 
@@ -317,16 +306,9 @@
         return selector ? selector() : null;
     }
 
-    function getSendButton() {
-        const selector = selectors.sendBtn[site];
-        return selector ? selector() : null;
-    }
-
     // STUDIO站点的特殊处理已移到getSubNavTop函数中
 
     // 系统功能配置
-    const checkGap = 100;
-    const maxRetries = 200;
     const OPEN_GAP = 300; // 打开网页的间隔
     const HIBERNATE_GAP = 600; // 单位：秒
 
@@ -339,7 +321,6 @@
     const BOOKMARK_ID_COUNTER = "bookmarkIdCounter"; // 书签ID计数器
     const CURRENT_BOOKMARK_KEY = "currentBookmarkKey"; // 当前书签key
     // 已移除BOOKMARK_KEY_LIST，改为从分组映射叠加获取全部书签
-    const BOOKMARK_DELETE_CONFIRMED = "bookmarkDeleteConfirmed"; // 是否已首次确认删除
     const BOOKMARK_GROUP_LIST = "bookmarkGroupList"; // 分组列表
     const BOOKMARK_GROUP_MAP = "bookmarkGroupMap"; // 分组到书签ID的映射 {groupId: [bookmarkId数组]}，存储时移除"bookmark-"前缀以节省空间
     const BOOKMARK_LAST_SELECTED_GROUP = "bookmarkLastSelectedGroup"; // 上次选中的分组ID
@@ -385,12 +366,16 @@
 
     // 页面加载时，向本地存储发送一次心跳
     setGV(HEART_KEY_PREFIX + site, Date.now());
+    let lastQuestion = "";
 
     function masterCheck(lastestQ){
         if(sendLock){
             return;
         }
         if(isEmpty(lastestQ)){
+            return;
+        }
+        if(lastestQ === lastQuestion){
             return;
         }
 
@@ -400,6 +385,7 @@
         };
         console.log(msg);
         setGV("msg", msg);
+        lastQuestion = lastestQ;
 
         addCurrentToStorage();
 
@@ -407,10 +393,8 @@
         if(isDisable){
             return;
         }
-   
-    }
 
-    let lastQuestion = "";
+    }
 
     // 监听是否有新的提问
     GM_addValueChangeListener('msg', function(name, oldValue, msg, remote) {
@@ -427,7 +411,7 @@
             if(sendLock){
                 return;
             }
-            
+
             let msg = getGV("msg");
             let question = msg.question;
             // 避免重复发送
@@ -465,9 +449,9 @@
                 () => getInputArea(),
                 {timeout: 10000, timeoutMsg: "监测输入框存在超时"}
             );
-            // 步骤2、3: 粘贴内容到输入框、等待发送按钮出现并点击
+            // 步骤2、3: 粘贴内容到输入框、模拟回车发送
             await pasteContent(inputArea, content);
-            await waitAndClickSendButton();
+            await waitAndEnter(inputArea);
 
         } catch (error) {
             console.error("发送问题失败:", error);
@@ -476,32 +460,37 @@
     }
 
     /**
+     * 模拟回车发送（公共函数）
+     */
+    function enterKeySend(inputArea) {
+        const needModifier = needModifierForEnter();
+        const event = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true,
+            ctrlKey: needModifier,
+            metaKey: needModifier
+        });
+        event.isSimulated = true;
+        inputArea.dispatchEvent(event);
+    }
+
+    /**
      * 等待发送按钮出现并执行发送流程
      */
-    async function waitAndClickSendButton() {
-        console.log(curDate() + "h1 等待发送按钮");
+    async function waitAndEnter(inputArea) {
+        console.log(curDate() + "h2 模拟回车发送");
 
         try {
-            // 等待发送按钮出现（使用 MutationObserver）
-            const sendBtn = await waitForElement(
-                () => getSendButton(),
-                {timeout: maxRetries * checkGap, timeoutMsg: "发送按钮未找到"}
-            );
+            await new Promise(resolve => setTimeout(resolve, 400));
 
-            // 点击页面空白处，然后点击发送按钮
-            await new Promise((resolve) => {
-                setTimeout(() => {
-                    document.body.click();
-                    setTimeout(() => {
-                        console.log(curDate() + "h2 点击发送按钮");
-                        sendBtn.click();
-                        resolve();
-                    }, 200);
-                }, 200);
-            });
+            // 模拟回车发送
+            enterKeySend(inputArea);
 
-            // 验证发送成功
-            await verifySendSuccess(sendBtn);
+            await verifySendSuccess();
 
         } catch (error) {
             console.error("发送失败:", error);
@@ -513,8 +502,8 @@
     /**
      * 验证发送成功（输入框内容清空）
      */
-    async function verifySendSuccess(sendBtn) {
-        const pollInterval = 500;
+    async function verifySendSuccess() {
+        const pollInterval = 1000;
         const maxPollTime = 20000;
         const startTime = Date.now();
         if(site === YUANBAO){
@@ -543,9 +532,11 @@
                 }
 
 
-                // 输入框仍有内容，继续点击发送按钮
-                console.log(curDate() + "h3 重试发送");
-                sendBtn.click();
+                // 输入框仍有内容，继续模拟回车发送
+                if (inputArea) {
+                    console.log(curDate() + "h3 重试发送");
+                    enterKeySend(inputArea);
+                }
 
                 setTimeout(checkInputArea, pollInterval);
             }
@@ -693,6 +684,16 @@
     // 检查事件是否带有修饰键
     const hasModifierKey = (event) => event.shiftKey || event.ctrlKey || event.altKey || event.metaKey;
 
+    // 判断是否触发回车发送
+    const isEnterTrigger = (event) => {
+        if (needModifierForEnter()) {
+            return event.key === 'Enter' && (event.ctrlKey || event.metaKey);
+        } else {
+            // 单纯的 Enter 键，不带任何修饰键
+            return event.key === 'Enter' && !hasModifierKey(event);
+        }
+    };
+
     // 根据输入框类型获取内容
     function getInputContent(inputArea) {
         if (isEmpty(inputArea)) return '';
@@ -709,88 +710,107 @@
         return '';
     }
 
-    // 监听发送按钮点击事件和回车键
-    let sendBtnListenerAdded = false;
+    // 监听输入框回车键和页面鼠标事件
     let inputAreaListenerAdded = false;
-    let pendingQuestion = null; // 临时存储按下时的问题
     let lastUrl = getUrl(); // 记录上次的URL
     let cachedInputContent = ""; // 缓存的输入框内容
+    let previousInputContent = ""; // 上一次的输入框内容，用于检测清空
+    let isSendingByEnter = false; // 标记是否通过回车键发送，避免重复触发
+    let pendingQuestion = null; // 临时存储mousedown时的问题
+    let isProcessingMouseUp = false; // 标记是否正在处理mouseup检测
+    let mouseEventListenerAdded = false; // 标记页面鼠标事件监听器是否已添加
 
-    function addSendButtonListener() {
-        const sendBtn = getSendButton();
+    function addAskEventListener() {
         const inputArea = getInputArea();
 
-        if (!isEmpty(sendBtn) && !sendBtnListenerAdded) {
-            // 给元素添加标记，用于检测元素是否被替换
-            sendBtn.setAttribute('data-listener-added', 'true');
+        // 监听页面任意位置的鼠标事件，通过检测输入框清空来判断发送
 
-            // 鼠标按下（记录输入框内容）
-            sendBtn.addEventListener('mousedown', function() {
+        if (!mouseEventListenerAdded) {
+            // 页面 mousedown：记录输入框内容作为mouseup前的基准
+            document.addEventListener('mousedown', function() {
                 const inputArea = getInputArea();
                 if (!isEmpty(inputArea)) {
-                    const lastestQ = getInputContent(inputArea);
-                    // 如果lastestQ为空，则使用缓存的内容
-                    const questionToUse = isEmpty(lastestQ) ? cachedInputContent : lastestQ;
-                    if (!isEmpty(questionToUse)) {
-                        pendingQuestion = questionToUse;
+                    const contentBeforeDown = getInputContent(inputArea);
+                    if (!isEmpty(contentBeforeDown)) {
+                        pendingQuestion = contentBeforeDown;
                     }
                 }
             });
 
-            // 鼠标移出（取消）
-            sendBtn.addEventListener('mouseleave', function() {
-                if (!isEmpty(pendingQuestion)) {
-                    console.log("鼠标移出按钮，取消发送");
-                    pendingQuestion = null;
+            // 页面 mouseup：延迟检测输入框是否清空
+            document.addEventListener('mouseup', function() {
+                if (!isProcessingMouseUp) {
+
+                    // 只有up前内容非空时才进行检测
+                    if (!isEmpty(pendingQuestion)) {
+                        isProcessingMouseUp = true;
+                        const questionToCheck = pendingQuestion;
+
+                        // 延迟检测输入框是否被清空
+                        setTimeout(function() {
+                            const inputArea = getInputArea();
+                            if (!isEmpty(inputArea)) {
+                                const contentAfterUp = getInputContent(inputArea);
+                                // 如果up前内容非空且up后内容为空，认为是发送
+                                if (!isEmpty(pendingQuestion) && isEmpty(contentAfterUp)) {
+                                    const questionToSend = questionToCheck;
+                                    pendingQuestion = null;
+                                    isProcessingMouseUp = false;
+
+                                    setTimeout(function() {
+                                        masterCheck(questionToSend);
+                                    }, 100);
+                                } else {
+                                    // 输入框未被清空，不是发送
+                                    isProcessingMouseUp = false;
+                                }
+                            }
+                        }, 300);
+                    }
                 }
             });
 
-            // 鼠标释放（发送提问）
-            sendBtn.addEventListener('mouseup', function() {
-
-                if (!isEmpty(pendingQuestion)) {
-                    const questionToSend = pendingQuestion;
-                    pendingQuestion = null; // 清空临时变量
-
-                    setTimeout(function() {
-                        masterCheck(questionToSend);
-                    }, 100);
-                }
-            });
-
-            sendBtnListenerAdded = true;
-            console.log("✓ 发送按钮监听器已添加");
+            mouseEventListenerAdded = true;
+            console.log("✓ 页面鼠标事件监听器已添加");
         }
 
         // 监听输入框的回车键和输入内容
         if (!isEmpty(inputArea) && !inputAreaListenerAdded) {
-            // 给元素添加标记，用于检测元素是否被替换
             inputArea.setAttribute('data-listener-added', 'true');
 
-            // 监听输入框内容变化
+            // 监听输入框内容变化，更新缓存
             inputArea.addEventListener('input', function() {
-                cachedInputContent = getInputContent(inputArea);
+                const currentContent = getInputContent(inputArea);
+
+
+                // 如果正在处理 mouseup 检测，且检测到清空，说明是 mouseup 导致的发送
+                if (isProcessingMouseUp && isEmpty(currentContent) && !isEmpty(previousInputContent)) {
+                    // mouseup检测会处理，这里只更新状态
+                    previousInputContent = currentContent;
+                    cachedInputContent = currentContent;
+                    return;
+                }
+
+                // 更新上一次的内容和缓存
+                previousInputContent = currentContent;
+                cachedInputContent = currentContent;
             });
 
             inputArea.addEventListener('keydown', function(event) {
-                let isTrigger = false;
-                if (site === STUDIO) {
-                    // STUDIO: Ctrl + Enter (Windows) or Command + Enter (macOS)
-                    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                        isTrigger = true;
-                    }
-                } else {
-                    // 单纯的 Enter 键，不带任何修饰键
-                    if (event.key === 'Enter' && !hasModifierKey(event)) {
-                        isTrigger = true;
-                    }
+                // 忽略模拟的回车事件
+                if (event.isSimulated) {
+                    return;
                 }
-
-                if (isTrigger) {
+                if (isEnterTrigger(event)) {
                     const lastestQ = getInputContent(inputArea);
                     console.log("lastestQ: "+lastestQ);
                     const questionToUse = isEmpty(lastestQ) ? cachedInputContent : lastestQ;
                     if (!isEmpty(questionToUse)) {
+                        // 标记通过回车键发送，避免 input 事件和 mouseup 检测重复触发
+                        isSendingByEnter = true;
+                        pendingQuestion = null; // 清空 pendingQuestion，避免 mouseup 重复触发
+                        // 更新 previousInputContent，以便 input 事件检测时不会重复
+                        previousInputContent = "";
                         setTimeout(function() {
                             masterCheck(questionToUse);
                         }, 100);
@@ -801,28 +821,18 @@
             console.log("✓ 输入框回车监听器已添加");
         }
 
-        // 如果按钮或输入框还没加载，稍后重试
-        if (!sendBtnListenerAdded || !inputAreaListenerAdded) {
-            setTimeout(addSendButtonListener, 500);
+        // 如果输入框还没加载，稍后重试
+        if (!inputAreaListenerAdded) {
+            setTimeout(addAskEventListener, 500);
         } else {
-            // 输入框和按钮都加载完成后，应用默认隐藏设置
+            // 输入框加载完成后，应用默认隐藏设置
             applyDefaultHideInputArea();
         }
     }
 
     // 检查监听器是否丢失（元素被替换）
     function checkListenerIntegrity() {
-        const sendBtn = getSendButton();
         const inputArea = getInputArea();
-
-        // 检查发送按钮
-        if (!isEmpty(sendBtn) && sendBtnListenerAdded) {
-            const hasMarker = sendBtn.getAttribute('data-listener-added') === 'true';
-            if (!hasMarker) {
-                console.warn("⚠ 发送按钮元素已被替换，监听器丢失！重新添加...");
-                sendBtnListenerAdded = false;
-            }
-        }
 
         // 检查输入框
         if (!isEmpty(inputArea) && inputAreaListenerAdded) {
@@ -834,8 +844,8 @@
         }
 
         // 如果发现监听器丢失，重新添加
-        if (!sendBtnListenerAdded || !inputAreaListenerAdded) {
-            setTimeout(addSendButtonListener, 1000);
+        if (!inputAreaListenerAdded) {
+            setTimeout(addAskEventListener, 1000);
         }
     }
     // 标记输入框是否处于隐藏状态
@@ -867,7 +877,7 @@
                 isInputAreaHidden = false;
             }
 
-            sendBtnListenerAdded = false;
+            mouseEventListenerAdded = false;
             inputAreaListenerAdded = false;
             pendingQuestion = null;
 
@@ -876,7 +886,7 @@
                 hideSubNavBar();
             }
 
-            setTimeout(addSendButtonListener, 500);
+            setTimeout(addAskEventListener, 500);
         }
     }
 
@@ -996,13 +1006,13 @@
         setTimeout(function(){
         // 页面加载时获取并保存站点图标
         getAndSaveSiteIcon(site);
-        
+
         appendSeveral(document.body, panel, toggleButton, subNavBar);
         reloadDisableStatus();
         updateButtonVisibility(); // 根据设置更新按钮显示状态
 
         // 添加发送按钮监听
-        setTimeout(addSendButtonListener, 1000);
+        setTimeout(addAskEventListener, 1000);
 
         setTimeout(function(){
             // 首次运行
@@ -1107,7 +1117,7 @@
         if (!shouldHide) {
             return;
         }
-        
+
         // 如果是新对话（问题列表为空），则不隐藏输入框
         const questions = getQuestionList();
         if (questions.length === 0) {
@@ -1129,157 +1139,13 @@
 
     // 存储的key
     const TOGGLE_BOTTOM_KEY = T + 'toggleBottom';
-    const TOGGLE_LEFT_KEY = T + 'toggleLeft';
-    const TOGGLE_MAX_LEFT_KEY = T + 'toggleMaxLeft';
-    const TOGGLE_DELTA1_KEY = T + 'toggleDelta1';
-    const TOGGLE_DELTA2_KEY = T + 'toggleDelta2';
+    const TOGGLE_LEFT_KEY = T + 'theBtnLeft';
+    const TOGGLE_LEVEL_KEY = T + 'theLevel';
 
-    const BUTTON_RIGHT_OFFSET = 20; // 按钮右边缘的偏移量
+    const BUTTON_INPUT_GAP = 20; // 按钮与输入框的间距
     const DEFAULT_LEFT_OFFSET = 40; // 默认left值的偏移量
     const MIN_RIGHT_THRESHOLD = 10; // right值的最小阈值
     const TOOL_PANEL_ID = 'tool-panel'; // 多选面板的ID
-
-    /**
-     * 计算bottom值
-     */
-    function calculateBottom() {
-        const savedBottom = getS(TOGGLE_BOTTOM_KEY);
-        if (savedBottom !== null) {
-            return parseFloat(savedBottom);
-        }
-
-        const UPDATE_BOTTOM_THRESHOLD = 45;
-        const sendButton = getSendButton();
-        // 发送按钮存在，若新 bottom < 阈值，才更新
-        if (sendButton) {
-            const calculatedBottom = window.innerHeight - sendButton.getBoundingClientRect().bottom;
-            if (calculatedBottom < UPDATE_BOTTOM_THRESHOLD) {
-                setS(TOGGLE_BOTTOM_KEY, calculatedBottom.toString());
-                return calculatedBottom;
-            }
-        }
-
-        // 默认值
-        return UPDATE_BOTTOM_THRESHOLD;
-    }
-
-    /**
-     * 计算left值
-     * @param {HTMLElement} inputArea - 输入框元素
-     * @param {HTMLElement} sendButton - 发送按钮元素
-     */
-    function calculateLeft(inputArea, sendButton) {
-        let hasInputArea = !!inputArea;
-        let hasSendButton = !!sendButton;
-
-        const defaultLeft = window.innerWidth - DEFAULT_LEFT_OFFSET;
-
-        // 情况1: 输入框√，按钮√
-        if (hasInputArea && hasSendButton) {
-            const right1 = sendButton.getBoundingClientRect().right;
-            const right2 = inputArea.getBoundingClientRect().right;
-
-            // 检查right值是否有效，无效则重置对应标志
-            hasSendButton = hasSendButton && right1 >= MIN_RIGHT_THRESHOLD;
-            hasInputArea = hasInputArea && right2 >= MIN_RIGHT_THRESHOLD;
-
-            // 两者都有效才存储
-            if (hasInputArea && hasSendButton) {
-                const left = right1 + BUTTON_RIGHT_OFFSET;
-                const delta1 = BUTTON_RIGHT_OFFSET;
-                const delta2 = left - right2;
-
-                setS(TOGGLE_LEFT_KEY, left.toString());
-                setS(TOGGLE_DELTA1_KEY, delta1.toString());
-                setS(TOGGLE_DELTA2_KEY, delta2.toString());
-
-                // 如果当前是最大宽度，额外记录maxLeft
-                if (isMaxWidth()) {
-                    setS(TOGGLE_MAX_LEFT_KEY, left.toString());
-                }
-
-                return left;
-            }
-        }
-
-        // 情况2: 输入框√，按钮×。等于 输入框右边缘 + delta
-        if (hasInputArea && !hasSendButton) {
-            const savedDelta2 = getS(TOGGLE_DELTA2_KEY);
-            if (savedDelta2 !== null) {
-                const right2 = inputArea.getBoundingClientRect().right;
-                return right2 + parseFloat(savedDelta2);
-            }
-            return defaultLeft;
-        }
-
-        // 情况3: 输入框×，按钮√。等于 按钮右边缘 + delta
-        if (!hasInputArea && hasSendButton) {
-            const savedDelta1 = getS(TOGGLE_DELTA1_KEY);
-            if (savedDelta1 !== null) {
-                const right1 = sendButton.getBoundingClientRect().right;
-                return right1 + parseFloat(savedDelta1);
-            }
-            return defaultLeft;
-        }
-
-        // 情况4: 输入框×，按钮×。用存储的 left
-        const savedLeft = getS(TOGGLE_LEFT_KEY);
-        if (savedLeft !== null) {
-            return parseFloat(savedLeft);
-        }
-        return defaultLeft;
-    }
-
-    /**
-     * 更新 toggle 按钮的位置和显示状态
-     * @param {boolean} isResizeEvent - 是否是resize事件触发
-     */
-    function updateToggleButtonPosition(isResizeEvent = false) {
-        // 如果处于隐藏状态且非resize场景，直接返回，不更新位置
-        if (isInputAreaHidden && !isResizeEvent) {
-            return;
-        }
-
-        const bottom = calculateBottom();
-        let left;
-
-        // 如果处于隐藏状态且是 resize 场景
-        if (isInputAreaHidden && isResizeEvent) {
-            // 特殊情况：如果resize到最大宽度且有保存的maxLeft，优先使用maxLeft
-            if (isMaxWidth()) {
-                const savedMaxLeft = getS(TOGGLE_MAX_LEFT_KEY);
-                if (savedMaxLeft !== null) {
-                    left = parseFloat(savedMaxLeft);
-                } else {
-                    // 没有保存的maxLeft，跟随多选面板的位置
-                    const toolPanel = document.getElementById(TOOL_PANEL_ID);
-                    if (toolPanel) {
-                        const panelRect = toolPanel.getBoundingClientRect();
-                        left = panelRect.left;
-                    } else {
-                        left = window.innerWidth - DEFAULT_LEFT_OFFSET;
-                    }
-                }
-            } else {
-                // 非最大宽度，跟随缩略状态的多选面板的left位置
-                const toolPanel = document.getElementById(TOOL_PANEL_ID);
-                if (toolPanel) {
-                    const panelRect = toolPanel.getBoundingClientRect();
-                    left = panelRect.left;
-                } else {
-                    left = window.innerWidth - DEFAULT_LEFT_OFFSET;
-                }
-            }
-        } else {
-            const inputArea = getInputArea();
-            const sendButton = getSendButton();
-            left = calculateLeft(inputArea, sendButton);
-        }
-
-        // 更新toggle按钮位置
-        toggleButton.style.left = `${left}px`;
-        toggleButton.style.bottom = `${bottom}px`;
-    }
 
     /**
      * 轮询更新 toggle 按钮的位置和显示状态
@@ -1307,6 +1173,153 @@
         resizeTimer = setTimeout(() => updateToggleButtonPosition(true), 50);
     });
 
+    /**
+     * 更新 toggle 按钮的位置和显示状态
+     * @param {boolean} isResizeEvent - 是否是resize事件触发
+     */
+    function updateToggleButtonPosition(isResizeEvent = false) {
+        // 如果处于隐藏状态且非resize场景，直接返回，不更新位置
+        if (isInputAreaHidden && !isResizeEvent) {
+            return;
+        }
+        const inputArea = getInputArea();
+
+        const bottom = calculateBottom(inputArea);
+
+        if (inputArea) {
+            if(window.innerHeight - inputArea.getBoundingClientRect().bottom > 300){
+                return;
+            }
+        }
+
+        let left;
+
+        // 如果处于隐藏状态且是 resize 场景
+        // 特殊情况：如果resize到最大宽度且有保存的maxLeft，优先使用maxLeft
+        if (isMaxWidth()) {
+            left = calculateLeft(inputArea);
+        } else {
+            // 非最大宽度，跟随缩略状态的多选面板的left位置
+            const toolPanel = document.getElementById(TOOL_PANEL_ID);
+            if (toolPanel) {
+                const panelRect = toolPanel.getBoundingClientRect();
+                left = panelRect.left;
+            } else {
+                left = window.innerWidth - DEFAULT_LEFT_OFFSET;
+            }
+        }
+
+        // 更新toggle按钮位置
+        toggleButton.style.left = `${left}px`;
+        toggleButton.style.bottom = `${bottom}px`;
+    }
+
+    /**
+     * 计算bottom值
+     */
+    function calculateBottom(inputArea) {
+        const savedBottom = getS(TOGGLE_BOTTOM_KEY);
+        if (savedBottom !== null) {
+            return parseFloat(savedBottom);
+        }
+
+        const UPDATE_BOTTOM_THRESHOLD = 45;
+        // 发送按钮存在，若新 bottom < 阈值，才更新
+        if (inputArea) {
+            const calculatedBottom = window.innerHeight - inputArea.getBoundingClientRect().bottom;
+            if (calculatedBottom < UPDATE_BOTTOM_THRESHOLD) {
+                setS(TOGGLE_BOTTOM_KEY, calculatedBottom.toString());
+                return calculatedBottom;
+            }
+        }
+
+        // 默认值
+        return UPDATE_BOTTOM_THRESHOLD;
+    }
+
+    /**
+     * 计算left值
+     * @param {HTMLElement} inputArea - 输入框元素
+     */
+    function calculateLeft(inputArea) {
+        const savedLeft = getS(TOGGLE_LEFT_KEY);
+
+        let hasInputArea = !!inputArea;
+
+        // 如果输入框存在
+        if (hasInputArea) {
+            let targetLevel = getS(TOGGLE_LEVEL_KEY);
+            if(!isEmpty(targetLevel)){
+                let targetRight = getNthParent(inputArea, targetLevel).getBoundingClientRect().right;
+                let shouldUpdate = (targetRight + BUTTON_INPUT_GAP).toString() !== savedLeft;
+                return handleButtonLeft(targetRight, shouldUpdate);
+            }
+
+            let targetRight = null;
+            let prevRight = null;
+            let prevHeight = null;
+
+            // 遍历 level
+            const START_LEVEL = 2;
+            for (let level = START_LEVEL; level < 25; level++) {
+                const parentElement = getNthParent(inputArea, level);
+                if (!parentElement) {
+                    break;
+                }
+
+                const right = parentElement.getBoundingClientRect().right;
+                const height = parentElement.getBoundingClientRect().height;
+
+                // 如果达到最大宽度，使用前一个 level 的 right 值；如果单纯是达到最大高度，则 level 回退 m 层
+                let rightFlag = right > window.innerWidth - 50;
+                let heightFlag = height > window.innerHeight - 200;
+
+                if (rightFlag || heightFlag) {
+                    let minusValue = 1;
+                    if(heightFlag && !rightFlag){
+                        let checkLevel = level - 1;
+                        while (checkLevel >= START_LEVEL) {
+                            let checkEle = getNthParent(inputArea, checkLevel);
+                            if (!checkEle) {
+                                break;
+                            }
+                            let checkRight = checkEle.getBoundingClientRect().right;
+                            const gapOfHighBoxBorder = 30;
+                            if (right - checkRight > gapOfHighBoxBorder) {
+                                minusValue = level - checkLevel;
+                                break;
+                            }
+                            checkLevel--;
+                        }
+                    }
+                    targetRight = prevRight;
+                    setS(TOGGLE_LEVEL_KEY, level - minusValue);
+                    break;
+                }
+                prevRight = right;
+            }
+
+            // 如果找到了有效的 right 值
+            if (targetRight !== null && targetRight >= MIN_RIGHT_THRESHOLD) {
+                return handleButtonLeft(targetRight);
+            }
+        }
+
+        if (savedLeft !== null) {
+            return parseFloat(savedLeft);
+        }
+
+        return window.innerWidth - DEFAULT_LEFT_OFFSET;
+    }
+
+    function handleButtonLeft(targetRight, shouldUpdate = true){
+        const expectedLeft = targetRight + BUTTON_INPUT_GAP;
+        if(shouldUpdate){
+            setS(TOGGLE_LEFT_KEY, expectedLeft);
+        }
+        return expectedLeft;
+    }
+
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
      * ║                                                                      ║
@@ -1322,7 +1335,7 @@
     const DEFAULT_SUB_NAV_MAX_WIDTH = "260px";
     const DEFAULT_SUB_NAV_TOP = "20%";
     const DEFAULT_SUB_NAV_TOP_OVERFLOW = "7%";
-    
+
     // 存储键名
     const NAV_MAX_WIDTH_KEY = "navMaxWidth";
     const SUB_NAV_MAX_WIDTH_KEY = "subNavMaxWidth";
@@ -1330,24 +1343,24 @@
     const NAV_TOP_OVERFLOW_KEY = "navTopOverflow";
     const SUB_NAV_TOP_KEY = "subNavTop";
     const SUB_NAV_TOP_OVERFLOW_KEY = "subNavTopOverflow";
-    
+
     // 从GM存储读取导航变量，如果没有则使用默认值
     const getNavMaxWidth = () => {
         return getGV(NAV_MAX_WIDTH_KEY) || DEFAULT_NAV_MAX_WIDTH;
     };
-    
+
     const getNavTop = () => {
         return getGV(NAV_TOP_KEY) || DEFAULT_NAV_TOP;
     };
-    
+
     const getNavTopOverflow = () => {
         return getGV(NAV_TOP_OVERFLOW_KEY) || DEFAULT_NAV_TOP_OVERFLOW;
     };
-    
+
     const getSubNavMaxWidth = () => {
         return getGV(SUB_NAV_MAX_WIDTH_KEY) || DEFAULT_SUB_NAV_MAX_WIDTH;
     };
-    
+
     const getSubNavTop = () => {
         const saved = getGV(SUB_NAV_TOP_KEY);
         if (saved) {
@@ -1355,11 +1368,11 @@
         }
         return site === STUDIO ? "35%" : DEFAULT_SUB_NAV_TOP;
     };
-    
+
     const getSubNavTopOverflow = () => {
         return getGV(SUB_NAV_TOP_OVERFLOW_KEY) || DEFAULT_SUB_NAV_TOP_OVERFLOW;
     };
-    
+
     // 根据top值计算max-height，使总和为99vh
     const calculateSubNavMaxHeight = (topValue) => {
         // 从top值中提取百分比数字（如"7%" -> 7）
@@ -1372,7 +1385,7 @@
         // 如果无法解析，返回默认值
         return "98vh";
     };
-    
+
     const NAV_TOP_THRESHOLD = 7;    // 主目录条目超过此阈值时，top位置抬高
     const NAV_COUNT_THRESHOLD = 10; // 主目录条数超过此阈值时，会显示"共xx条"
 
@@ -1416,7 +1429,7 @@
         const subNavTop = getSubNavTop();
         const subNavMaxWidth = getSubNavMaxWidth();
         const subNavMaxHeight = calculateSubNavMaxHeight(subNavTop);
-        
+
         return {
             // 主目录样式
             navBar: `position:fixed;visibility:hidden;top:${navTop};right:15px;max-width:${navMaxWidth};min-width:150px;background:rgba(255,255,255,0.95);border:1px solid #ccc;border-radius:6px;padding:0 5px;z-index:99999;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);max-height:90vh;overflow-y:auto;box-sizing:border-box;`,
@@ -1453,7 +1466,7 @@
             subNavPositionInput: `position:absolute;top:0;right:${SUB_POS_RIGHT};width:45px;height:20px;padding:0 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;`
         };
     };
-    
+
     // 样式常量（向后兼容，使用函数生成）
     const NAV_STYLES = getNavStyles();
 
@@ -1462,7 +1475,7 @@
     navBar.id = "tool-nav-bar";
 
     const navMiniButton = createTag('div', '目录', NAV_STYLES.miniButton);
-    
+
     // 更新导航栏样式的函数（当变量改变时调用）
     const updateNavStyles = () => {
         const styles = getNavStyles();
@@ -1770,7 +1783,7 @@
 
         return null;
     };
-    
+
     // 向上查找父元素的兄弟元素，查找回答区域
     const searchInParentSiblings = (startEl, siblingLimit, stopCondition) => {
         let current = startEl;
@@ -1851,41 +1864,41 @@
             null,
             false
         );
-        
+
         let textNode;
         let domOrder = startDomOrder; // 继续使用传入的domOrder，保持顺序连续
         const processedElements = new Set(); // 记录已处理的元素，避免重复处理
-        
+
         while (textNode = walker.nextNode()) {
             const text = textNode.textContent;
             if (!text) continue;
-            
+
             // 获取文本节点的父元素（通常是 span）
             const parentSpan = textNode.parentElement;
             if (!parentSpan || parentSpan === contentEl) continue;
-            
+
             // 如果已经处理过这个 span，跳过（避免重复）
             if (processedElements.has(parentSpan)) continue;
-            
+
             // 检查父元素是否是 span 标签
             if (parentSpan.tagName !== 'SPAN') continue;
-            
+
             // 获取 span 的文本内容（去空后）
             const spanText = (parentSpan.textContent || '').trim();
-            
+
             // 检查所有 markdown 标题模式
             for (const { level, prefix } of markdownHeadingPatterns) {
                 if (!SUB_NAV_HEADING_LEVELS.includes(level)) continue;
-                
+
                 let titleElement = null;
                 let titleText = '';
-                
+
                 // 情况1：span 文本去空后仅包含标记（如 "###" 或 "##"）
                 if (spanText === prefix.trim()) {
                     // 找到标记 span，使用其父元素作为标题元素
                     titleElement = parentSpan.parentElement;
                     if (!titleElement || titleElement === contentEl) continue;
-                    
+
                     // 从父元素的 textContent 中提取完整标题文本（去掉标记前缀）
                     const fullText = (titleElement.textContent || '').trim();
                     titleText = fullText.replace(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), '').trim();
@@ -1894,7 +1907,7 @@
                 else if (spanText.startsWith(prefix.trim())) {
                     // 从 span 的文本中提取标题文本（去掉标记前缀）
                     titleText = spanText.substring(prefix.trim().length).trim();
-                    
+
                     // 检查该 span 之后的所有兄弟元素，如果有文本，拼接到标题文本
                     let nextSibling = parentSpan.nextSibling;
                     while (nextSibling) {
@@ -1904,31 +1917,31 @@
                         } else if (nextSibling.nodeType === Node.TEXT_NODE) {
                             siblingText = (nextSibling.textContent || '').trim();
                         }
-                        
+
                         // 如果遇到 ```（三个反引号），终止拼接
                         if (siblingText === '```') {
                             break;
                         }
-                        
+
                         // 如果是空字符，终止匹配
                         if (!siblingText) {
                             break;
                         }
-                        
+
                         // 如果兄弟元素以 ## 或 ### 开头，视为新的标题元素，终止拼接
                         // 先检查更长的模式，避免 ### 被 ## 匹配
                         if (siblingText.startsWith('###') || siblingText.startsWith('##')) {
                             break;
                         }
-                        
+
                         // 如果有文本，拼接到标题文本
                         if (siblingText) {
                             titleText += siblingText;
                         }
-                        
+
                         nextSibling = nextSibling.nextSibling;
                     }
-                    
+
                     // 使用该 span 的父元素作为标题元素（因为可能需要包含所有兄弟元素）
                     titleElement = parentSpan.parentElement;
                     if (!titleElement || titleElement === contentEl) {
@@ -1936,25 +1949,25 @@
                         titleElement = parentSpan;
                     }
                 }
-                
+
                 // 如果找到了标题元素和文本，进行处理
                 if (titleElement && titleText) {
                     const rect = titleElement.getBoundingClientRect();
                     if (rect.width === 0 || rect.height === 0) continue;
-                    
+
                     // 规范化标题文本
                     const normalizedText = normalizeHeadingText(titleText);
                     if (!normalizedText) continue;
-                    
+
                     // 检查是否已经存在相同文本和级别的标题（避免重复）
                     // 使用 position 来判断，更准确
-                    const exists = headingList.some(h => 
-                        h.text === normalizedText && 
+                    const exists = headingList.some(h =>
+                        h.text === normalizedText &&
                         h.level === level &&
                         h.position !== undefined &&
                         Math.abs(h.position - rect.top) < 30
                     );
-                    
+
                     if (!exists) {
                         headingList.push({
                             element: titleElement,
@@ -1971,7 +1984,7 @@
                 }
             }
         }
-        
+
         return domOrder; // 返回更新后的domOrder
     };
 
@@ -2062,7 +2075,7 @@
 
         // 根据当前选择的层级过滤标题
         let filteredHeadings = currentSubNavHeadings.filter(h => h.level <= currentSubNavLevel);
-        
+
         // 如果h1只有1个，则过滤掉h1标题项
         if (h1Count === 1) {
             filteredHeadings = filteredHeadings.filter(h => h.level !== 1);
@@ -2837,7 +2850,7 @@
         const currentUrl = getUrl();
         // 检查 URL 是否变化（使用 currentNavBarUrl 来检测，即使 preservedNavTextsUrl 为 null 也能检测到）
         const urlChanged = currentNavBarUrl !== null && currentNavBarUrl !== currentUrl;
-        
+
         if(navQuestions
             && thisQuestions.length === navQuestions.length
             && normalizeQuestionText(thisQuestions[0].textContent) === normalizeQuestionText(navQuestions[0].textContent)) {
@@ -2966,7 +2979,7 @@
     const ENABLE = "开启";
     const DISABLED_ICON = "🚫";
     const ENABLED_ICON = "💡";
-    
+
     // 创建禁用按钮
     let disable = createTag('div', DISABLE, PANEL_STYLES.buttonBase + PANEL_STYLES.disable);
     disable.id = "tool-disable";
@@ -2977,7 +2990,7 @@
 
     const settingsBtn = createSettingsButton();
     const newChatBtn = createNewChatButton();
-    
+
     // 创建按钮容器
     const buttonContainer = createTag('div', "", PANEL_STYLES.buttonContainer);
     appendSeveral(buttonContainer, disable, settingsBtn, newChatBtn);
@@ -3049,10 +3062,22 @@
         img.onload = function() {
             try {
                 const canvas = document.createElement('canvas');
-                canvas.width = img.width;
-                canvas.height = img.height;
+                let sourceX = 0, sourceY = 0, sourceWidth = img.width, sourceHeight = img.height;
+
+                // 如果是CLAUDE的图标，进行80%裁切（保留中心80%区域）
+                if ([CLAUDE, DEEPSEEK, DOUBAO].includes(siteId)) {
+                    const cropRatio = 0.8; // 80%
+                    const cropOffset = (1 - cropRatio) / 2; // 10%
+                    sourceX = img.width * cropOffset;
+                    sourceY = img.height * cropOffset;
+                    sourceWidth = img.width * cropRatio;
+                    sourceHeight = img.height * cropRatio;
+                }
+
+                canvas.width = sourceWidth;
+                canvas.height = sourceHeight;
                 const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0);
+                ctx.drawImage(img, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, sourceWidth, sourceHeight);
                 const base64DataUri = canvas.toDataURL('image/png');
                 setGV(iconKey, base64DataUri);
                 console.log(logMessage || `站点图标已保存(base64): site=${siteId}`);
@@ -3077,14 +3102,14 @@
         if (siteId === undefined || siteId === null) {
             return null;
         }
-        
+
         const iconKey = SITE_ICON_KEY_PREFIX + siteId;
         const iconBase64 = getGV(iconKey);
-        
+
         if (!iconBase64) {
             return null;
         }
-        
+
         const iconImg = document.createElement('img');
         iconImg.src = iconBase64;
         iconImg.style.cssText = iconStyle;
@@ -3178,7 +3203,7 @@
         const visibleSites = getVisibleModels();
         const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
         const checkedWords = visibleWords.filter(word => document.getElementById(`word-${word}`)?.checked);
-        
+
         if (checkedWords.length > 0) {
             // 从DOM读取已勾选的站点
             selectedSites = checkedWords.map(word => wordToSite[word]);
@@ -3225,7 +3250,7 @@
         const selectedSites = getSitesAndCurrent();
         const visibleSites = getVisibleModels();
         const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
-        
+
         // 以MODEL_GROUP_INDEX为界，将模型列表分为两列
         const firstGroupWords = visibleWords.filter((word, index) => {
             const originalIndex = words.indexOf(word);
@@ -3235,17 +3260,17 @@
             const originalIndex = words.indexOf(word);
             return originalIndex >= MODEL_GROUP_INDEX;
         });
-        
+
         const firstGroupItems = firstGroupWords.map(word => createPanelItem(word, selectedSites));
         const secondGroupItems = secondGroupWords.map(word => createPanelItem(word, selectedSites));
 
         const headline = createTag('div', "全部模型", PANEL_STYLES.headline);
-        
+
         // 创建两列容器
         const modelColumns = createTag('div', "", PANEL_STYLES.modelColumns);
         const firstColumn = createTag('div', "", PANEL_STYLES.modelColumn);
         const secondColumn = createTag('div', "", PANEL_STYLES.modelColumn);
-        
+
         appendSeveral(firstColumn, ...firstGroupItems);
         appendSeveral(secondColumn, ...secondGroupItems);
         appendSeveral(modelColumns, firstColumn, secondColumn);
@@ -3347,14 +3372,14 @@
         const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
         const selectedSites = visibleWords.map(word => wordToSite[word]);
         setGV(CHOSEN_SITE, selectedSites);
-        
+
         visibleWords.forEach(word => {
             const checkbox = document.getElementById(`word-${word}`);
             if (checkbox) {
                 checkbox.checked = true;
             }
         });
-        
+
         updateBoxFromStorage();
         if (isCompactMode) {
             reloadCompactMode();
@@ -3364,7 +3389,7 @@
     // 清空所有已选模型（取消所有复选框的勾选状态）
     function clearAllModels() {
         changeDisable(false);
-        
+
         const visibleSites = getVisibleModels();
         const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
         visibleWords.forEach(word => {
@@ -3373,10 +3398,10 @@
                 checkbox.checked = false;
             }
         });
-        
+
         // 根据复选框状态更新存储
         getSitesFromDomAndSave();
-        
+
         if (isCompactMode) {
             reloadCompactMode();
         }
@@ -3610,7 +3635,7 @@
             const wordSpan = createTag('span', alias, PANEL_STYLES.wordSpan);
             item.appendChild(wordSpan);
             }
-            
+
             contentContainer.appendChild(item);
         });
     }
@@ -3634,14 +3659,14 @@
     function createCombinationIcons(sites) {
         const container = document.createElement('div');
         container.style.cssText = 'display:inline-flex;align-items:center;gap:2px;';
-        
+
         // 保持保存时的原始顺序，不排序
         sites.forEach(site => {
             const word = siteToWord[site];
             if (!word) {
                 return;
             }
-            
+
             const iconImg = createSiteIcon(word, PANEL_STYLES.iconImgCombination);
             if (iconImg) {
                 container.appendChild(iconImg);
@@ -3656,7 +3681,7 @@
                 }
             }
         });
-        
+
         return container;
     }
 
@@ -3693,7 +3718,7 @@
 
         // 保存到存储
         setGV(COMMON_COMBINATIONS_KEY, combinations);
-        
+
         // 刷新组合按钮显示
         loadCombinations();
     }
@@ -3706,7 +3731,7 @@
         if (!Array.isArray(combinations) || index < 0 || index >= combinations.length) {
             return;
         }
-        
+
         combinations.splice(index, 1);
         setGV(COMMON_COMBINATIONS_KEY, combinations);
         loadCombinations();
@@ -3732,14 +3757,14 @@
 
             // 根据sites动态生成alias组合名称（用于title提示）
             const combinationName = generateCombinationName(sites);
-            
+
             const btn = createTag('button', '', PANEL_STYLES.combinationBtnBase + PANEL_STYLES.combinationBtn);
             btn.title = `点击一键勾选此组合`;
-            
+
             // 创建图标组合并添加到按钮
             const iconContainer = createCombinationIcons(sites);
             btn.appendChild(iconContainer);
-            
+
             // 创建删除按钮（红叉）
             const deleteBtn = createTag('button', '×', PANEL_STYLES.deleteBtn);
             deleteBtn.title = '删除组合';
@@ -3748,13 +3773,13 @@
                 deleteCombination(index);
             });
             btn.appendChild(deleteBtn);
-            
+
             btn.dataset.combinationIndex = index;
             btn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 applyCombination(sites);
             });
-            
+
             // 鼠标悬停显示删除按钮
             let hoverTimer = null;
             btn.addEventListener('mouseenter', () => {
@@ -3777,7 +3802,7 @@
                 btn.style.opacity = '1';
                 deleteBtn.style.display = 'none';
             });
-            
+
             combinationContainer.appendChild(btn);
         });
     }
@@ -3821,7 +3846,7 @@
     function refreshPanel() {
         contentContainer.replaceChildren();
         renderPanelContent();
-        
+
         // 如果是展开模式，确保按钮容器正确显示
         if (!isCompactMode) {
             settingsBtn.textContent = settingsBtnText;
@@ -3925,9 +3950,9 @@
         e.stopPropagation();
 
         // 如果点击的是复选框、按钮或者panel-item，不切换模式
-        if (e.target.tagName === 'INPUT' || 
-            e.target.tagName === 'BUTTON' || 
-            e.target.id === 'tool-disable' || 
+        if (e.target.tagName === 'INPUT' ||
+            e.target.tagName === 'BUTTON' ||
+            e.target.id === 'tool-disable' ||
             e.target.id === 'tool-settings' ||
             e.target.id === 'tool-select-all' ||
             e.target.id === 'tool-clear' ||
@@ -4113,7 +4138,7 @@
      */
     function getAndSaveSiteIcon(siteId) {
         const iconKey = SITE_ICON_KEY_PREFIX + siteId;
-        
+
         // 如果已经保存过图标，直接返回
         if (getGV(iconKey)) {
             return;
@@ -4134,14 +4159,14 @@
         }
         if (iconLink && iconLink.href) {
             const iconUrl = iconLink.href;
-            
+
             // 如果已经是base64格式，直接保存
             if (iconUrl.startsWith('data:')) {
                 setGV(iconKey, iconUrl);
                 console.log(`站点图标已保存(base64): site=${siteId}`);
                 return;
             }
-            
+
             // 将URL转换为base64（使用Image+Canvas方式）
             convertIconUrlToBase64(iconUrl, iconKey, siteId, `站点图标已保存(base64): site=${siteId}`);
         }
@@ -4219,7 +4244,7 @@
     const _labelBase = 'font-size:14px;color:#333;';
     const _inputBase = 'border:1px solid #ddd;border-radius:4px;font-size:14px;';
     const _containerBase = 'display:flex;align-items:center;';
-    
+
     const SETTINGS_STYLES = {
         // Tab样式
         tabBase: _tabBase,
@@ -4302,11 +4327,11 @@
 
         // 按钮容器
         const buttonContainer = createTag('div', '', 'display:flex;gap:10px;margin-top:15px');
-        
+
         // 确定按钮
         const confirmBtn = createPrimaryButton('确定', () => popup.remove());
         confirmBtn.style.flex = '1';
-        
+
         // 如果有额外按钮，添加到容器中
         if (extraButton && extraButton.text && extraButton.onClick) {
             const extraBtn = createPrimaryButton(extraButton.text, () => {
@@ -4316,7 +4341,7 @@
             extraBtn.style.flex = '1';
             buttonContainer.appendChild(extraBtn);
         }
-        
+
         buttonContainer.appendChild(confirmBtn);
         appendSeveral(content, messageDiv, buttonContainer);
     }
@@ -4375,32 +4400,32 @@
      */
     function createToggleSwitch(label, checked, onChange) {
         const container = createTag('div', '', SETTINGS_STYLES.toggleContainer);
-        
+
         const labelDiv = createTag('div', label, SETTINGS_STYLES.labelBase);
-        
+
         const switchContainer = createTag('label', '', 'position:relative;display:inline-block;width:44px;height:26px;cursor:pointer;flex-shrink:0');
-        
+
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.checked = checked;
         checkbox.style.cssText = SETTINGS_STYLES.checkboxHidden;
-        
+
         const slider = createTag('span', '', 'position:absolute;top:0;left:0;right:0;bottom:0;background-color:' + (checked ? '#34c759' : '#ccc') + ';transition:0.3s;border-radius:26px;');
         slider.style.cssText += 'cursor:pointer;';
-        
+
         const sliderCircle = createTag('span', '', 'position:absolute;content:"";height:20px;width:20px;left:' + (checked ? '21px' : '3px') + ';bottom:3px;background-color:white;transition:0.3s;border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,0.2);');
         sliderCircle.style.cssText += 'cursor:pointer;';
-        
+
         checkbox.addEventListener('change', function() {
             const isChecked = checkbox.checked;
             slider.style.backgroundColor = isChecked ? '#34c759' : '#ccc';
             sliderCircle.style.left = isChecked ? '21px' : '3px';
             onChange(isChecked);
         });
-        
+
         appendSeveral(switchContainer, checkbox, slider, sliderCircle);
         appendSeveral(container, switchContainer, labelDiv);
-        
+
         return container;
     }
 
@@ -4410,74 +4435,74 @@
     function createModelSelectionTab(checkboxes) {
         const tab = createTag('div', '多选面板自定义', SETTINGS_STYLES.tabActive);
         const tabContent = createTag('div', '', '');
-        
+
         // 创建说明文字
         const tipText = createTag('div', '仅勾选的大模型将出现在多选面板上', SETTINGS_STYLES.tipText);
         appendSeveral(tabContent, tipText);
-        
+
         // 读取当前可见模型列表
         const visibleSites = getVisibleModels();
-        
+
         // 创建两列容器
         const columnsContainer = createTag('div', '', SETTINGS_STYLES.columnsContainer);
         const leftColumn = createTag('div', '', 'flex:1');
         const rightColumn = createTag('div', '', 'flex:1');
-        
+
         // 将 wordConfig 分为前6个和后6个
         const firstHalf = wordConfig.slice(0, 6);
         const secondHalf = wordConfig.slice(6);
-        
+
         // 创建复选框函数
         function createModelCheckbox(config) {
             const { word, site } = config;
             const isVisible = visibleSites.includes(site);
-            
+
             const checkboxContainer = createTag('div', '', SETTINGS_STYLES.itemContainerWithGap);
-            
+
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
             checkbox.checked = isVisible;
             checkbox.style.cssText = SETTINGS_STYLES.checkboxSmall;
-            
+
             // 立即保存功能：复选框改变时立即生效
             checkbox.addEventListener('change', () => {
                 const newVisibleSites = wordConfig
                     .filter(config => checkboxes[config.word]?.checked)
                     .map(config => config.site);
-                
+
                 if (newVisibleSites.length === 0) {
                     checkbox.checked = true; // 恢复选中，至少保留一个
                     showMessagePopup('至少需要保留一个模型可见');
                     return;
                 }
-                
+
                 // 保存配置，退出弹窗后再刷新面板
                 setVisibleModels(newVisibleSites);
             });
-            
+
             const label = createTag('label', word, SETTINGS_STYLES.labelWithCursor);
             label.style.cssText += 'user-select:none;';
             label.onclick = () => checkbox.click();
-            
+
             checkboxes[word] = checkbox;
-            
+
             appendSeveral(checkboxContainer, checkbox, label);
             return checkboxContainer;
         }
-        
+
         // 添加前6个到左列
         firstHalf.forEach(config => {
             leftColumn.appendChild(createModelCheckbox(config));
         });
-        
+
         // 添加后6个到右列
         secondHalf.forEach(config => {
             rightColumn.appendChild(createModelCheckbox(config));
         });
-        
+
         appendSeveral(columnsContainer, leftColumn, rightColumn);
         appendSeveral(tabContent, columnsContainer);
-        
+
         return { tab, tabContent };
     }
 
@@ -4487,7 +4512,7 @@
     function createButtonDisplayTab() {
         const tab = createTag('div', '按钮显示', SETTINGS_STYLES.tabInactive);
         const tabContent = createTag('div', '', 'display:none;');
-        
+
         // 读取当前设置
         // 隐藏输入框按钮：默认 true（显示）
         const showToggle = getGV(SHOW_TOGGLE_BUTTON_KEY) !== false;
@@ -4523,7 +4548,7 @@
         });
 
         appendSeveral(tabContent, toggleSwitch1, toggleSwitch2, toggleSwitch3);
-        
+
         return { tab, tabContent };
     }
 
@@ -4533,18 +4558,18 @@
     function createNavVarsTab() {
         const tab = createTag('div', '目录设置', SETTINGS_STYLES.tabInactive);
         const tabContent = createTag('div', '', 'display:none;');
-        
+
         // 读取当前导航变量设置
         const navMaxWidthValue = getGV(NAV_MAX_WIDTH_KEY) || DEFAULT_NAV_MAX_WIDTH;
         const subNavMaxWidthValue = getGV(SUB_NAV_MAX_WIDTH_KEY) || DEFAULT_SUB_NAV_MAX_WIDTH;
         const navTopValue = getGV(NAV_TOP_KEY) || DEFAULT_NAV_TOP;
         const navTopOverflowValue = getGV(NAV_TOP_OVERFLOW_KEY) || DEFAULT_NAV_TOP_OVERFLOW;
         const subNavTopOverflowValue = getGV(SUB_NAV_TOP_OVERFLOW_KEY) || DEFAULT_SUB_NAV_TOP_OVERFLOW;
-        
+
         // 创建说明文字
         const tipText = createHtml('div', '修改后立即生效。', SETTINGS_STYLES.tipText);
         appendSeveral(tabContent, tipText);
-        
+
         // 创建输入框容器
         const configContainer = createTag('div', '', 'display:flex;flex-direction:column;gap:12px');
         const inputCss = SETTINGS_STYLES.inputMedium;
@@ -4591,16 +4616,16 @@
             });
             updateNavStyles();
         }
-        
+
         // 批量添加输入框事件监听
         inputElements.forEach(input => {
             input.addEventListener('change', saveNavVarsImmediately);
             input.addEventListener('blur', saveNavVarsImmediately);
         });
-        
+
         appendSeveral(configContainer, ...navInputItems);
         appendSeveral(tabContent, configContainer);
-        
+
         return { tab, tabContent };
     }
 
@@ -4610,35 +4635,35 @@
     function createInputAreaHideLevelTab() {
         const tab = createTag('div', '输入框隐藏范围设置', SETTINGS_STYLES.tabInactive);
         const tabContent = createTag('div', '', 'display:none;');
-        
+
         // 读取用户自定义的层级配置
         const customLevels = getGV(INPUT_AREA_HIDE_PARENT_LEVEL_KEY) || {};
         const levelInputs = {};
-        
+
         // 创建说明文字
         const tipText = createHtml('div', '如果官网做了某些改动，则隐藏输入框的范围效果可能不合适；<br>此时可尝试修改下面数值：数值越大，则页面隐藏的内容范围越大，反之越小。', SETTINGS_STYLES.tipText);
         appendSeveral(tabContent, tipText);
-        
+
         // 创建两列容器
         const columnsContainer = createTag('div', '', SETTINGS_STYLES.columnsContainer);
         const leftColumn = createTag('div', '', 'flex:1');
         const rightColumn = createTag('div', '', 'flex:1');
-        
+
         // 将 wordConfig 分为前6个和后6个
         const firstHalf = wordConfig.slice(0, 6);
         const secondHalf = wordConfig.slice(6);
-        
+
         // 立即保存层级配置的函数
         function saveLevelsImmediately() {
             const newLevels = {};
             let hasInvalid = false;
-            
+
             // 收集所有输入框的值
             wordConfig.forEach(config => {
                 const { site: siteId } = config;
                 const input = levelInputs[siteId];
                 const value = parseInt(input.value, 10);
-                
+
                 if (isNaN(value) || value < 0) {
                     hasInvalid = true;
                     input.style.borderColor = '#ff4444';
@@ -4654,11 +4679,11 @@
                     }
                 }
             });
-            
+
             if (hasInvalid) {
                 return;
             }
-            
+
             // 保存配置
             if (Object.keys(newLevels).length === 0) {
                 // 如果所有值都是默认值，删除存储的配置
@@ -4667,24 +4692,24 @@
                 setGV(INPUT_AREA_HIDE_PARENT_LEVEL_KEY, newLevels);
             }
         }
-        
+
         // 创建配置项的函数
         function createLevelConfigItem(config) {
             const { site: siteId, word } = config;
             const defaultLevel = inputAreaHideParentLevel[siteId];
             const currentLevel = customLevels[siteId] !== undefined ? customLevels[siteId] : defaultLevel;
-            
+
             const itemContainer = createTag('div', '', SETTINGS_STYLES.itemContainer);
-            
+
             const label = createTag('label', word, SETTINGS_STYLES.labelWithMinWidthSmall);
             label.style.cssText += 'user-select:none;';
-            
+
             const input = document.createElement('input');
             input.type = 'number';
             input.value = currentLevel;
             input.min = '0';
             input.style.cssText = SETTINGS_STYLES.inputSmall;
-            
+
             // 立即保存功能：输入框值改变时立即生效
             input.addEventListener('change', () => {
                 saveLevelsImmediately();
@@ -4692,28 +4717,28 @@
             input.addEventListener('blur', () => {
                 saveLevelsImmediately();
             });
-            
+
             const defaultLabel = createTag('span', `(默认: ${defaultLevel})`, 'font-size:13px;color:#666;margin:auto 10px;');
-            
+
             levelInputs[siteId] = input;
-            
+
             appendSeveral(itemContainer, label, input, defaultLabel);
             return itemContainer;
         }
-        
+
         // 添加前6个到左列
         firstHalf.forEach(config => {
             leftColumn.appendChild(createLevelConfigItem(config));
         });
-        
+
         // 添加后6个到右列
         secondHalf.forEach(config => {
             rightColumn.appendChild(createLevelConfigItem(config));
         });
-        
+
         appendSeveral(columnsContainer, leftColumn, rightColumn);
         appendSeveral(tabContent, columnsContainer);
-        
+
         return { tab, tabContent };
     }
 
@@ -4728,23 +4753,23 @@
 
         // Tab 切换容器
         const tabContainer = createTag('div', '', 'display:flex;border-bottom:2px solid #e0e0e0;margin-bottom:20px;width:fit-content;');
-        
+
         // Tab 内容容器
         const tabContentContainer = createTag('div', '', 'min-height:200px;min-width:300px;');
-        
+
         // 存储所有复选框的引用（用于多选面板设置）
         const checkboxes = {};
-        
+
         // 创建各个Tab
         const { tab: tab1, tabContent: tab1Content } = createModelSelectionTab(checkboxes);
         const { tab: tab2, tabContent: tab2Content } = createButtonDisplayTab();
         const { tab: tab3, tabContent: tab3Content } = createNavVarsTab();
         const { tab: tab4, tabContent: tab4Content } = createInputAreaHideLevelTab();
-        
+
         // Tab 切换函数（支持多个tab）
         const tabs = [tab1, tab2, tab3, tab4];
         const tabContents = [tab1Content, tab2Content, tab3Content, tab4Content];
-        
+
         function switchTab(activeIndex) {
             tabs.forEach((tab, index) => {
                 if (index === activeIndex) {
@@ -4756,33 +4781,33 @@
                 }
             });
         }
-        
+
         // Tab 点击事件
         tab1.onclick = () => switchTab(0);
         tab2.onclick = () => switchTab(1);
         tab3.onclick = () => switchTab(2);
         tab4.onclick = () => switchTab(3);
-        
+
         appendSeveral(tabContainer, tab1, tab2, tab3, tab4);
         appendSeveral(tabContentContainer, tab1Content, tab2Content, tab3Content, tab4Content);
-        
+
         // 关闭弹窗的函数，关闭时刷新多选面板
         const closePopup = () => {
             popup.remove();
             refreshPanel();
         };
-        
+
         // 关闭按钮
         const closeBtn = createTag('span', '✕', SETTINGS_STYLES.closeBtn);
         closeBtn.onclick = closePopup;
-        
+
         // 点击背景关闭时也刷新面板
         popup.onclick = (e) => {
             if (e.target === popup) {
                 closePopup();
             }
         };
-        
+
         appendSeveral(content, closeBtn, title, tabContainer, tabContentContainer);
     }
 
@@ -4822,7 +4847,7 @@
         if (questions && questions.length > 0) {
             const firstQuestion = questions[0];
             const content = normalizeQuestionText(firstQuestion.textContent || firstQuestion.innerText || '');
-            
+
             // 如果是 STUDIO 站点且内容为空，从主目录栏获取实质内容
             if (site === STUDIO && (!content || content.length === 0)) {
                 const navLinkText = getFirstStudioNavLinkText();
@@ -4830,7 +4855,7 @@
                     return navLinkText;
                 }
             }
-            
+
             return content;
         }
         return '';
@@ -4856,7 +4881,7 @@
      */
     function generateBookmarkTitle(question) {
         let title = document.title || '';
-        
+
         // 查找当前站点的 word
         const currentSiteConfig = wordConfig.find(config => config.site === site);
         if (currentSiteConfig) {
@@ -4870,7 +4895,7 @@
                 title = title.substring(0, title.length - word.length).trim();
             }
         }
-        
+
         // 如果字数大于7，则采用它，否则复用提问内容
         if (title.length > 7) {
             return title;
@@ -4894,32 +4919,32 @@
      */
     function identifySiteFromUrl(url) {
         if (!url || typeof url !== 'string') return null;
-        
+
         // 如果没有协议前缀，自动添加https://
         let normalizedUrl = url.trim();
         if (!normalizedUrl.match(/^https?:\/\//i)) {
             normalizedUrl = 'https://' + normalizedUrl;
         }
-        
+
         try {
             const urlObj = new URL(normalizedUrl);
             const urlHost = urlObj.hostname.toLowerCase();
-            
+
             // 移除www前缀进行比较（更灵活的匹配）
             const urlHostWithoutWww = urlHost.replace(/^www\./, '');
-            
+
             // 遍历webSites，匹配域名
             for (const [siteId, baseUrls] of Object.entries(webSites)) {
                 if (!baseUrls || !Array.isArray(baseUrls) || baseUrls.length === 0) continue;
-                
+
                 const baseUrl = baseUrls[0];
                 if (!baseUrl) continue;
-                
+
                 try {
                     const baseUrlObj = new URL(baseUrl);
                     const baseHost = baseUrlObj.hostname.toLowerCase();
                     const baseHostWithoutWww = baseHost.replace(/^www\./, '');
-                    
+
                     // 精确匹配域名（考虑www前缀）
                     if (urlHost === baseHost || urlHostWithoutWww === baseHostWithoutWww) {
                         return parseInt(siteId);
@@ -4941,7 +4966,7 @@
                 }
             }
         }
-        
+
         return null;
     }
 
@@ -5137,7 +5162,7 @@
     function jumpToSite(siteInfo) {
         // 从路径部分拼接完整URL
         const fullUrl = buildFullUrl(siteInfo.url, siteInfo.site);
-        
+
         // 当前站点：直接跳转
         if (siteInfo.site === site) {
             const currentUrl = getUrl();
@@ -5202,14 +5227,14 @@
 
         // 截取question
         const truncatedQuestion = truncateBookmarkQuestion(questionText);
-        
+
         // 生成标题
         const title = generateBookmarkTitle(truncatedQuestion);
-        
+
         // 先设置初始数据（包含title），然后再调用updateBookmarkData
         // updateBookmarkData会读取已有的title，不会重复生成
         setBookmarkData(bookmarkKey, [], DEFAULT_GROUP_ID, truncatedQuestion, title);
-        
+
         // 添加当前站点的URL（同时保存question和title）
         updateBookmarkData(bookmarkKey, site, currentUrl, truncatedQuestion);
 
@@ -5278,7 +5303,7 @@
         if (data) {
             removeBookmarkFromGroupMap(bookmarkKey, data.group);
         }
-        
+
         // 移除 json（分组映射已在removeBookmarkFromGroupMap中处理）
         GM_deleteValue(bookmarkKey);
         console.log(curDate() + `书签: 已删除 ${bookmarkKey}`);
@@ -5299,12 +5324,12 @@
         }
         // 如果groupId为null（全部视图），使用书签实际所在的分组
         const targetGroupId = groupId !== null ? groupId : (data.group || DEFAULT_GROUP_ID);
-        
+
         const groupMap = getGroupMap();
         const bookmarkIds = groupMap[targetGroupId] || [];
         const bookmarkId = getBookmarkId(bookmarkKey);
         const currentIndex = bookmarkIds.indexOf(bookmarkId);
-        
+
         if (currentIndex === -1) {
             console.log(curDate() + `书签: 未找到书签 ${bookmarkKey}`);
             return false;
@@ -5343,7 +5368,7 @@
         [bookmarkIds[currentIndex], bookmarkIds[newIndex]] = [bookmarkIds[newIndex], bookmarkIds[currentIndex]];
         groupMap[targetGroupId] = bookmarkIds;
         setGroupMap(groupMap);
-        
+
         console.log(curDate() + `书签: ${direction === 'up' ? '上移' : '下移'} ${bookmarkKey}`);
         return true;
     }
@@ -5443,7 +5468,7 @@
         }
         groups.splice(index, 1);
         setGV(BOOKMARK_GROUP_LIST, groups);
-        
+
         // 将该分组下的所有书签移到默认分组（使用映射快速获取）
         const groupMap = getGroupMap();
         const bookmarkIds = groupMap[groupId] || [];
@@ -5454,11 +5479,11 @@
                 setBookmarkData(key, data.sites, DEFAULT_GROUP_ID, data.question, data.title);
             }
         });
-        
+
         // 清理映射中的该分组
         delete groupMap[groupId];
         setGroupMap(groupMap);
-        
+
         return true;
     }
 
@@ -5501,11 +5526,11 @@
         const groupMap = getGroupMap();
         const normalizedGroupId = (typeof groupId === 'number') ? groupId : DEFAULT_GROUP_ID;
         const bookmarkId = getBookmarkId(bookmarkKey);
-        
+
         if (!groupMap[normalizedGroupId]) {
             groupMap[normalizedGroupId] = [];
         }
-        
+
         // 如果不在数组中，则添加（存储ID而非完整key）
         if (!groupMap[normalizedGroupId].includes(bookmarkId)) {
             groupMap[normalizedGroupId].push(bookmarkId);
@@ -5518,7 +5543,7 @@
         const groupMap = getGroupMap();
         const normalizedGroupId = (typeof groupId === 'number') ? groupId : DEFAULT_GROUP_ID;
         const bookmarkId = getBookmarkId(bookmarkKey);
-        
+
         if (groupMap[normalizedGroupId]) {
             groupMap[normalizedGroupId] = groupMap[normalizedGroupId].filter(k => k !== bookmarkId);
             setGroupMap(groupMap);
@@ -5529,11 +5554,11 @@
     function moveBookmarkInGroupMap(bookmarkKey, oldGroupId, newGroupId) {
         const normalizedOldGroupId = (typeof oldGroupId === 'number') ? oldGroupId : DEFAULT_GROUP_ID;
         const normalizedNewGroupId = (typeof newGroupId === 'number') ? newGroupId : DEFAULT_GROUP_ID;
-        
+
         if (normalizedOldGroupId === normalizedNewGroupId) {
             return; // 分组未变化，无需更新
         }
-        
+
         removeBookmarkFromGroupMap(bookmarkKey, normalizedOldGroupId);
         addBookmarkToGroupMap(bookmarkKey, normalizedNewGroupId);
     }
@@ -5556,7 +5581,7 @@
         // 由于无法直接遍历所有GV key，我们通过已知的bookmarkIdCounter来推断
         const counter = getGV(BOOKMARK_ID_COUNTER) || 0;
         let needUpdate = false;
-        
+
         // 检查所有可能存在的书签
         for (let i = 1; i <= counter; i++) {
             const key = getBookmarkKey(i.toString());
@@ -5572,7 +5597,7 @@
                 }
             }
         }
-        
+
         // 清理映射中不存在的书签
         Object.keys(groupMap).forEach(groupId => {
             const bookmarkIds = groupMap[groupId];
@@ -5585,7 +5610,7 @@
                 needUpdate = true;
             }
         });
-        
+
         if (needUpdate) {
             setGroupMap(groupMap);
         }
@@ -5612,14 +5637,14 @@
         const oldData = getBookmarkData(bookmarkKey);
         const oldGroupId = oldData ? oldData.group : DEFAULT_GROUP_ID;
         const newGroupId = (typeof group === 'number') ? group : DEFAULT_GROUP_ID;
-        
+
         setGV(bookmarkKey, {
             sites: sites || [],
             group: newGroupId,
             question: truncateBookmarkQuestion(question || ''),
             title: title || ''
         });
-        
+
         // 更新分组映射（如果分组发生变化）
         if (oldGroupId !== newGroupId) {
             moveBookmarkInGroupMap(bookmarkKey, oldGroupId, newGroupId);
@@ -5664,7 +5689,7 @@
         }
         // 将ID转换为完整key
         const keyList = bookmarkIds.map(id => getBookmarkKey(id));
-        
+
         const bookmarks = [];
         // 全部视图已排序，直接遍历；分组视图倒序遍历（让最新的在上面）
         const startIndex = filterGroupId === null ? 0 : keyList.length - 1;
@@ -5682,9 +5707,9 @@
                 const question = data.question || '';
                 const title = data.title || '';
                 // 返回时转换为名称显示
-                bookmarks.push({ 
+                bookmarks.push({
                     question,
-                    title, 
+                    title,
                     sites: data.sites,
                     group: getGroupNameById(data.group || DEFAULT_GROUP_ID),
                     groupId: data.group || DEFAULT_GROUP_ID, // 同时保存代号用于操作
@@ -5821,24 +5846,24 @@
      */
     function createSitesColumn(sites, bookmarkKey, currentGroupId, linkStyle) {
         const tdSites = createTag('td', "", 'max-width:160px;padding:5px;vertical-align:middle;border:1px solid #ddd');
-        
+
         // 按星标状态排序：星标的在前
         const sortedSites = [...sites].sort((a, b) => {
             const aStarred = a.starred ? 1 : 0;
             const bStarred = b.starred ? 1 : 0;
             return bStarred - aStarred;
         });
-        
+
         sortedSites.forEach(s => {
             // 站点链接容器
             const siteContainer = createTag('div', "", 'display:inline-flex;align-items:center;margin-right:5px;margin-bottom:2px;position:relative');
-            
+
             // 星标emoji（如果已星标）
             if (s.starred) {
                 const starEmoji = createTag('span', '⭐', 'margin-right:2px;font-size:14px');
                 siteContainer.appendChild(starEmoji);
             }
-            
+
             // 站点链接
             const siteName = siteToWord[s.site] || s.site;
             const link = createTag('a', siteName, linkStyle);
@@ -5850,17 +5875,17 @@
                 jumpToSite(s);
             });
             siteContainer.appendChild(link);
-            
+
             // 三点按钮（悬停时显示）
             const moreBtn = createTag('button', '⋮', 'padding:2px 3px;background:transparent;border:none;cursor:pointer;font-size:20px;color:#666;opacity:0;transition:opacity 0.2s;vertical-align:middle;line-height:1');
             moreBtn.title = '更多操作';
-            
+
             // 菜单容器
             const menuContainer = createTag('div', "", 'position:absolute;top:100%;right:0;background:white;border:1px solid #ddd;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.15);z-index:1000;display:none;min-width:120px;margin-top:4px');
-            
+
             // 点击外部关闭菜单的处理器
             let closeMenuHandler = null;
-            
+
             // 悬停显示三点按钮
             siteContainer.addEventListener('mouseenter', () => {
                 moreBtn.style.opacity = '1';
@@ -5871,7 +5896,7 @@
                     menuContainer.style.display = 'none';
                 }, 500);
             });
-            
+
             // 星标按钮
             const starBtn = createTag('button', s.starred ? '⭐ 取消星标' : '⭐ 设为星标', 'width:100%;padding:8px 12px;background:transparent;border:none;cursor:pointer;text-align:left;font-size:13px;color:#333');
             starBtn.addEventListener('click', (e) => {
@@ -5890,7 +5915,7 @@
             starBtn.addEventListener('mouseenter', () => starBtn.style.backgroundColor = '#f5f5f5');
             starBtn.addEventListener('mouseleave', () => starBtn.style.backgroundColor = 'transparent');
             menuContainer.appendChild(starBtn);
-            
+
             // 移除按钮（只有当站点数量大于1时才显示）
             if (sites.length > 1) {
                 const removeBtn = createTag('button', '🗑️ 移除', 'width:100%;padding:8px 12px;background:transparent;border:none;cursor:pointer;text-align:left;font-size:13px;color:#333;border-top:1px solid #eee');
@@ -5911,7 +5936,7 @@
                 removeBtn.addEventListener('mouseleave', () => removeBtn.style.backgroundColor = 'transparent');
                 menuContainer.appendChild(removeBtn);
             }
-            
+
             // 点击三点按钮显示/隐藏菜单
             moreBtn.addEventListener('click', (e) => {
                 e.preventDefault();
@@ -5941,7 +5966,7 @@
                     }
                 }
             });
-            
+
             // 右键三点按钮显示菜单
             moreBtn.addEventListener('contextmenu', (e) => {
                 e.preventDefault();
@@ -5965,24 +5990,24 @@
                     }, 0);
                 }
             });
-            
+
             siteContainer.appendChild(moreBtn);
             siteContainer.appendChild(menuContainer);
             tdSites.appendChild(siteContainer);
         });
-        
+
         // 添加加号按钮容器
         const addBtnContainer = createTag('div', "", 'display:inline-flex;align-items:center;margin-right:5px;margin-bottom:2px;position:relative');
-        
+
         // 加号按钮
         const addBtn = createTag('button', '+', 'padding:2px;background:transparent;border:none;cursor:pointer;font-size:24px;color:#666;border-radius:3px;font-weight:bold;line-height:1');
         addBtn.title = '添加链接';
         addBtn.style.marginRight = '4px';
-        
+
         // 保存当前打开的输入框引用
         let currentInputContainer = null;
         let closeInputHandler = null;
-        
+
         // 关闭输入框的函数
         const closeInput = () => {
             if (currentInputContainer) {
@@ -5994,34 +6019,34 @@
                 closeInputHandler = null;
             }
         };
-        
+
         // 点击加号按钮显示输入框
         addBtn.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
-            
+
             // 如果已有输入框打开，先关闭
             if (currentInputContainer) {
                 closeInput();
                 return;
             }
-            
+
             // 创建输入框容器
             currentInputContainer = createTag('div', "", 'position:absolute;top:100%;left:0;background:white;border:1px solid #ddd;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.15);z-index:1000;padding:10px;min-width:300px;margin-top:4px');
-            
+
             // 输入框标签
             const label = createTag('label', '添加链接：', 'display:block;margin-bottom:5px;font-size:13px;color:#333');
             currentInputContainer.appendChild(label);
-            
+
             // 输入框
             const input = createTag('input', '', 'width:100%;padding:6px;border:1px solid #ddd;border-radius:3px;font-size:13px;box-sizing:border-box');
             input.type = 'text';
             input.placeholder = 'https://...';
             currentInputContainer.appendChild(input);
-            
+
             // 按钮容器
             const btnContainer = createTag('div', "", 'display:flex;gap:8px;margin-top:8px;justify-content:flex-end');
-            
+
             // 保存链接的函数
             const saveLink = () => {
                 let url = input.value.trim();
@@ -6029,19 +6054,19 @@
                     alert('请输入链接');
                     return;
                 }
-                
+
                 // 如果没有协议前缀，自动添加https://
                 if (!url.match(/^https?:\/\//i)) {
                     url = 'https://' + url;
                 }
-                
+
                 // 识别站点
                 const siteId = identifySiteFromUrl(url);
                 if (siteId === null) {
                     alert('无法识别链接所属站点，请确保链接来自支持的站点');
                     return;
                 }
-                
+
                 // 检查是否已存在该站点
                 const existingSite = sites.find(s => s.site === siteId);
                 if (existingSite) {
@@ -6049,17 +6074,17 @@
                     closeInput();
                     return;
                 }
-                
+
                 // 保存链接
                 updateBookmarkData(bookmarkKey, siteId, url);
-                
+
                 // 关闭输入框
                 closeInput();
-                
+
                 // 刷新显示
                 showBookmarkWindow(currentGroupId);
             };
-            
+
             // 取消按钮
             const cancelBtn = createTag('button', '取消', 'padding:6px 12px;background:#f5f5f5;border:1px solid #ddd;border-radius:3px;cursor:pointer;font-size:13px;color:#333');
             cancelBtn.addEventListener('click', (e) => {
@@ -6068,7 +6093,7 @@
                 closeInput();
             });
             btnContainer.appendChild(cancelBtn);
-            
+
             // 确定按钮
             const confirmBtn = createTag('button', '确定', 'padding:6px 12px;background:#4CAF50;border:none;border-radius:3px;cursor:pointer;font-size:13px;color:white');
             confirmBtn.addEventListener('click', (e) => {
@@ -6077,10 +6102,10 @@
                 saveLink();
             });
             btnContainer.appendChild(confirmBtn);
-            
+
             currentInputContainer.appendChild(btnContainer);
             addBtnContainer.appendChild(currentInputContainer);
-            
+
             // 按Enter键确认
             input.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
@@ -6091,7 +6116,7 @@
                     closeInput();
                 }
             });
-            
+
             // 点击外部关闭输入框
             closeInputHandler = (e) => {
                 if (!currentInputContainer.contains(e.target) && e.target !== addBtn) {
@@ -6101,16 +6126,16 @@
             setTimeout(() => {
                 document.addEventListener('click', closeInputHandler);
             }, 0);
-            
+
             // 聚焦输入框
             setTimeout(() => {
                 input.focus();
             }, 0);
         });
-        
+
         addBtnContainer.appendChild(addBtn);
         tdSites.appendChild(addBtnContainer);
-        
+
         return tdSites;
     }
 
@@ -6280,7 +6305,7 @@
 
         // 获取分组列表（提前获取，避免重复调用）
         const groups = getBookmarkGroups();
-        
+
         // 如果selectedGroupId为null（首次打开），从存储中读取上次选中的分组ID
         // 但如果skipSaveGroup为true，则跳过读取，直接使用null（用于"立即查看书签列表"按钮）
         if (selectedGroupId === null && !skipSaveGroup) {
@@ -6296,11 +6321,11 @@
                 }
             }
         }
-        
+
         // 检查弹窗是否已存在
         const existingPopup = document.getElementById('bookmark-popup');
         let popup, content;
-        
+
         if (existingPopup) {
             // 弹窗已存在，复用它（避免闪烁）
             popup = existingPopup;
@@ -6330,7 +6355,7 @@
 
         // 分组管理区域
         const currentGroupId = selectedGroupId;
-        
+
         // Tab切换函数（统一处理保存和切换）
         // 用户主动点击tab时，应该恢复正常保存行为（skipSaveGroup设为false）
         const switchToGroup = (groupId, skipSave = false) => {
@@ -6340,7 +6365,7 @@
             // 用户主动点击tab时，重置skipSaveGroup为false，恢复正常保存行为
             showBookmarkWindow(groupId, skipSave);
         };
-        
+
         // 创建Tab函数（统一处理全部和分组tab）
         const createGroupTab = (text, groupId, isSelected, bgColor, isBold = false) => {
             const fontWeight = isBold ? 'font-weight:bold;' : '';
@@ -6349,21 +6374,21 @@
             tab.addEventListener('click', () => switchToGroup(groupId));
             return tab;
         };
-        
+
         // Tab切换区域
         const tabContainer = createTag('div', "", TAB_CONTAINER_STYLE);
-        
+
         // 全部Tab
         const allTab = createGroupTab('全部', null, currentGroupId === null, '#f0f0f0', true);
         tabContainer.appendChild(allTab);
-        
+
         // 各分组Tab
         groups.forEach(group => {
             const groupBgColor = getGroupBackgroundColor(group.id);
             const groupTab = createGroupTab(group.name, group.id, currentGroupId === group.id, groupBgColor);
             tabContainer.appendChild(groupTab);
         });
-        
+
         // 添加分组按钮
         const addGroupBtn = createTag('button', '+ 添加分组', ADD_GROUP_BTN_STYLE);
         addGroupBtn.title = '添加新分组';
@@ -6380,7 +6405,7 @@
         addGroupBtn.addEventListener('mouseenter', () => addGroupBtn.style.opacity = '0.85');
         addGroupBtn.addEventListener('mouseleave', () => addGroupBtn.style.opacity = '1');
         tabContainer.appendChild(addGroupBtn);
-        
+
         content.appendChild(tabContainer);
 
         // 渲染书签列表
