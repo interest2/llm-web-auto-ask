@@ -719,6 +719,7 @@
     let pendingQuestion = null; // 临时存储mousedown时的问题
     let isProcessingMouseUp = false; // 标记是否正在处理mouseup检测
     let mouseEventListenerAdded = false; // 标记页面鼠标事件监听器是否已添加
+    const ADD_LISTENER_AFTER_URL_CHANGE = 500;
 
     function addAskEventListener() {
         const inputArea = getInputArea();
@@ -727,50 +728,65 @@
 
         if (!mouseEventListenerAdded) {
             // 页面 mousedown：记录输入框内容作为mouseup前的基准
-            document.addEventListener('mousedown', function() {
+            document.addEventListener('mousedown', function(event) {
+                // 如果点击位置位于网页左侧30%和上部10%，则return
+                if (event.clientX < window.innerWidth * 0.3 && event.clientY < window.innerHeight * 0.1) {
+                    return;
+                }
+                if(isProcessingMouseUp){
+                    return;
+                }
                 const inputArea = getInputArea();
+                let hasContentFlag = false;
+                let contentBeforeDown = "";
                 if (!isEmpty(inputArea)) {
-                    const contentBeforeDown = getInputContent(inputArea);
+                    contentBeforeDown = getInputContent(inputArea);
                     if (!isEmpty(contentBeforeDown)) {
-                        pendingQuestion = contentBeforeDown;
+                        hasContentFlag = true;
                     }
+                }
+                if(hasContentFlag){
+                    pendingQuestion = contentBeforeDown;
+                }else{
+                    pendingQuestion = null;
                 }
             });
 
             // 页面 mouseup：延迟检测输入框是否清空
-            document.addEventListener('mouseup', function() {
-                if (!isProcessingMouseUp) {
+            document.addEventListener('mouseup', function(event) {
+                // 如果点击位置位于网页左侧和上部，则return
+                if (event.clientX < window.innerWidth * 0.4 || event.clientY < window.innerHeight * 0.1) {
+                    return;
+                }
+                if(isProcessingMouseUp){
+                    return;
+                }
+                isProcessingMouseUp = true;
+                // 只有up前内容非空时才进行检测
+                if (!isEmpty(pendingQuestion)) {
 
-                    // 只有up前内容非空时才进行检测
-                    if (!isEmpty(pendingQuestion)) {
-                        isProcessingMouseUp = true;
+                    // 延迟检测输入框是否被清空
+                    setTimeout(function() {
+                        const inputArea = getInputArea();
+                        if (!isEmpty(inputArea)) {
+                            const contentAfterUp = getInputContent(inputArea);
+                            // 如果up前内容非空且up后内容为空，认为是发送
+                            if (!isEmpty(pendingQuestion) && isEmpty(contentAfterUp)) {
+                                const questionToSend = pendingQuestion;
+                                pendingQuestion = null;
 
-                        // 延迟检测输入框是否被清空
-                        setTimeout(function() {
-                            const inputArea = getInputArea();
-                            if (!isEmpty(inputArea)) {
-                                const contentAfterUp = getInputContent(inputArea);
-                                // 如果up前内容非空且up后内容为空，认为是发送
-                                if (!isEmpty(pendingQuestion) && isEmpty(contentAfterUp)) {
-                                    if(getUrl() !== lastUrl){
-                                        return;
-                                    }
-
-                                    const questionToSend = pendingQuestion;
-                                    pendingQuestion = null;
-                                    isProcessingMouseUp = false;
-
-                                    setTimeout(function() {
-                                        masterCheck(questionToSend);
-                                    }, 100);
-                                } else {
-                                    // 输入框未被清空，不是发送
-                                    isProcessingMouseUp = false;
-                                    pendingQuestion = null;
-                                }
+                                setTimeout(function() {
+                                    masterCheck(questionToSend);
+                                }, 100);
+                            } else {
+                                // 输入框未被清空，不是发送
+                                pendingQuestion = null;
                             }
-                        }, 300);
-                    }
+                        }
+                        isProcessingMouseUp = false;
+                    }, ADD_LISTENER_AFTER_URL_CHANGE - 100);
+                } else {
+                    isProcessingMouseUp = false;
                 }
             });
 
@@ -786,9 +802,8 @@
             inputArea.addEventListener('input', function() {
                 const currentContent = getInputContent(inputArea);
 
-
                 // 如果正在处理 mouseup 检测，且检测到清空，说明是 mouseup 导致的发送
-                if (isProcessingMouseUp && isEmpty(currentContent) && !isEmpty(previousInputContent)) {
+                if (isEmpty(currentContent) && !isEmpty(previousInputContent)) {
                     // mouseup检测会处理，这里只更新状态
                     previousInputContent = currentContent;
                     cachedInputContent = currentContent;
@@ -870,21 +885,19 @@
             let nthInputArea = getNthInputArea();
 
             // 如果打开新对话，可能导致 display 值清空，此时输入框并未隐藏
-            if(nthInputArea.style.display === ''){
+            if(nthInputArea && nthInputArea.style.display === ''){
                 toggleBtnStatus(true);
                 isInputAreaHidden = false;
             }
 
             mouseEventListenerAdded = false;
             inputAreaListenerAdded = false;
-            pendingQuestion = null;
 
             // URL 变化时隐藏副目录
             if (typeof hideSubNavBar === 'function') {
                 hideSubNavBar();
             }
-
-            setTimeout(addAskEventListener, 500);
+            setTimeout(addAskEventListener, ADD_LISTENER_AFTER_URL_CHANGE);
         }
     }
 
@@ -3300,7 +3313,7 @@
         const firstGroupItems = firstGroupWords.map(word => createPanelItem(word, selectedSites));
         const secondGroupItems = secondGroupWords.map(word => createPanelItem(word, selectedSites));
 
-        const headline = createTag('div', "全部模型", PANEL_STYLES.headline);
+        const headline = createTag('div', "模型列表", PANEL_STYLES.headline);
 
         // 创建两列容器
         const modelColumns = createTag('div', "", PANEL_STYLES.modelColumns);
