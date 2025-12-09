@@ -868,13 +868,7 @@
             userManuallyShown = false;
 
             let nthInputArea = getNthInputArea();
-            if(site === GEMINI){
-                // gemini 打开新对话的情况
-                if(isInputAreaHidden && nthInputArea.style.display === 'none' && getQuestionList().length === 0){
-                    nthInputArea.style.display = 'flex';
-                    isInputAreaHidden = false;
-                }
-            }
+
             // 如果打开新对话，可能导致 display 值清空，此时输入框并未隐藏
             if(nthInputArea.style.display === ''){
                 toggleBtnStatus(true);
@@ -894,6 +888,8 @@
         }
     }
 
+    let contentLevelKey = T + "contentWidthLevel";
+
     // 定期检查URL变化和监听器完整性
     setInterval(function() {
         reloadCompactMode();
@@ -904,31 +900,45 @@
         let questions = getQuestionList();
         updateNavQuestions(questions);
 
-        // 单独适配：gemini的表格宽度、studio的内容宽度
+        // 单独适配：gemini、studio的内容宽度
         if(site === GEMINI){
             const ADAPTIVE_WIDTH = window.outerWidth * 0.8 + "px";
 
-            let askContent = document.querySelectorAll('.conversation-container');
-            if(askContent.length > 0){
-                askContent.forEach((element, index) => {
-                    element.style.maxWidth = GEMINI_MAX_WIDTH;
-                    element.style.width = ADAPTIVE_WIDTH;
-                });
-            }
+            let headQuestion = getQuestionList()[0];
 
-            let tables = document.querySelectorAll('.horizontal-scroll-wrapper');
-            if(tables.length > 0){
-                tables.forEach((element, index) => {
-                    element.style.maxWidth = GEMINI_MAX_WIDTH;
-                    element.style.width = ADAPTIVE_WIDTH;
-                });
+            let targetEle = null;
+            let cachedContentLevel = getS(contentLevelKey);
+            if(!isEmpty(cachedContentLevel)){
+                targetEle = getNthParent(headQuestion, cachedContentLevel)
+            }else {
+                let prevEle = null;
+                let nth = 1;
+
+                while (nth < 10) {
+                    let checkEle = getNthParent(headQuestion, nth);
+                    if (!checkEle) {
+                        break;
+                    }
+                    let checkWidth = checkEle.getBoundingClientRect().width;
+                    if (checkWidth > 1000) {
+                        targetEle = prevEle;
+                        setS(contentLevelKey, nth - 1);
+                        break;
+                    }
+                    prevEle = checkEle;
+                    nth++;
+                }
             }
-            let graphs = document.querySelectorAll('.code-block');
-            if(graphs.length > 0){
-                graphs.forEach((element, index) => {
-                    element.style.maxWidth = GEMINI_MAX_WIDTH;
-                    element.style.width = ADAPTIVE_WIDTH;
-                });
+            if(!isEmpty(targetEle)){
+                targetEle.style.maxWidth = GEMINI_MAX_WIDTH;
+                targetEle.style.width = ADAPTIVE_WIDTH;
+                let cur = targetEle.nextElementSibling;
+
+                while (cur) {
+                    cur.style.maxWidth = GEMINI_MAX_WIDTH;
+                    cur.style.width = ADAPTIVE_WIDTH;
+                    cur = cur.nextElementSibling;
+                }
             }
 
         }
@@ -1425,6 +1435,23 @@
     const SUB_POS_RIGHT = "25px";
     // 启用 Markdown 标题查找的站点列表
     const ENABLE_MARKDOWN_HEADING_SITES = [CLAUDE];
+    const STUDIO_HEADING_RIGHT_GAP = 400;
+    // 副目录left预设（按站点配置，值自行填写，如 "300px"）
+    const SUB_NAV_LEFT_PRESETS = {
+        [DEEPSEEK]: "260px",
+        [KIMI]: "240px",
+        [TONGYI]: "260px",
+        [QWEN]: "260px",
+        [DOUBAO]: "280px",
+        [YUANBAO]: "260px",
+
+        [ZCHAT]: "260px",
+        [CHATGPT]: "260px",
+        [GEMINI]: "310px",
+        [STUDIO]: "10px",
+        [CLAUDE]: "290px",
+        [GROK]: "255px"
+    };
 
     const subNavMinWidth = "210px";
 
@@ -1505,22 +1532,21 @@
         }
     };
 
-    // 获取副目录left位置的key
-    const getSubNavLeftKey = () => {
-        return `${T}subNavLeft`;
-    };
 
-    // 获取副目录的left值（优先从localStorage读取）
+    let subNavLeftKey = T + "subNavLeft";
+
+    // 获取副目录的left值（优先从localStorage，其次站点预设，最后默认值）
     const getSubNavLeft = () => {
-        const key = getSubNavLeftKey();
-        const savedLeft = getS(key);
-        return savedLeft || SUB_NAV_LEFT;
+        const savedLeft = getS(subNavLeftKey);
+        if (savedLeft) return savedLeft;
+        const presetLeft = SUB_NAV_LEFT_PRESETS[site];
+        if (presetLeft) return presetLeft;
+        return SUB_NAV_LEFT;
     };
 
     // 设置副目录的left值到localStorage
     const setSubNavLeft = (left) => {
-        const key = getSubNavLeftKey();
-        setS(key, left);
+        setS(subNavLeftKey, left);
     };
 
     // 创建副目录栏元素
@@ -2007,6 +2033,10 @@
             // 确保标题是可见的
             const rect = h.getBoundingClientRect();
             if (rect.width === 0 || rect.height === 0) return;
+            if (site === STUDIO) {
+                const distanceToRight = window.innerWidth - rect.left;
+                if (distanceToRight < STUDIO_HEADING_RIGHT_GAP) return;
+            }
             // 确保标题级别在配置的范围内
             const level = parseInt(h.tagName.substring(1));
             if (!SUB_NAV_HEADING_LEVELS.includes(level)) return;
@@ -2984,7 +3014,7 @@
     const DISABLE = "禁用";
     const ENABLE = "开启";
     const DISABLED_ICON = "🚫";
-    const ENABLED_ICON = "💡";
+    const ENABLED_ICON = "🟢";
 
     // 创建禁用按钮
     let disable = createTag('div', DISABLE, PANEL_STYLES.buttonBase + PANEL_STYLES.disable);
