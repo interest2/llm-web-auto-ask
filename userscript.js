@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         多家大模型网页同时回答 & 目录导航
+// @name         多模型同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
 // @version      5.1.0
 // @description  一键自动同时在各家大模型官网提问，免去复制粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
@@ -36,7 +36,7 @@
     const GEMINI_MAX_WIDTH = "830px"; // gemini 内容最大宽度
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
     const MODEL_GROUP_INDEX = 6;
-    const PANEL_BUTTON_WIDTH = "90px"; // 面板按钮固定宽度（顶部主按钮）
+    const PANEL_BUTTON_WIDTH = "70px"; // 面板按钮固定宽度（顶部主按钮）
     const PANEL_COLUMN_WIDTH = "135px"; // 面板模型列固定宽度
     const PANEL_SMALL_BUTTON_WIDTH = "40px"; // 全选/清空等小按钮宽度
     const PANEL_DISABLE_BUTTON_COMPACT_WIDTH = "24px"; // 缩略模式下禁用按钮宽度
@@ -249,6 +249,7 @@
     // 按钮显示状态存储键名（GM存储，所有站点共享）
     const SHOW_TOGGLE_BUTTON_KEY = "showToggleButton";
     const SHOW_BOOKMARK_BUTTON_KEY = "showBookmarkButton"; // 同时控制"书签"和"历史"两个按钮
+    const SHOW_GROUPED_BUTTONS_KEY = "showGroupedButtons"; // 控制"分组新对话"和图钉按钮
     const DEFAULT_HIDE_INPUT_AREA_KEY = "defaultHideInputArea"; // 默认隐藏输入框
 
     // 书签功能总开关存储键名（GM存储，所有站点共享）
@@ -315,6 +316,13 @@
     // 存储时的特征词
     const T = "tool-";
     const HEART_KEY_PREFIX ="lastHeartbeat-";
+    const SITE_URL_PREFIX = "siteUrl-"; // 站点URL存储前缀
+    const PINNED_GROUPS_KEY = "pinnedGroupUrls"; // {groupId: {siteId:url}}
+    const PINNED_GROUP_NAMES_KEY = "pinnedGroupNames"; // {groupId: groupName}
+    const PINNED_GROUP_ID_KEY = "pinnedGroupIdCounter"; // 自增分组ID计数器
+    const GROUP_NAME_PREFIX = "分组"; // 默认分组名前缀
+    const PIN_REQUEST_KEY = "pinRequestSignal"; // 请求各站点上报URL
+    const PIN_RESPONSE_PREFIX = "pinResponse-"; // 各站点上报URL的响应key
 
     // 同步书签相关常量
     const BOOKMARK_PREFIX = "bookmark-";           // 书签存储key前缀
@@ -366,6 +374,8 @@
 
     // 页面加载时，向本地存储发送一次心跳
     setGV(HEART_KEY_PREFIX + site, Date.now());
+    // 同时更新当前站点的URL
+    setGV(SITE_URL_PREFIX + site, getUrl());
     let lastQuestion = "";
 
     function masterCheck(lastestQ){
@@ -413,6 +423,11 @@
             }
 
             let msg = getGV("msg");
+            const msgDate = msg?.date;
+            if(!msgDate || (Date.now() - msgDate) > 20 * 1000){
+                return;
+            }
+
             let question = msg.question;
             // 避免重复发送
             if(question === lastQuestion){
@@ -724,13 +739,18 @@
     function addAskEventListener() {
         const inputArea = getInputArea();
 
+        // 判断点击位置是否在忽略区域（左侧40%或上部10%）
+        function isClickInIgnoredArea(event) {
+            return event.clientX < window.innerWidth * 0.4 || event.clientY < window.innerHeight * 0.1;
+        }
+
         // 监听页面任意位置的鼠标事件，通过检测输入框清空来判断发送
 
         if (!mouseEventListenerAdded) {
             // 页面 mousedown：记录输入框内容作为mouseup前的基准
             document.addEventListener('mousedown', function(event) {
-                // 如果点击位置位于网页左侧30%和上部10%，则return
-                if (event.clientX < window.innerWidth * 0.3 && event.clientY < window.innerHeight * 0.1) {
+                // 如果点击位置位于网页左侧40%或上部10%，则return
+                if (isClickInIgnoredArea(event)) {
                     return;
                 }
                 if(isProcessingMouseUp){
@@ -754,8 +774,8 @@
 
             // 页面 mouseup：延迟检测输入框是否清空
             document.addEventListener('mouseup', function(event) {
-                // 如果点击位置位于网页左侧和上部，则return
-                if (event.clientX < window.innerWidth * 0.4 || event.clientY < window.innerHeight * 0.1) {
+                // 如果点击位置位于网页左侧40%或上部10%，则return
+                if (isClickInIgnoredArea(event)) {
                     return;
                 }
                 if(isProcessingMouseUp){
@@ -766,25 +786,33 @@
                 if (!isEmpty(pendingQuestion)) {
 
                     // 延迟检测输入框是否被清空
-                    setTimeout(function() {
+                    // 轮询检测输入框是否清空，最多持续1000ms，每200ms检查一次，满足则提前结束
+                    const checkInterval = 200;
+                    const checkTotal = 1000;
+                    const checkStart = Date.now();
+                    const mouseUpTimer = setInterval(function() {
                         const inputArea = getInputArea();
+                        let contentAfterUp = "";
                         if (!isEmpty(inputArea)) {
-                            const contentAfterUp = getInputContent(inputArea);
-                            // 如果up前内容非空且up后内容为空，认为是发送
-                            if (!isEmpty(pendingQuestion) && isEmpty(contentAfterUp)) {
-                                const questionToSend = pendingQuestion;
-                                pendingQuestion = null;
-
-                                setTimeout(function() {
-                                    masterCheck(questionToSend);
-                                }, 100);
-                            } else {
-                                // 输入框未被清空，不是发送
-                                pendingQuestion = null;
-                            }
+                            contentAfterUp = getInputContent(inputArea);
                         }
-                        isProcessingMouseUp = false;
-                    }, ADD_LISTENER_AFTER_URL_CHANGE - 100);
+                        if (!isEmpty(pendingQuestion) && isEmpty(contentAfterUp)) {
+                            const questionToSend = pendingQuestion;
+                            pendingQuestion = null;
+                            clearInterval(mouseUpTimer);
+                            setTimeout(function() {
+                                masterCheck(questionToSend);
+                            }, 100);
+                            isProcessingMouseUp = false;
+                            return;
+                        }
+                        if (Date.now() - checkStart >= checkTotal) {
+                            // 输入框未被清空，不是发送
+                            pendingQuestion = null;
+                            clearInterval(mouseUpTimer);
+                            isProcessingMouseUp = false;
+                        }
+                    }, checkInterval);
                 } else {
                     isProcessingMouseUp = false;
                 }
@@ -813,6 +841,7 @@
                 // 更新上一次的内容和缓存
                 previousInputContent = currentContent;
                 cachedInputContent = currentContent;
+                pendingQuestion = currentContent; // 这里是给鼠标事件兜底用
             });
 
             inputArea.addEventListener('keydown', function(event) {
@@ -879,6 +908,8 @@
         if (currentUrl !== lastUrl) {
             console.log("URL已变化，重新添加监听器");
             lastUrl = currentUrl;
+            // 更新当前站点的URL
+            setGV(SITE_URL_PREFIX + site, currentUrl);
 
             userManuallyShown = false;
 
@@ -909,6 +940,8 @@
         checkUrlChange();
         checkListenerIntegrity();
         setGV(HEART_KEY_PREFIX + site, Date.now());
+        // 同时更新当前站点的URL
+        setGV(SITE_URL_PREFIX + site, getUrl());
 
         let questions = getQuestionList();
         updateNavQuestions(questions);
@@ -1034,7 +1067,7 @@
         // 页面加载时获取并保存站点图标
         getAndSaveSiteIcon(site);
 
-        appendSeveral(document.body, panel, toggleButton, subNavBar);
+        appendSeveral(document.body, panel, toggleButtonContainer, subNavBar);
         reloadDisableStatus();
         updateButtonVisibility(); // 根据设置更新按钮显示状态
 
@@ -1078,7 +1111,8 @@
     // 切换按钮相关常量
     const TOGGLE_BUTTON_BG_SHOW = '#ec7258';
     const TOGGLE_BUTTON_BG_HIDE = '#999';
-    const TOGGLE_BUTTON_STYLE = `font-size:14px;padding:5px;position:fixed;cursor:pointer;background:${TOGGLE_BUTTON_BG_SHOW};color:white;border:1px solid #ddd;border-radius:30%;box-shadow:0 4px 12px rgba(0,0,0,0.2);z-index:99999999;display:flex;align-items:center;justify-content:center;`;
+    const TOGGLE_BUTTON_STYLE = `font-size:14px;padding:5px;cursor:pointer;background:${TOGGLE_BUTTON_BG_SHOW};color:white;border:1px solid #ddd;border-radius:30%;box-shadow:0 4px 12px rgba(0,0,0,0.2);display:flex;align-items:center;justify-content:center;`;
+    const SYNC_SWITCH_TITLE = '同步提问开关';
 
     // 切换状态配置
     const TOGGLE_STATES = {
@@ -1094,8 +1128,23 @@
         }
     };
 
+    const TOGGLE_FLOAT_GAP = 3;
+    // 创建按钮容器（垂直排列，右对齐）
+    const toggleButtonContainer = createTag('div', '', 'position:fixed;z-index:99999999;display:flex;flex-direction:column;align-items:flex-end;gap:' + TOGGLE_FLOAT_GAP + 'px;');
+    
     const toggleButton = createTag('div', TOGGLE_STATES.show.text, TOGGLE_BUTTON_STYLE);
     toggleButton.title = '临时隐藏输入框获得更大的视野高度';
+    const toggleDisableButton = createTag('div', '', TOGGLE_BUTTON_STYLE);
+    toggleDisableButton.style.padding = '3px';
+    toggleDisableButton.title = SYNC_SWITCH_TITLE;
+    toggleDisableButton.style.background = 'white';
+    toggleDisableButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        disableEvent(e);
+    });
+    
+    // 将按钮添加到容器中（禁用按钮在上方）
+    appendSeveral(toggleButtonContainer, toggleDisableButton, toggleButton);
 
     const getNthParent = (el, n) => n > 0 ? getNthParent(el?.parentElement, n - 1) : el;
 
@@ -1168,8 +1217,9 @@
     const TOGGLE_BOTTOM_KEY = T + 'toggleBottom';
     const TOGGLE_LEFT_KEY = T + 'theBtnLeft';
     const TOGGLE_LEVEL_KEY = T + 'theLevel';
+    const TOGGLE_LEFT_DATE_KEY = T + 'theBtnLeftDate';
 
-    const BUTTON_INPUT_GAP = 20; // 按钮与输入框的间距
+    const BUTTON_INPUT_GAP = site === GEMINI ? 40 : 20; // 按钮与输入框的间距
     const DEFAULT_LEFT_OFFSET = 40; // 默认left值的偏移量
     const MIN_RIGHT_THRESHOLD = 10; // right值的最小阈值
     const TOOL_PANEL_ID = 'tool-panel'; // 多选面板的ID
@@ -1205,7 +1255,7 @@
      * @param {boolean} isResizeEvent - 是否是resize事件触发
      */
     function updateToggleButtonPosition(isResizeEvent = false) {
-        // 如果处于隐藏状态且非resize场景，直接返回，不更新位置
+        // 如果处于隐藏状态、且非resize场景，直接返回，不更新位置
         if (isInputAreaHidden && !isResizeEvent) {
             return;
         }
@@ -1214,17 +1264,21 @@
         const bottom = calculateBottom(inputArea);
 
         if (inputArea) {
-            if(window.innerHeight - inputArea.getBoundingClientRect().bottom > 300){
-                return;
+            let inputBottom = inputArea.getBoundingClientRect().bottom;
+            if(inputBottom !== 0 && window.innerHeight - inputBottom > 300){
+                let oldBottom = toggleButtonContainer.getBoundingClientRect().bottom;
+                if(window.innerHeight - oldBottom < 300){
+                    return;
+                }
             }
         }
 
         let left;
 
-        // 如果处于隐藏状态且是 resize 场景
-        // 特殊情况：如果resize到最大宽度且有保存的maxLeft，优先使用maxLeft
+        // 如果非隐藏、或 resize 场景
+        //   特殊情况：如果 resize 到最大宽度且有保存的 maxLeft，优先使用maxLeft
         if (isMaxWidth()) {
-            left = calculateLeft(inputArea);
+            left = calcLeftInMaxState(inputArea);
         } else {
             // 非最大宽度，跟随缩略状态的多选面板的left位置
             const toolPanel = document.getElementById(TOOL_PANEL_ID);
@@ -1236,9 +1290,9 @@
             }
         }
 
-        // 更新toggle按钮位置
-        toggleButton.style.left = `${left}px`;
-        toggleButton.style.bottom = `${bottom}px`;
+        // 更新toggle按钮容器位置
+        toggleButtonContainer.style.left = `${left}px`;
+        toggleButtonContainer.style.bottom = `${bottom}px`;
     }
 
     /**
@@ -1250,13 +1304,13 @@
             return parseFloat(savedBottom);
         }
 
-        const UPDATE_BOTTOM_THRESHOLD = 45;
-        // 发送按钮存在，若新 bottom < 阈值，才更新
+        // 若新 bottom < 阈值，才更新。如果阈值较大，则输入框本体较高的情况下，按钮位置会偏高
+        const UPDATE_BOTTOM_THRESHOLD = 50;
         if (inputArea) {
-            const calculatedBottom = window.innerHeight - inputArea.getBoundingClientRect().bottom;
-            if (calculatedBottom < UPDATE_BOTTOM_THRESHOLD) {
-                setS(TOGGLE_BOTTOM_KEY, calculatedBottom.toString());
-                return calculatedBottom;
+            const distanceToBottom = window.innerHeight - inputArea.getBoundingClientRect().bottom;
+            if (distanceToBottom < UPDATE_BOTTOM_THRESHOLD && distanceToBottom > 0) {
+                setS(TOGGLE_BOTTOM_KEY, distanceToBottom.toString());
+                return distanceToBottom;
             }
         }
 
@@ -1268,18 +1322,31 @@
      * 计算left值
      * @param {HTMLElement} inputArea - 输入框元素
      */
-    function calculateLeft(inputArea) {
+    function calcLeftInMaxState(inputArea) {
         const savedLeft = getS(TOGGLE_LEFT_KEY);
+        if(isInputAreaHidden){
+            return savedLeft;
+        }
+
+        const today = getToday();
+        const lastCheckDate = getS(TOGGLE_LEFT_DATE_KEY);
+        const isFirstTriggerToday = lastCheckDate !== today;
+        if (isFirstTriggerToday) {
+            setS(TOGGLE_LEFT_DATE_KEY, today);
+        }
 
         let hasInputArea = !!inputArea;
 
         // 如果输入框存在
         if (hasInputArea) {
             let targetLevel = getS(TOGGLE_LEVEL_KEY);
-            if(!isEmpty(targetLevel)){
-                let targetRight = getNthParent(inputArea, targetLevel).getBoundingClientRect().right;
-                let shouldUpdate = (targetRight + BUTTON_INPUT_GAP).toString() !== savedLeft;
-                return handleButtonLeft(targetRight, shouldUpdate);
+            if(!isEmpty(targetLevel) && !isFirstTriggerToday){
+                let nthParent = getNthParent(inputArea, targetLevel);
+                if(!isEmpty(nthParent)){
+                    let targetRight = nthParent.getBoundingClientRect().right;
+                    let shouldUpdate = (targetRight + BUTTON_INPUT_GAP).toString() !== savedLeft;
+                    return handleButtonLeft(targetRight, shouldUpdate);
+                }
             }
 
             let targetRight = null;
@@ -1303,6 +1370,8 @@
 
                 if (rightFlag || heightFlag) {
                     let minusValue = 1;
+
+                    // 注意：这个 if 是针对高度比宽度先触发的情况，if 后面才是宽度触发的情况
                     if(heightFlag && !rightFlag){
                         let checkLevel = level - 1;
                         while (checkLevel >= START_LEVEL) {
@@ -1365,7 +1434,6 @@
 
     // 存储键名
     const NAV_MAX_WIDTH_KEY = "navMaxWidth";
-    const SUB_NAV_MAX_WIDTH_KEY = "subNavMaxWidth";
     const NAV_TOP_KEY = "navTop";
     const NAV_TOP_OVERFLOW_KEY = "navTopOverflow";
     const SUB_NAV_TOP_KEY = "subNavTop";
@@ -1384,8 +1452,19 @@
         return getGV(NAV_TOP_OVERFLOW_KEY) || DEFAULT_NAV_TOP_OVERFLOW;
     };
 
+    let subNavMaxWidthKey = T + "subNavMaxWidth";
+
+    // 获取副目录的最大宽度值（从localStorage读取，如果没有则使用默认值）
     const getSubNavMaxWidth = () => {
-        return getGV(SUB_NAV_MAX_WIDTH_KEY) || DEFAULT_SUB_NAV_MAX_WIDTH;
+        const savedMaxWidth = getS(subNavMaxWidthKey);
+        if (savedMaxWidth) return savedMaxWidth;
+        return DEFAULT_SUB_NAV_MAX_WIDTH;
+    };
+
+    // 设置副目录的最大宽度值到localStorage
+    const setSubNavMaxWidth = (maxWidth) => {
+        setS(subNavMaxWidthKey, maxWidth);
+        updateNavStyles();
     };
 
     const getSubNavTop = () => {
@@ -1418,8 +1497,8 @@
 
     const SUB_NAV_LEFT = "270px";     // 副目录的水平位置（距离屏幕左侧）
     const SUB_NAV_MIN_ITEMS = 2;      // 副目录标题总条数超过此阈值才显示
-    const SUB_NAV_TOP_THRESHOLD = 18; // 副目录标题条数超过此阈值时，top位置抬高到5%
-    const SUB_NAV_PREV_LEVEL_THRESHOLD = 25; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
+    const SUB_NAV_TOP_THRESHOLD = 15; // 副目录标题条数超过此阈值时，top位置抬高
+    const SUB_NAV_PREV_LEVEL_THRESHOLD = 15; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
     // 查找回答内容区域的查找限制（用于性能优化）
     const FIND_ANSWER_MIDDLE_SIBLING_LIMIT = 30; // 中间问题查找时的兄弟元素上限（原50，已优化）
@@ -1446,6 +1525,11 @@
     const SUB_NAV_HEADING_SELECTOR = SUB_NAV_HEADING_LEVELS.map(level => `h${level}`).join(', '); // 生成选择器字符串，如 "h1, h2, h3, h4"
     const SUB_NAV_HEADING_TAGS = SUB_NAV_HEADING_LEVELS.map(level => `H${level}`); // 生成标签数组，如 ["H1", "H2", "H3", "H4"]
     const SUB_POS_RIGHT = "25px";
+    const SUB_ALIGN_LEFT_TOP = "22px";
+    const SUB_ALIGN_LEFT_VALUE = "0px";
+    const SUB_ALIGN_LEFT_ACTIVE_BG = "#e6f0ff";
+    const SUB_ALIGN_RIGHT_VALUE = "0px";
+    const SUB_ALIGN_RIGHT_ACTIVE_BG = "#e6f0ff";
     // 启用 Markdown 标题查找的站点列表
     const ENABLE_MARKDOWN_HEADING_SITES = [CLAUDE];
     const STUDIO_HEADING_RIGHT_GAP = 400;
@@ -1466,7 +1550,7 @@
         [GROK]: "255px"
     };
 
-    const subNavMinWidth = "210px";
+    const subNavMinWidth = "190px";
 
     // 获取导航样式（动态生成，支持运行时修改变量）
     const getNavStyles = () => {
@@ -1490,9 +1574,9 @@
             waveIconNormal: `background-color:transparent;color:#333;`,
 
             // 副目录样式
-            subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${subNavTop};max-width:${subNavMaxWidth};min-width:${subNavMinWidth};max-height:${subNavMaxHeight};background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
+            subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${subNavTop};max-width:${subNavMaxWidth};min-width:${subNavMinWidth};max-height:${subNavMaxHeight};background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:0 8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
             subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
-            subNavCloseBtn: `position:absolute;top:0;right:5px;font-size:16px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+            subNavCloseBtn: `position:absolute;top:0;right:5px;font-size:18px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
 
             subNavItem: `padding:4px 2px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
             subNavItemH1: `padding-left:0px;font-weight:700;`,
@@ -1502,14 +1586,30 @@
 
             levelBtnGroup: `display:flex;gap:4px;align-items:center;`,
             levelBtn: `padding:2px 4px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;transition:all 0.2s;user-select:none;`,
-            levelBtnActive: `background:#0066cc;color:#fff;border-color:#0066cc;`,
+            levelBtnActive: `background:#3498db;color:#fff;border-color:#3498db;`,
             levelBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
             levelBtnLeave: `background-color:#fff;border-color:#ddd;color:#333;`,
 
-            subNavPositionBtn: `position:absolute;top:0;right:${SUB_POS_RIGHT};font-size:12px;cursor:pointer;color:#111;width:36px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
+            subNavMaxWidthBtn: `position:absolute;top:0;right:${SUB_POS_RIGHT};font-size:12px;margin:0 3px;padding:0 4px;cursor:pointer;color:#111;height:20px;display:flex;align-items:center;justify-content:center;border:1px solid #ccc;border-radius:3px;transition:background-color 0.2s;`,
+            subNavMaxWidthBtnHover: `background-color:#f0f0f0;`,
+            subNavMaxWidthBtnNormal: `background-color:transparent;`,
+            subNavMaxWidthInput: `position:absolute;top:0;right:${SUB_POS_RIGHT};width:45px;height:20px;padding:0 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;`,
+
+            subNavPositionBtn: `position:absolute;top:0;right:${SUB_POS_RIGHT};font-size:12px;margin:0 3px;padding:0 4px;cursor:pointer;color:#111;height:20px;display:flex;align-items:center;justify-content:center;border:1px solid #ccc;border-radius:3px;transition:background-color 0.2s;`,
             subNavPositionBtnHover: `background-color:#f0f0f0;`,
             subNavPositionBtnNormal: `background-color:transparent;`,
-            subNavPositionInput: `position:absolute;top:0;right:${SUB_POS_RIGHT};width:45px;height:20px;padding:0 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;`
+            subNavPositionInput: `position:absolute;top:0;right:${SUB_POS_RIGHT};width:45px;height:20px;padding:0 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;`,
+
+            subNavAlignLeftBtn: `position:absolute;top:${SUB_ALIGN_LEFT_TOP};right:${SUB_POS_RIGHT};font-size:12px;padding:0 3px;margin:0 3px;cursor:pointer;color:#111;display:flex;align-items:center;justify-content:center;border:1px solid #ccc;border-radius:3px;transition:background-color 0.2s;`,
+            subNavAlignLeftBtnHover: `background-color:#f0f0f0;`,
+            subNavAlignLeftBtnActive: `background-color:${SUB_ALIGN_LEFT_ACTIVE_BG};`,
+            subNavAlignLeftBtnNormal: `background-color:transparent;`,
+
+            subNavAlignRightBtn: `position:absolute;top:${SUB_ALIGN_LEFT_TOP};right:${SUB_POS_RIGHT};font-size:12px;padding:0 3px;margin:0 3px;cursor:pointer;color:#111;display:flex;align-items:center;justify-content:center;border:1px solid #ccc;border-radius:3px;transition:background-color 0.2s;`,
+            subNavAlignRightBtnHover: `background-color:#f0f0f0;`,
+            subNavAlignRightBtnActive: `background-color:${SUB_ALIGN_RIGHT_ACTIVE_BG};`,
+            subNavAlignRightBtnNormal: `background-color:transparent;`,
+            subNavButtonRow: `display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:4px;`
         };
     };
 
@@ -1566,6 +1666,12 @@
     const subNavLeft = getSubNavLeft();
     const subNavBar = createTag('div', "", NAV_STYLES.subNavBar.replace(`left:${SUB_NAV_LEFT}`, `left:${subNavLeft}`));
     subNavBar.id = "tool-sub-nav-bar";
+    const alignLeftValue = SUB_ALIGN_LEFT_VALUE;
+    const alignRightValue = SUB_ALIGN_RIGHT_VALUE;
+    let isSubNavAlignedLeft = subNavLeft === alignLeftValue;
+    let isSubNavAlignedRight = false;
+    let subNavLeftBeforeAlign = isSubNavAlignedLeft ? SUB_NAV_LEFT : subNavLeft;
+    let subNavLeftBeforeAlignRight = subNavLeft;
 
     // 状态变量
     let navQuestions, navLinks = [], navIO, elToLink = new Map();
@@ -2130,12 +2236,33 @@
             filteredHeadings = filteredHeadings.filter(h => h.level !== 1);
         }
 
-        // 创建标题级别样式映射
+        // 获取所有出现的标题层级（从小到大排序）
+        const allLevels = [...new Set(currentSubNavHeadings.map(h => h.level))].sort((a, b) => a - b);
+        
+        // 从后往前分配字体粗细
+        const fontWeightValues = [400, 500, 600, 700];
+        const levelToWeightMap = {};
+        allLevels.forEach((level, index) => {
+            const reverseIndex = allLevels.length - 1 - index;
+            const weightIndex = Math.min(reverseIndex, fontWeightValues.length - 1);
+            levelToWeightMap[level] = fontWeightValues[weightIndex];
+        });
+
+        // 创建标题级别样式映射，根据实际出现的层级动态设置字体粗细
+        const getStyleWithWeight = (baseStyle, level) => {
+            // 如果该层级存在，使用映射的粗细值；否则保持原样式
+            if (levelToWeightMap.hasOwnProperty(level)) {
+                const weight = levelToWeightMap[level];
+                return baseStyle.replace(/font-weight:\d+/, `font-weight:${weight}`);
+            }
+            return baseStyle;
+        };
+
         const headingStyleMap = {
-            1: NAV_STYLES.subNavItemH1,
-            2: NAV_STYLES.subNavItemH2,
-            3: NAV_STYLES.subNavItemH3,
-            4: NAV_STYLES.subNavItemH4
+            1: getStyleWithWeight(NAV_STYLES.subNavItemH1, 1),
+            2: getStyleWithWeight(NAV_STYLES.subNavItemH2, 2),
+            3: getStyleWithWeight(NAV_STYLES.subNavItemH3, 3),
+            4: getStyleWithWeight(NAV_STYLES.subNavItemH4, 4)
         };
 
         // 添加过滤后的标题
@@ -2249,10 +2376,18 @@
                 const highestLevel = existingLevels[0]; // 最高层级（数字最大，如h4=4）
                 // 如果总条数超过阈值，则默认显示到上一层级
                 if (headings.length > SUB_NAV_PREV_LEVEL_THRESHOLD) {
-                    // 查找上一层级（比最高层级小1的层级）
-                    const prevLevel = highestLevel - 1;
-                    // 如果存在上一层级，则显示到上一层级；否则显示到最高层级
-                    currentSubNavLevel = existingLevels.includes(prevLevel) ? prevLevel : highestLevel;
+                    // 从最高层级开始，向下查找第一个不超过阈值的层级
+                    for (const level of existingLevels) {
+                        let filtered = headings.filter(h => h.level <= level);
+                        if (h1Count === 1) {
+                            filtered = filtered.filter(h => h.level !== 1);
+                        }
+                        if (filtered.length <= SUB_NAV_PREV_LEVEL_THRESHOLD) {
+                            currentSubNavLevel = level;
+                            break;
+                        }
+                        currentSubNavLevel = level; // 如果都超过阈值，使用最低层级
+                    }
                 } else {
                     // 否则显示到实际存在的最高层级（h4 > h3 > h2）
                     currentSubNavLevel = highestLevel;
@@ -2267,11 +2402,78 @@
         return existingLevels;
     };
 
+    // 创建副目录最大宽度按钮
+    const createSubNavMaxWidthBtn = (buttonRow) => {
+        const maxWidthBtn = createTag('div', "", NAV_STYLES.subNavMaxWidthBtn);
+        maxWidthBtn.textContent = '最大宽';
+        maxWidthBtn.title = '设置副目录最大宽度';
+        maxWidthBtn.style.position = 'relative';
+        maxWidthBtn.style.top = 'auto';
+        maxWidthBtn.style.right = 'auto';
+        maxWidthBtn.addEventListener('mouseenter', () => {
+            maxWidthBtn.style.backgroundColor = '#f0f0f0';
+        });
+        maxWidthBtn.addEventListener('mouseleave', () => {
+            maxWidthBtn.style.backgroundColor = 'transparent';
+        });
+        maxWidthBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+
+            // 创建输入框
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = getSubNavMaxWidth();
+            input.style.cssText = NAV_STYLES.subNavMaxWidthInput.replace('position:absolute;top:0;right:', 'position:relative;top:auto;right:auto;');
+
+            // 替换按钮为输入框（使用insertBefore保持位置）
+            buttonRow.insertBefore(input, maxWidthBtn);
+            maxWidthBtn.style.display = 'none';
+            input.focus();
+            input.select();
+
+            // blur事件：保存值并更新宽度
+            input.addEventListener('blur', () => {
+                const newMaxWidth = input.value.trim();
+                const formatRegex = /^\d+(\.\d+)?px$/;
+                if (newMaxWidth && formatRegex.test(newMaxWidth)) {
+                    const minWidthNum = parseFloat(subNavMinWidth);
+                    const newMaxWidthNum = parseFloat(newMaxWidth);
+                    if (newMaxWidthNum >= minWidthNum) {
+                        // 格式正确且大于等于最小宽度，保存并更新
+                        setSubNavMaxWidth(newMaxWidth);
+                        subNavBar.style.maxWidth = newMaxWidth;
+                    } else {
+                        input.value = getSubNavMaxWidth();
+                        alert(`最大宽度不能小于最小宽度 ${subNavMinWidth}`);
+                    }
+                } else if (newMaxWidth) {
+                    input.value = getSubNavMaxWidth();
+                    alert('格式错误，请输入"数字+px"格式，例如：260px');
+                }
+                // 恢复按钮（使用insertBefore保持位置）
+                buttonRow.insertBefore(maxWidthBtn, input);
+                input.remove();
+                maxWidthBtn.style.display = 'flex';
+            });
+
+            // Enter键也触发blur
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    input.blur();
+                }
+            });
+        });
+        return maxWidthBtn;
+    };
+
     // 创建副目录位置按钮
-    const createSubNavPositionBtn = (titleContainer) => {
+    const createSubNavPositionBtn = (buttonRow) => {
         const positionBtn = createTag('div', "", NAV_STYLES.subNavPositionBtn);
         positionBtn.textContent = '位置';
-        positionBtn.title = '设置副目录位置';
+        positionBtn.title = '设置副目录水平位置';
+        positionBtn.style.position = 'relative';
+        positionBtn.style.top = 'auto';
+        positionBtn.style.right = 'auto';
         positionBtn.addEventListener('mouseenter', () => {
             positionBtn.style.backgroundColor = '#f0f0f0';
         });
@@ -2285,11 +2487,11 @@
             const input = document.createElement('input');
             input.type = 'text';
             input.value = getSubNavLeft();
-            input.style.cssText = NAV_STYLES.subNavPositionInput;
+            input.style.cssText = NAV_STYLES.subNavPositionInput.replace('position:absolute;top:0;right:', 'position:relative;top:auto;right:auto;');
 
-            // 替换按钮为输入框
+            // 替换按钮为输入框（使用insertBefore保持位置）
+            buttonRow.insertBefore(input, positionBtn);
             positionBtn.style.display = 'none';
-            titleContainer.appendChild(input);
             input.focus();
             input.select();
 
@@ -2301,11 +2503,19 @@
                     // 格式正确，保存到localStorage，更新副目录的left位置
                     setSubNavLeft(newLeft);
                     subNavBar.style.left = newLeft;
+                    subNavBar.style.right = 'auto';
+                    isSubNavAlignedLeft = newLeft === alignLeftValue;
+                    isSubNavAlignedRight = false;
+                    if (!isSubNavAlignedLeft) {
+                        subNavLeftBeforeAlign = newLeft;
+                        subNavLeftBeforeAlignRight = newLeft;
+                    }
                 } else if (newLeft) {
                     input.value = getSubNavLeft();
                     alert('位置格式错误，请输入"数字+px"格式，例如：270px');
                 }
-                // 恢复按钮
+                // 恢复按钮（使用insertBefore保持位置）
+                buttonRow.insertBefore(positionBtn, input);
                 input.remove();
                 positionBtn.style.display = 'flex';
             });
@@ -2318,6 +2528,99 @@
             });
         });
         return positionBtn;
+    };
+
+    // 创建副目录靠左按钮
+    const createSubNavAlignLeftBtn = () => {
+        const alignLeftBtn = createTag('div', "", NAV_STYLES.subNavAlignLeftBtn + (isSubNavAlignedLeft ? NAV_STYLES.subNavAlignLeftBtnActive : NAV_STYLES.subNavAlignLeftBtnNormal));
+        alignLeftBtn.textContent = '左';
+        alignLeftBtn.title = '靠左/恢复原位置';
+
+        const refreshAlignLeftBtnStyle = (isHover = false) => {
+            const baseBg = isSubNavAlignedLeft ? SUB_ALIGN_LEFT_ACTIVE_BG : 'transparent';
+            const hoverBg = isHover ? '#f0f0f0' : baseBg;
+            alignLeftBtn.style.backgroundColor = hoverBg;
+        };
+
+        alignLeftBtn.addEventListener('mouseenter', () => {
+            refreshAlignLeftBtnStyle(true);
+        });
+        alignLeftBtn.addEventListener('mouseleave', () => {
+            refreshAlignLeftBtnStyle(false);
+        });
+        alignLeftBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const currentLeft = getSubNavLeft();
+            if (!isSubNavAlignedLeft) {
+                if (isSubNavAlignedRight) {
+                    subNavLeftBeforeAlign = subNavLeftBeforeAlignRight || SUB_NAV_LEFT;
+                } else if (currentLeft !== alignLeftValue) {
+                    subNavLeftBeforeAlign = currentLeft;
+                } else if (!subNavLeftBeforeAlign) {
+                    subNavLeftBeforeAlign = SUB_NAV_LEFT;
+                }
+                setSubNavLeft(alignLeftValue);
+                subNavBar.style.left = alignLeftValue;
+                subNavBar.style.right = 'auto';
+                isSubNavAlignedLeft = true;
+                isSubNavAlignedRight = false;
+            } else {
+                const restoreLeft = subNavLeftBeforeAlign || SUB_NAV_LEFT;
+                setSubNavLeft(restoreLeft);
+                subNavBar.style.left = restoreLeft;
+                subNavBar.style.right = 'auto';
+                isSubNavAlignedLeft = false;
+            }
+            refreshAlignLeftBtnStyle(false);
+        });
+
+        return alignLeftBtn;
+    };
+
+    // 创建副目录靠右按钮
+    const createSubNavAlignRightBtn = () => {
+        const alignRightBtn = createTag('div', "", NAV_STYLES.subNavAlignRightBtn + (isSubNavAlignedRight ? NAV_STYLES.subNavAlignRightBtnActive : NAV_STYLES.subNavAlignRightBtnNormal));
+        alignRightBtn.textContent = '右';
+        alignRightBtn.title = '靠右/恢复原位置';
+
+        const refreshAlignRightBtnStyle = (isHover = false) => {
+            const baseBg = isSubNavAlignedRight ? SUB_ALIGN_RIGHT_ACTIVE_BG : 'transparent';
+            const hoverBg = isHover ? '#f0f0f0' : baseBg;
+            alignRightBtn.style.backgroundColor = hoverBg;
+        };
+
+        alignRightBtn.addEventListener('mouseenter', () => {
+            refreshAlignRightBtnStyle(true);
+        });
+        alignRightBtn.addEventListener('mouseleave', () => {
+            refreshAlignRightBtnStyle(false);
+        });
+        alignRightBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const currentLeft = getSubNavLeft();
+            if (!isSubNavAlignedRight) {
+                if (isSubNavAlignedLeft) {
+                    subNavLeftBeforeAlignRight = subNavLeftBeforeAlign || SUB_NAV_LEFT;
+                } else if (currentLeft !== alignRightValue) {
+                    subNavLeftBeforeAlignRight = currentLeft;
+                } else if (!subNavLeftBeforeAlignRight) {
+                    subNavLeftBeforeAlignRight = SUB_NAV_LEFT;
+                }
+                subNavBar.style.left = 'auto';
+                subNavBar.style.right = alignRightValue;
+                isSubNavAlignedRight = true;
+                isSubNavAlignedLeft = false;
+            } else {
+                const restoreLeft = subNavLeftBeforeAlignRight || SUB_NAV_LEFT;
+                setSubNavLeft(restoreLeft);
+                subNavBar.style.left = restoreLeft;
+                subNavBar.style.right = 'auto';
+                isSubNavAlignedRight = false;
+            }
+            refreshAlignRightBtnStyle(false);
+        });
+
+        return alignRightBtn;
     };
 
     // 创建副目录关闭按钮
@@ -2415,10 +2718,11 @@
         // 清空副目录栏
         subNavBar.replaceChildren();
 
-        // 创建标题容器（相对定位，用于放置关闭按钮）
-        const titleContainer = createTag('div', "", 'position:relative;padding-right:24px;padding-bottom:6px;border-bottom:1px solid #eaeaea;margin-bottom:6px;');
+        // 创建标题容器（sticky定位，用于冻结顶栏）
+        const titleContainer = createTag('div', "", 'position:sticky;top:0;background:rgba(255,255,255,1);z-index:10;padding:5px 0;padding-bottom:6px;border-bottom:1px solid #eaeaea;');
         titleContainer.className = 'sub-nav-title-container';
-        // 创建标题行容器、标题
+        
+        // 第一行：标题、层级按钮组、关闭按钮
         const titleRow = createTag('div', "", 'display:flex;align-items:center;justify-content:space-between;gap:8px;');
         const titleLeft = createTag('div', "", 'display:flex;align-items:center;gap:8px;flex:1;');
 
@@ -2432,12 +2736,29 @@
         // 组装左侧（标题和按钮组）
         appendSeveral(titleLeft, titleText, levelBtnGroup);
         titleRow.appendChild(titleLeft);
+        
+        // 创建关闭按钮
+        const closeBtn = createSubNavCloseBtn();
+        titleRow.appendChild(closeBtn);
         titleContainer.appendChild(titleRow);
 
-        // 创建位置按钮和关闭按钮
-        const positionBtn = createSubNavPositionBtn(titleContainer);
-        const closeBtn = createSubNavCloseBtn();
-        appendSeveral(titleContainer, positionBtn, closeBtn);
+        // 第二行：最大宽度、位置、靠左、靠右按钮
+        const buttonRow = createTag('div', "", NAV_STYLES.subNavButtonRow);
+        const maxWidthBtn = createSubNavMaxWidthBtn(buttonRow);
+        const positionBtn = createSubNavPositionBtn(buttonRow);
+        const alignLeftBtn = createSubNavAlignLeftBtn();
+        const alignRightBtn = createSubNavAlignRightBtn();
+        
+        // 调整按钮样式，使其在第二行正常显示
+        alignLeftBtn.style.position = 'relative';
+        alignLeftBtn.style.top = 'auto';
+        alignLeftBtn.style.right = 'auto';
+        alignRightBtn.style.position = 'relative';
+        alignRightBtn.style.top = 'auto';
+        alignRightBtn.style.right = 'auto';
+        
+        appendSeveral(buttonRow, maxWidthBtn, positionBtn, alignLeftBtn, alignRightBtn);
+        titleContainer.appendChild(buttonRow);
 
         // 添加到副目录栏
         subNavBar.appendChild(titleContainer);
@@ -2449,7 +2770,14 @@
         updateSubNavTop();
 
         // 确保使用最新的left值（从localStorage读取）
-        subNavBar.style.left = getSubNavLeft();
+        const currentLeft = getSubNavLeft();
+        if (isSubNavAlignedRight) {
+            subNavBar.style.left = 'auto';
+            subNavBar.style.right = alignRightValue;
+        } else {
+            subNavBar.style.left = currentLeft;
+            subNavBar.style.right = 'auto';
+        }
 
         // 显示副目录栏
         subNavBar.style.display = 'block';
@@ -2899,8 +3227,11 @@
         const currentUrl = getUrl();
         // 检查 URL 是否变化（使用 currentNavBarUrl 来检测，即使 preservedNavTextsUrl 为 null 也能检测到）
         const urlChanged = currentNavBarUrl !== null && currentNavBarUrl !== currentUrl;
+        // 页面切换时旧目录元素会被卸载，发现断连则强制重建
+        const navHasDetached = navQuestions?.some(el => el && !el.isConnected);
 
         if(navQuestions
+            && !navHasDetached
             && thisQuestions.length === navQuestions.length
             && normalizeQuestionText(thisQuestions[0].textContent) === normalizeQuestionText(navQuestions[0].textContent)) {
 
@@ -2983,18 +3314,17 @@
     // 面板样式集中定义
     const PANEL_STYLES = {
         // 固定多选面板宽度（同时保留高度自适应）
-        panel: `z-index:9999;cursor:pointer;position:fixed;right:10px;bottom:80px;max-height:450px;width:calc(${PANEL_COLUMN_WIDTH} * 2 + 110px);background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);overflow-y:auto;padding:6px 4px;display:flex;flex-direction:column;align-items:flex-start;`,
-        panelCompact: `width:auto;`,
-        buttonContainer: `display:flex;gap:16px;width:calc(${PANEL_BUTTON_WIDTH} + ${PANEL_BUTTON_WIDTH} + ${PANEL_BUTTON_WIDTH} + 12px);margin:6px 0`,
-        buttonBase: `text-align:center;color:white;border:none;border-radius:6px;padding:4px 6px;font-size:13px;cursor:pointer;width:${PANEL_BUTTON_WIDTH};flex-shrink:0;`,
-        // 禁用按钮单独统一字体大小
-        disable: `background:#ec7258;font-size:14px;`,
+        panel: `z-index:100000;cursor:pointer;position:fixed;right:10px;bottom:110px;max-height:450px;width:calc(${PANEL_COLUMN_WIDTH} * 2 + 110px);background:white;border:1px solid #ddd;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.1);overflow-y:auto;padding:6px 4px;display:flex;flex-direction:column;align-items:flex-start;`,
+        panelCompact: `width:auto;padding-top:0px;padding-bottom:0px;`,
+        buttonContainer: `display:flex;align-items:center;gap:16px;width:calc(${PANEL_BUTTON_WIDTH} + ${PANEL_BUTTON_WIDTH} + ${PANEL_BUTTON_WIDTH} + ${PANEL_BUTTON_WIDTH} + 24px);margin-bottom:10px;margin-top:2px`,
+        buttonBase: `display:inline-flex;align-items:center;justify-content:center;text-align:center;color:white;border:none;border-radius:6px;padding:4px 6px;font-size:14px;cursor:pointer;width:${PANEL_BUTTON_WIDTH};height:36px;flex-shrink:0;`,
+        disable: `background:#ec7258;`,
         settingsBtn: `background:#667eea;`,
         newChatBtn: `background:#48bb78;`,
-        // 全选、清空按钮尺寸更紧凑，且使用单独宽度
-        selectAllBtn: `background:#3498db;width:${PANEL_SMALL_BUTTON_WIDTH};padding:3px 6px;font-size:12px;`,
-        clearBtn: `background:#95a5a6;width:${PANEL_SMALL_BUTTON_WIDTH};padding:3px 6px;font-size:12px;`,
-        addCombinationBtn: `background:#48bb78;margin:6px 2px`,
+        // 全选、清空按钮尺寸更紧凑，且使用单独宽度，高度自适应
+        selectAllBtn: `background:#3498db;width:${PANEL_SMALL_BUTTON_WIDTH};padding:3px 6px;font-size:12px;height:auto;`,
+        clearBtn: `background:#95a5a6;width:${PANEL_SMALL_BUTTON_WIDTH};padding:3px 6px;font-size:12px;height:auto;`,
+        addCombinationBtn: `background:#48bb78;margin:6px 2px;height:auto;width:auto`,
         // 组合按钮基础样式：宽度自适应，不使用固定 PANEL_BUTTON_WIDTH
         combinationBtnBase: `text-align:center;color:white;border:none;border-radius:6px;padding:4px 6px;font-size:13px;cursor:pointer;width:auto;flex-shrink:1;`,
         // 组合按钮：宽度自适应，不使用固定 PANEL_BUTTON_WIDTH
@@ -3002,22 +3332,29 @@
         deleteBtn: `position:absolute;top:-6px;right:-6px;width:16px;height:16px;background:#ff4444;border-radius:50%;border:none;color:white;font-size:10px;line-height:1;cursor:pointer;display:none;z-index:10;padding:0;text-align:center;box-shadow:0 2px 4px rgba(0,0,0,0.2);`,
         combinationContainer: `display:flex;flex-wrap:wrap;gap:4px;width:100%;margin-top:4px;`,
         item: `display:flex;align-items:center;padding:4px 0 4px 4px;border-bottom:1px solid #eee;`,
-        iconImg: `width:16px;height:16px;margin-right:6px;flex-shrink:0;`,
-        iconImgCompact: `width:16px;height:16px;flex-shrink:0;`,
+        itemCompact: `display:flex;align-items:center;justify-content:center;padding:4px;`,
+        iconImg: `width:16px;height:16px;margin-right:6px;flex-shrink:0;vertical-align:middle;`,
+        iconImgCompact: `width:16px;height:16px;flex-shrink:0;vertical-align:middle;`,
         iconImgCombination: `width:16px;height:16px;margin:0 2px;flex-shrink:0;vertical-align:middle;`,
-        wordSpan: `flex:1;margin-right:8px;font-size:14px;`,
+        wordSpan: `flex:1;margin-right:8px;font-size:14px;line-height:16px;display:flex;align-items:center;`,
+        wordSpanCompact: `font-size:14px;line-height:16px;display:flex;align-items:center;`,
         checkbox: `margin-right:4px;font-size:18px;`,
         emptyMessage: `padding:8px;text-align:center;color:#888;font-size:14px;`,
         headline: `font-weight:bold;font-size:15px;margin-bottom:4px;`,
         modelColumns: `display:flex;gap:25px;align-items:flex-start;`,
         modelColumn: `width:${PANEL_COLUMN_WIDTH};flex-shrink:0;`,
         modelListWithButtons: `display:flex;gap:12px;align-items:flex-start;width:100%;`,
-        selectClearContainerVertical: `display:flex;flex-direction:column;gap:6px;flex-shrink:0;`
+        selectClearContainerVertical: `display:flex;flex-direction:column;gap:6px;flex-shrink:0;`,
+        groupMenuWrapper: `position:relative;display:inline-block;`,
+        groupMenu: `display:none;flex-direction:column;gap:6px;position:fixed;min-width:60px;max-width:240px;max-height:260px;overflow:auto;background:#fff;border:1px solid #ddd;border-radius:6px;padding:6px;box-shadow:0 4px 12px rgba(0,0,0,0.12);z-index:10000;`,
+        groupMenuBtn: `background:#48bb78;color:#fff;border:none;border-radius:4px;padding:6px 8px;text-align:left;font-size:14px;cursor:pointer;white-space:nowrap;position:relative;`,
+        groupMenuEmpty: `padding:6px 4px;color:#666;font-size:14px;white-space:nowrap;`
     };
 
     // 面板数据
     const contentContainer = createTag('div', "", "");
     let isCompactMode = false;
+    let isSettingsPopupOpen = false;
     let originalHTML = contentContainer.innerHTML;
 
     // 创建面板容器
@@ -3030,19 +3367,30 @@
     const ENABLED_ICON = "🟢";
 
     // 创建禁用按钮
-    let disable = createTag('div', DISABLE, PANEL_STYLES.buttonBase + PANEL_STYLES.disable);
+    let disable = createTag('button', DISABLE, PANEL_STYLES.buttonBase + PANEL_STYLES.disable);
     disable.id = "tool-disable";
     disable.addEventListener('click', (e) => disableEvent(e));
     disable.addEventListener('mouseenter', () => disable.style.opacity = '0.85');
     disable.addEventListener('mouseleave', () => disable.style.opacity = '1');
-    disable.title = '同步提问开关';
+    disable.title = SYNC_SWITCH_TITLE;
+    syncToggleDisableButton();
 
     const settingsBtn = createSettingsButton();
     const newChatBtn = createNewChatButton();
+    const groupedNewChatBtn = createGroupedNewChatButton();
+    const pinBtn = createPinButton();
+
+    // 根据GM变量设置按钮初始显示状态（默认不显示）
+    const showGroupedButtons = getGV(SHOW_GROUPED_BUTTONS_KEY) === true;
+    // 分组新对话按钮返回的是wrapper，需要控制wrapper的显示
+    if (groupedNewChatBtn) {
+        groupedNewChatBtn.style.display = showGroupedButtons ? '' : 'none';
+    }
+    pinBtn.style.display = showGroupedButtons ? '' : 'none';
 
     // 创建按钮容器
     const buttonContainer = createTag('div', "", PANEL_STYLES.buttonContainer);
-    appendSeveral(buttonContainer, disable, settingsBtn, newChatBtn);
+    appendSeveral(buttonContainer, disable, settingsBtn, newChatBtn, groupedNewChatBtn, pinBtn);
 
     // 创建全选和清空按钮
     const selectAllBtn = createTag('button', '全选', PANEL_STYLES.buttonBase + PANEL_STYLES.selectAllBtn);
@@ -3113,15 +3461,19 @@
                 const canvas = document.createElement('canvas');
                 let sourceX = 0, sourceY = 0, sourceWidth = img.width, sourceHeight = img.height;
 
-                // 如果是CLAUDE的图标，进行80%裁切（保留中心80%区域）
+                let cropRatio = 1;
+                // 如果是某些站点的图标，进行80%裁切（保留中心80%区域）
                 if ([CLAUDE, DEEPSEEK, DOUBAO].includes(siteId)) {
-                    const cropRatio = 0.8; // 80%
-                    const cropOffset = (1 - cropRatio) / 2; // 10%
-                    sourceX = img.width * cropOffset;
-                    sourceY = img.height * cropOffset;
-                    sourceWidth = img.width * cropRatio;
-                    sourceHeight = img.height * cropRatio;
+                    cropRatio = 0.8; // 80%
+                } else if ([GEMINI].includes(siteId)) {
+                    cropRatio = 0.9; // 90%
                 }
+
+                const cropOffset = (1 - cropRatio) / 2; // 10%
+                sourceX = img.width * cropOffset;
+                sourceY = img.height * cropOffset;
+                sourceWidth = img.width * cropRatio;
+                sourceHeight = img.height * cropRatio;
 
                 canvas.width = sourceWidth;
                 canvas.height = sourceHeight;
@@ -3243,54 +3595,6 @@
         return btn;
     }
 
-    /**
-     * 跳转到新对话页面（仅限多选面板勾选的站点）
-     */
-    function jumpToNewChat() {
-        // 获取已勾选的站点（优先从DOM读取，如果读取不到则从存储读取）
-        let selectedSites = [];
-        const visibleSites = getVisibleModels();
-        const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
-        const checkedWords = visibleWords.filter(word => document.getElementById(`word-${word}`)?.checked);
-
-        if (checkedWords.length > 0) {
-            // 从DOM读取已勾选的站点
-            selectedSites = checkedWords.map(word => wordToSite[word]);
-        } else {
-            // 如果从DOM读取不到，则从存储读取
-            selectedSites = getSitesAndCurrent();
-        }
-
-        if (selectedSites.length === 0) {
-            console.log('没有勾选的站点');
-            return;
-        }
-
-        // 构建已勾选站点的跳转数据
-        const jumpData = {};
-        selectedSites.forEach(siteId => {
-            const baseUrl = webSites[siteId]?.[0];
-            if (baseUrl) {
-                jumpData[siteId] = baseUrl;
-            }
-        });
-
-        // 发送跳转信号，已勾选的站点会自动监听到并响应
-        setGV(NEW_CHAT_JUMP_SIGNAL_KEY, {
-            jumpData: jumpData,
-            timestamp: Date.now()
-        });
-
-        // 当前站点直接跳转（如果已勾选）
-        const currentUrl = getUrl();
-        const targetUrl = jumpData[site];
-        if (targetUrl && currentUrl !== targetUrl) {
-            console.log(curDate() + `新对话跳转: 从 ${currentUrl} 跳转到 ${targetUrl}`);
-            window.location.href = targetUrl;
-        }
-
-        console.log(curDate() + `新对话: 已发送跳转信号到 ${selectedSites.length} 个已勾选站点`);
-    }
 
     /**
      * 渲染面板内容（公共函数，用于初始化和刷新）
@@ -3361,6 +3665,14 @@
         }
     }
 
+    function syncToggleDisableButton(baseText = SYNC_SWITCH_TITLE, stateIcon = ''){
+        if(!toggleDisableButton){
+            return;
+        }
+        // 只显示状态图标，保持固定宽度不随文字变化
+        toggleDisableButton.textContent = stateIcon || ENABLED_ICON;
+    }
+
     // 统一更新禁用按钮的文案和 emoji
     function updateDisableButtonLabel(isDisabled){
         // 文案仍然表示下一步操作：禁用 / 开启
@@ -3368,14 +3680,15 @@
         // 始终保留纯文字，供点击事件判断使用
         disable.dataset.originalText = baseText;
 
+        const stateIcon = isDisabled ? DISABLED_ICON : ENABLED_ICON;
         if(isCompactMode){
             // 缩略模式：仅展示当前状态对应的图标
             disable.textContent = isDisabled ? DISABLED_ICON : ENABLED_ICON;
         }else{
             // 展开模式：按钮文字 + 当前状态对应的 emoji
-            const stateIcon = isDisabled ? DISABLED_ICON : ENABLED_ICON;
             disable.textContent = `${baseText} ${stateIcon}`;
         }
+        syncToggleDisableButton(baseText, stateIcon);
     }
 
     // 使用 CSS 滤镜整体控制多选面板启用/禁用的视觉效果
@@ -3522,13 +3835,12 @@
         if(isDisable){
             return;
         }
-        let siteOfWord = wordToSite[word];
-        if (siteOfWord!== site && selectedSites.includes(siteOfWord)) {
-            let lastHeartbeat = getGV(HEART_KEY_PREFIX + siteOfWord);
-            if(isEmpty(lastHeartbeat) || Date.now() - lastHeartbeat > 1000 * HIBERNATE_GAP){
-                setTimeout(function(){
-                    window.open(newSites[siteOfWord], '_blank');
-                }, OPEN_GAP);
+        const siteOfWord = wordToSite[word];
+        if (siteOfWord !== site && selectedSites.includes(siteOfWord)) {
+            const targetUrl = newSites[siteOfWord];
+            if (!isEmpty(targetUrl)) {
+                const targetPath = extractUrlPath(targetUrl);
+                jumpToSite({ site: siteOfWord, url: targetPath });
             }
         }
     };
@@ -3588,7 +3900,7 @@
         disable.style.width = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
         disable.style.minWidth = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
         disable.style.maxWidth = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
-        disable.style.padding = '4px 2px';
+        disable.style.padding = '0px';
         // 文案与 emoji 统一由 changeDisable 控制
         let selectedSites = getSitesAndCurrent();
         let selectedWords = selectedSites.map(site => siteToWord[site]).filter(word => word);
@@ -3649,7 +3961,7 @@
         disable.style.width = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
         disable.style.minWidth = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
         disable.style.maxWidth = PANEL_DISABLE_BUTTON_COMPACT_WIDTH;
-        disable.style.padding = '4px 2px';
+        disable.style.padding = '0px';
         if (selectedWords.length === 0) {
             const emptyMsg = createTag('div', '未选模型', PANEL_STYLES.emptyMessage);
             contentContainer.replaceChildren();
@@ -3672,7 +3984,7 @@
         selectedWords.forEach(word => {
             // 禁用状态下使用白色背景，否则使用彩色背景
             const bgColor = isDisable ? 'white' : getItemBgColor(word);
-            const item = createTag('div', "", PANEL_STYLES.item + `background:${bgColor};`);
+            const item = createTag('div', "", PANEL_STYLES.itemCompact + `background:${bgColor};`);
             item.dataset.word = word;
 
             // 如果有图标，使用图标替换alias；否则使用alias
@@ -3681,7 +3993,7 @@
                 item.appendChild(iconImg);
             } else {
             let alias = wordToAlias[word];
-            const wordSpan = createTag('span', alias, PANEL_STYLES.wordSpan);
+            const wordSpan = createTag('span', alias, PANEL_STYLES.wordSpanCompact);
             item.appendChild(wordSpan);
             }
 
@@ -3884,6 +4196,16 @@
             .map(word => wordToSite[word]);
         setGV(CHOSEN_SITE, selectedSites);
 
+        // 组合点击后，确保目标站点被唤起（依赖跨页跳转监听）
+        const targetSites = Array.from(new Set(sites)).filter(targetSite => targetSite !== site);
+        targetSites.forEach(targetSite => {
+            const targetUrl = newSites[targetSite];
+            if (!isEmpty(targetUrl)) {
+                const targetPath = extractUrlPath(targetUrl);
+                jumpToSite({ site: targetSite, url: targetPath, jumpIfOpen: false });
+            }
+        });
+
         // 更新存储并刷新
         updateBoxFromStorage();
         if (isCompactMode) {
@@ -4019,6 +4341,10 @@
 
     // 点击页面其他地方切换到简略模式
     document.addEventListener('click', (e) => {
+        // 设置弹窗打开时，保持当前展开状态
+        if (isSettingsPopupOpen) {
+            return;
+        }
         // 如果点击的是面板内部，不处理
         if (panel.contains(e.target)) {
             return;
@@ -4283,13 +4609,22 @@
         return `【${hour}:${minute}:${second}】`;
     }
 
+    // 获取当天日期（yyyy-mm-dd）
+    function getToday() {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    }
+
     // 弹窗样式常量
     const POPUP_CONTAINER_STYLE = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center';
     const POPUP_CONTENT_BASE_STYLE = 'min-width:400px;background:white;border-radius:12px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.3)';
     const POPUP_TITLE_STYLE = 'font-size:16px;font-weight:bold;color:#222;margin-bottom:10px';
 
     // 设置面板公共样式常量（提取公共基础，通过组合减少重复）
-    const _tabBase = 'min-width:120px;padding:12px 20px;text-align:center;cursor:pointer;font-size:14px;';
+    const _tabBase = 'min-width:100px;padding:12px 20px;text-align:center;cursor:pointer;font-size:14px;';
     const _labelBase = 'font-size:14px;color:#333;';
     const _inputBase = 'border:1px solid #ddd;border-radius:4px;font-size:14px;';
     const _containerBase = 'display:flex;align-items:center;';
@@ -4412,9 +4747,9 @@
         // 书签/列表按钮：默认 false（隐藏），只有显式设置为 true 时才显示
         const showBookmark = getGV(SHOW_BOOKMARK_BUTTON_KEY) === true;
 
-        // 更新隐藏（输入框）按钮 —— 与书签功能是否启用无关
-        if (toggleButton) {
-            toggleButton.style.display = showToggle ? 'flex' : 'none';
+        // 更新隐藏（输入框）按钮容器 —— 与书签功能是否启用无关
+        if (toggleButtonContainer) {
+            toggleButtonContainer.style.display = showToggle ? 'flex' : 'none';
         }
 
         // 书签功能整体关闭时，清理书签按钮并退出
@@ -4527,6 +4862,9 @@
 
                 // 保存配置，退出弹窗后再刷新面板
                 setVisibleModels(newVisibleSites);
+                // 立即刷新多选面板展示状态
+                refreshPanel();
+                reloadCompactMode();
             });
 
             const label = createTag('label', word, SETTINGS_STYLES.labelWithCursor);
@@ -4565,12 +4903,10 @@
         // 读取当前设置
         // 隐藏输入框按钮：默认 true（显示）
         const showToggle = getGV(SHOW_TOGGLE_BUTTON_KEY) !== false;
-        // 书签/列表按钮：默认 false（隐藏），只有显式设置为 true 时才显示
-        const showBookmark = getGV(SHOW_BOOKMARK_BUTTON_KEY) === true;
         // 默认隐藏输入框：默认 false（不隐藏）
         const isInputDefaultHided = getGV(DEFAULT_HIDE_INPUT_AREA_KEY) === true;
 
-        // 创建三个开关
+        // 创建两个开关
         const toggleSwitch1 = createToggleSwitch('隐藏输入框的按钮，是否展示', showToggle, (checked) => {
             setGV(SHOW_TOGGLE_BUTTON_KEY, checked);
             updateButtonVisibility();
@@ -4591,12 +4927,7 @@
             }
         });
 
-        const toggleSwitch3 = createToggleSwitch('此按钮暂无实用', showBookmark, (checked) => {
-            setGV(SHOW_BOOKMARK_BUTTON_KEY, checked);
-            updateButtonVisibility();
-        });
-
-        appendSeveral(tabContent, toggleSwitch1, toggleSwitch2, toggleSwitch3);
+        appendSeveral(tabContent, toggleSwitch1, toggleSwitch2);
 
         return { tab, tabContent };
     }
@@ -4610,7 +4941,6 @@
 
         // 读取当前导航变量设置
         const navMaxWidthValue = getGV(NAV_MAX_WIDTH_KEY) || DEFAULT_NAV_MAX_WIDTH;
-        const subNavMaxWidthValue = getGV(SUB_NAV_MAX_WIDTH_KEY) || DEFAULT_SUB_NAV_MAX_WIDTH;
         const navTopValue = getGV(NAV_TOP_KEY) || DEFAULT_NAV_TOP;
         const navTopOverflowValue = getGV(NAV_TOP_OVERFLOW_KEY) || DEFAULT_NAV_TOP_OVERFLOW;
         const subNavTopOverflowValue = getGV(SUB_NAV_TOP_OVERFLOW_KEY) || DEFAULT_SUB_NAV_TOP_OVERFLOW;
@@ -4631,7 +4961,6 @@
             { label: '主目录最大宽度', value: navMaxWidthValue, placeholder: DEFAULT_NAV_MAX_WIDTH, key: NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_NAV_MAX_WIDTH },
             { label: '主目录（默认）垂直位置', value: navTopValue, placeholder: DEFAULT_NAV_TOP, key: NAV_TOP_KEY, defaultVal: DEFAULT_NAV_TOP },
             { label: '主目录（条数较多时）垂直位置', value: navTopOverflowValue, placeholder: DEFAULT_NAV_TOP_OVERFLOW, key: NAV_TOP_OVERFLOW_KEY, defaultVal: DEFAULT_NAV_TOP_OVERFLOW },
-            { label: '副目录最大宽度（最低 ' + subNavMinWidth + '）', value: subNavMaxWidthValue, placeholder: DEFAULT_SUB_NAV_MAX_WIDTH, key: SUB_NAV_MAX_WIDTH_KEY, defaultVal: DEFAULT_SUB_NAV_MAX_WIDTH },
             { label: '副目录最高的垂直位置', value: subNavTopOverflowValue, placeholder: DEFAULT_SUB_NAV_TOP_OVERFLOW, key: SUB_NAV_TOP_OVERFLOW_KEY, defaultVal: DEFAULT_SUB_NAV_TOP_OVERFLOW }
         ];
 
@@ -4682,7 +5011,7 @@
      * 创建 Tab 4: 输入框隐藏范围设置
      */
     function createInputAreaHideLevelTab() {
-        const tab = createTag('div', '输入框隐藏范围设置', SETTINGS_STYLES.tabInactive);
+        const tab = createTag('div', '输入框隐藏范围', SETTINGS_STYLES.tabInactive);
         const tabContent = createTag('div', '', 'display:none;');
 
         // 读取用户自定义的层级配置
@@ -4795,7 +5124,8 @@
      * 显示设置弹窗
      */
     function showSettingsPopup() {
-        const { popup, content } = createPopupBase('settings-popup', ';width:600px;height:600px;overflow:auto');
+        isSettingsPopupOpen = true;
+        const { popup, content } = createPopupBase('settings-popup', ';width:600px;height:550px;overflow:auto');
 
         // 标题
         const title = createTag('div', '设置', 'font-size:18px;font-weight:bold;margin-bottom:20px;color:#333');
@@ -4844,6 +5174,7 @@
         const closePopup = () => {
             popup.remove();
             refreshPanel();
+            isSettingsPopupOpen = false;
         };
 
         // 关闭按钮
@@ -4874,7 +5205,6 @@
     const SITE_JUMP_REQUEST_PREFIX = "site-jump-request-"; // 单站点跳转请求信号前缀
     const SITE_JUMP_ACK_PREFIX = "site-jump-ack-"; // 单站点跳转确认信号前缀
     const SITE_JUMP_TIMEOUT = 500; // 跳转确认超时时间（毫秒）
-    const BOOKMARK_LEN = 100;
 
     // ──────────────────────────────────────────────────────────────────────
     // 13.1 工具函数
@@ -4942,6 +5272,12 @@
             // 移除后缀
             if (title.endsWith(word)) {
                 title = title.substring(0, title.length - word.length).trim();
+            }
+            if (title.endsWith("-")) {
+                title = title.substring(0, title.length - 2).trim();
+            }
+            if (title.startsWith("-")) {
+                title = title.substring(2, title.length).trim();
             }
         }
 
@@ -5128,6 +5464,18 @@
         console.log(curDate() + "书签: 收到创建信号，已添加URL");
     });
 
+    // 监听图钉收集请求：收到后上报当前URL
+    GM_addValueChangeListener(PIN_REQUEST_KEY, function(name, oldValue, newValue, remote) {
+        if (!remote || !newValue) return;
+        const { requestId } = newValue;
+        if (!requestId) return;
+        setGV(PIN_RESPONSE_PREFIX + site, {
+            requestId,
+            url: getUrl(),
+            timestamp: Date.now()
+        });
+    });
+
     // 监听书签跳转信号：如果包含当前站点，执行跳转
     GM_addValueChangeListener(BOOKMARK_JUMP_SIGNAL_KEY, function(name, oldValue, newValue, remote) {
         if (!remote || !newValue) return;
@@ -5163,7 +5511,7 @@
     GM_addValueChangeListener(siteJumpRequestKey, function(name, oldValue, newValue, remote) {
         if (!remote || !newValue) return;
 
-        const { url, timestamp } = newValue;
+        const { url, timestamp, jumpIfOpen } = newValue;
         if (!url) return;
 
         // 立即返回确认信号
@@ -5171,8 +5519,7 @@
         setGV(ackKey, { timestamp: Date.now() });
 
         // 判断是否需要跳转
-        const currentUrl = getUrl();
-        if (currentUrl !== url) {
+        if (jumpIfOpen && getUrl() !== url) {
             console.log(curDate() + `单站点跳转: 从 ${currentUrl} 跳转到 ${url}`);
             window.location.href = url;
         }
@@ -5211,9 +5558,11 @@
     function jumpToSite(siteInfo) {
         // 从路径部分拼接完整URL
         const fullUrl = buildFullUrl(siteInfo.url, siteInfo.site);
+        // 是否在站点已打开时跳转
+        const jumpIfOpen = siteInfo.jumpIfOpen || false;
 
-        // 当前站点：直接跳转
-        if (siteInfo.site === site) {
+        // 当前站点：根据jumpIfOpen参数决定是否跳转
+        if (siteInfo.site === site && jumpIfOpen) {
             const currentUrl = getUrl();
             if (currentUrl !== fullUrl) {
                 window.location.href = fullUrl;
@@ -5229,7 +5578,8 @@
         // 发送跳转请求
         setGV(requestKey, {
             url: fullUrl,
-            timestamp: Date.now()
+            timestamp: Date.now(),
+            jumpIfOpen: jumpIfOpen
         });
 
         // 监听确认信号
@@ -5921,6 +6271,7 @@
             link.style.marginRight = '4px';
             link.addEventListener('click', (e) => {
                 e.preventDefault();
+                s[jumpIfOpen] = true;
                 jumpToSite(s);
             });
             siteContainer.appendChild(link);
@@ -6472,6 +6823,7 @@
         updateButtonVisibility(); // 根据设置更新按钮显示状态
     }, 1000);
 
+
     // 创建加书签按钮
     function createAddButtonOfBookmark() {
         createButtonOfBookmark({
@@ -6511,6 +6863,348 @@
             onClick();
         });
         document.body.appendChild(btn);
+    }
+
+    /**
+     * 分组新对话 & 图钉相关逻辑（集中放在文件尾部）
+     */
+    const GROUP_MENU_HIDE_DELAY = 160;
+
+    function getPinnedGroups() {
+        const groups = getGV(PINNED_GROUPS_KEY);
+        return groups && typeof groups === 'object' ? groups : {};
+    }
+
+    function getPinnedGroupNames() {
+        const names = getGV(PINNED_GROUP_NAMES_KEY);
+        return names && typeof names === 'object' ? names : {};
+    }
+
+    function getNextGroupId(groups) {
+        const keys = Object.keys(groups || {}).map(k => Number(k)).filter(n => !Number.isNaN(n));
+        const maxId = keys.length ? Math.max(...keys) : 0;
+        const counter = parseInt(getGV(PINNED_GROUP_ID_KEY)) || maxId;
+        const nextId = Math.max(counter, maxId) + 1;
+        setGV(PINNED_GROUP_ID_KEY, nextId);
+        return nextId;
+    }
+
+    function arePinnedUrlsEqual(a = {}, b = {}) {
+        const aKeys = Object.keys(a);
+        const bKeys = Object.keys(b);
+        if (aKeys.length !== bKeys.length) return false;
+        return aKeys.every(key => a[key] === b[key]);
+    }
+
+    function findMatchingGroupId(groups, target) {
+        const groupEntries = Object.entries(groups || {});
+        const match = groupEntries.find(([_, urls]) => arePinnedUrlsEqual(urls, target));
+        return match ? match[0] : null;
+    }
+
+    function deletePinnedGroup(groupId) {
+        const groups = getPinnedGroups();
+        const names = getPinnedGroupNames();
+        if (groups[groupId]) {
+            delete groups[groupId];
+        }
+        if (names[groupId]) {
+            delete names[groupId];
+        }
+        setGV(PINNED_GROUPS_KEY, groups);
+        setGV(PINNED_GROUP_NAMES_KEY, names);
+    }
+
+    function normalizeGroupName(inputName, fallback) {
+        const text = (inputName || '').trim();
+        return text || fallback;
+    }
+
+    function renderGroupedMenu(menuEl, hideMenu) {
+        setInnerHTML(menuEl, '');
+        const groups = getPinnedGroups();
+        const names = getPinnedGroupNames();
+        const groupIds = Object.keys(groups);
+
+        if (groupIds.length === 0) {
+            const emptyItem = createTag('div', '暂无分组', PANEL_STYLES.groupMenuEmpty);
+            menuEl.appendChild(emptyItem);
+            return;
+        }
+
+        const hueBase = 42;
+        groupIds
+            .map(id => Number(id))
+            .filter(id => !Number.isNaN(id))
+            .sort((a, b) => b - a)
+            .forEach((groupId, idx) => {
+                const displayName = names[groupId] || `${GROUP_NAME_PREFIX}${groupId}`;
+                const btn = createTag('button', displayName, PANEL_STYLES.groupMenuBtn);
+                btn.style.background = '#ec7258';
+                const deleteBtn = createTag('button', '×', PANEL_STYLES.deleteBtn);
+                deleteBtn.title = '删除分组';
+                deleteBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    deletePinnedGroup(groupId);
+                    renderGroupedMenu(menuEl, hideMenu);
+                });
+                btn.appendChild(deleteBtn);
+
+                let hoverTimer = null;
+                btn.addEventListener('mouseenter', () => {
+                    if (hoverTimer) {
+                        clearTimeout(hoverTimer);
+                    }
+                    hoverTimer = setTimeout(() => {
+                        btn.style.opacity = '0.9';
+                        deleteBtn.style.display = 'block';
+                        hoverTimer = null;
+                    }, 400);
+                });
+                btn.addEventListener('mouseleave', () => {
+                    if (hoverTimer) {
+                        clearTimeout(hoverTimer);
+                        hoverTimer = null;
+                    }
+                    btn.style.opacity = '1';
+                    deleteBtn.style.display = 'none';
+                });
+
+                btn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    jumpToPinnedNewChat(groupId);
+                    if (hideMenu) hideMenu();
+                });
+                menuEl.appendChild(btn);
+            });
+    }
+
+    function createGroupedNewChatButton() {
+        const wrapper = createTag('div', "", PANEL_STYLES.groupMenuWrapper);
+        wrapper.id = 'tool-grouped-new-chat-wrapper';
+        const btn = createHtml('button', '分组<br>新对话', PANEL_STYLES.buttonBase + PANEL_STYLES.newChatBtn);
+        btn.id = 'tool-grouped-new-chat';
+        btn.title = '悬停查看已保存分组，点击分组按钮进行跳转';
+        btn.style.lineHeight = '1.2';
+
+        const menu = createTag('div', "", PANEL_STYLES.groupMenu);
+        menu.id = 'tool-grouped-new-chat-menu';
+
+        let hideTimer = null;
+        const hideMenu = () => {
+            hideTimer = setTimeout(() => {
+                menu.style.display = 'none';
+            }, GROUP_MENU_HIDE_DELAY);
+        };
+        const showMenu = () => {
+            if (hideTimer) {
+                clearTimeout(hideTimer);
+                hideTimer = null;
+            }
+            renderGroupedMenu(menu, hideMenu);
+            const rect = btn.getBoundingClientRect();
+            menu.style.display = 'flex';
+            menu.style.visibility = 'hidden';
+            requestAnimationFrame(() => {
+                const menuWidth = menu.offsetWidth || 180;
+                const menuHeight = menu.offsetHeight || 120;
+                const maxLeft = window.innerWidth - menuWidth - 20;
+                const left = Math.max(0, Math.min(rect.left, maxLeft));
+                const top = Math.max(0, rect.top - menuHeight - 6);
+                menu.style.left = `${left}px`;
+                menu.style.top = `${top}px`;
+                menu.style.visibility = 'visible';
+            });
+        };
+
+        btn.addEventListener('mouseenter', () => {
+            btn.style.opacity = '0.85';
+            showMenu();
+        });
+        btn.addEventListener('mouseleave', () => {
+            btn.style.opacity = '1';
+            hideMenu();
+        });
+        btn.addEventListener('click', (e) => e.stopPropagation());
+
+        menu.addEventListener('mouseenter', () => {
+            if (hideTimer) {
+                clearTimeout(hideTimer);
+                hideTimer = null;
+            }
+        });
+        menu.addEventListener('mouseleave', hideMenu);
+
+        appendSeveral(wrapper, btn, menu);
+        return wrapper;
+    }
+
+    function jumpToNewChat() {
+        let selectedSites = [];
+        const visibleSites = getVisibleModels();
+        const visibleWords = visibleSites.map(site => siteToWord[site]).filter(word => word);
+        const checkedWords = visibleWords.filter(word => document.getElementById(`word-${word}`)?.checked);
+
+        if (checkedWords.length > 0) {
+            selectedSites = checkedWords.map(word => wordToSite[word]);
+        } else {
+            selectedSites = getSitesAndCurrent();
+        }
+
+        if (selectedSites.length === 0) {
+            console.log('没有勾选的站点');
+            return;
+        }
+
+        const jumpData = {};
+        selectedSites.forEach(siteId => {
+            const baseUrl = webSites[siteId]?.[0];
+            if (baseUrl) {
+                jumpData[siteId] = baseUrl;
+            }
+        });
+
+        setGV(NEW_CHAT_JUMP_SIGNAL_KEY, {
+            jumpData: jumpData,
+            timestamp: Date.now()
+        });
+
+        const currentUrl = getUrl();
+        const targetUrl = jumpData[site];
+        if (targetUrl && currentUrl !== targetUrl) {
+            console.log(curDate() + `新对话跳转: 从 ${currentUrl} 跳转到 ${targetUrl}`);
+            window.location.href = targetUrl;
+        }
+
+        console.log(curDate() + `新对话: 已发送跳转信号到 ${selectedSites.length} 个已勾选站点`);
+    }
+
+    function jumpToPinnedNewChat(groupId) {
+        const groups = getPinnedGroups();
+        const names = getPinnedGroupNames();
+        const groupIds = Object.keys(groups);
+        if (groupIds.length === 0) {
+            showMessagePopup('没有已保存的分组，请先点击图钉按钮保存');
+            return;
+        }
+
+        const sortedIds = groupIds.map(id => Number(id)).filter(id => !Number.isNaN(id)).sort((a, b) => b - a);
+        const targetGroupId = groupId ?? sortedIds[0];
+        const pinnedUrls = groups[targetGroupId];
+
+        if (!pinnedUrls || typeof pinnedUrls !== 'object' || Object.keys(pinnedUrls).length === 0) {
+            showMessagePopup('分组数据为空，请重新保存');
+            return;
+        }
+
+        const jumpData = {};
+        Object.keys(pinnedUrls).forEach(siteIdStr => {
+            const siteId = parseInt(siteIdStr);
+            const url = pinnedUrls[siteIdStr];
+            if (url) {
+                jumpData[siteId] = url;
+            }
+        });
+
+        if (Object.keys(jumpData).length === 0) {
+            showMessagePopup('分组数据为空，请重新保存');
+            return;
+        }
+
+        const groupName = names[targetGroupId] || `${GROUP_NAME_PREFIX}${targetGroupId}`;
+        setGV(NEW_CHAT_JUMP_SIGNAL_KEY, {
+            jumpData: jumpData,
+            timestamp: Date.now()
+        });
+
+        const currentUrl = getUrl();
+        const targetUrl = jumpData[site];
+        if (targetUrl && currentUrl !== targetUrl) {
+            console.log(curDate() + `分组新对话跳转(${groupName}): 从 ${currentUrl} 跳转到 ${targetUrl}`);
+            window.location.href = targetUrl;
+        }
+
+        console.log(curDate() + `分组新对话(${groupName}): 已发送跳转信号到 ${Object.keys(jumpData).length} 个站点`);
+    }
+
+    /**
+     * 创建图钉按钮（多选面板顶栏）
+     */
+    function createPinButton() {
+        const btn = createTag('button', '📌', PANEL_STYLES.combinationBtnBase + 'background:linear-gradient(135deg,#f093fb 0%,#f5576c 100%);');
+        btn.id = 'tool-pin';
+        btn.title = '保存当前打开的各家分组新对话页面，\n后续点击"分组新对话"可自动跳转';
+        setInnerHTML(btn, '📌');
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            await onPinButtonClick();
+        });
+        btn.addEventListener('mouseenter', () => btn.style.opacity = '0.85');
+        btn.addEventListener('mouseleave', () => btn.style.opacity = '1');
+        return btn;
+    }
+
+    /**
+     * 图钉按钮点击事件：收集所有已打开站点的URL并存储
+     */
+    async function onPinButtonClick() {
+        const pinnedUrls = {};
+
+        // 获取已勾选的站点
+        const selectedSites = getSitesAndCurrent();
+
+        // 请求所有站点上报当前URL（依赖现有跨页监听机制，而非心跳）
+        const requestId = Date.now();
+        setGV(PIN_REQUEST_KEY, { requestId });
+
+        // 等待短暂时间收集响应（利用现有监听回调返回）
+        const waitMs = 500;
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+
+        // 当前站点直接记录
+        pinnedUrls[site] = getUrl();
+
+        // 只处理已勾选的站点
+        selectedSites.forEach((siteId) => {
+            // 跳过当前站点（已经记录）
+            if (siteId === site) {
+                return;
+            }
+            const resp = getGV(PIN_RESPONSE_PREFIX + siteId);
+            if (resp && resp.requestId === requestId && !isEmpty(resp.url)) {
+                pinnedUrls[siteId] = resp.url;
+            }
+        });
+
+        const collectedCount = Object.keys(pinnedUrls).length;
+
+        if (collectedCount === 0) {
+            showMessagePopup('当前没有已打开的站点');
+            return;
+        }
+
+        const groups = getPinnedGroups();
+        const names = getPinnedGroupNames();
+        const defaultName = `${GROUP_NAME_PREFIX}${Object.keys(groups).length + 1}`;
+        const inputName = window.prompt('请输入分组名称', defaultName);
+        if (inputName === null) {
+            showMessagePopup('已取消保存分组');
+            return;
+        }
+        const groupName = normalizeGroupName(inputName, defaultName);
+        const matchedId = findMatchingGroupId(groups, pinnedUrls);
+        const groupId = matchedId ? Number(matchedId) : getNextGroupId(groups);
+
+        groups[groupId] = pinnedUrls;
+        names[groupId] = groupName;
+
+        setGV(PINNED_GROUPS_KEY, groups);
+        setGV(PINNED_GROUP_NAMES_KEY, names);
+
+        const siteNames = Object.keys(pinnedUrls).map(s => siteToWord[parseInt(s)] || s).join(', ');
+        const prefix = matchedId ? '已更新分组' : '已新增分组';
+        showMessagePopup(`${prefix}「${groupName}」，共 ${collectedCount} 个站点：\n${siteNames}`);
+        console.log(curDate() + `${prefix}: ${groupName} (ID: ${groupId})`, pinnedUrls);
     }
 
 })();
