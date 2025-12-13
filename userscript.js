@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         多模型同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      5.1.0
-// @description  一键自动同时在各家大模型官网提问，免去复制粘贴的麻烦；提供多种便捷的页内目录导航。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok……更多介绍见本页面下方。
+// @version      5.2.0
+// @description  一键自动同时在各家大模型官网提问，免去复制粘贴的麻烦；提供历次提问、回答细节的目录导航，方便快速定位。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok 等
 // @author       interest2
 // @match        https://chat.deepseek.com/*
 // @match        https://www.kimi.com/*
@@ -185,12 +185,12 @@
         { site: DOUBAO, word: '豆包', alias: '豆' },
         { site: YUANBAO, word: '元宝', alias: '元' },
 
-        { site: ZCHAT, word: 'ZCHAT-GPT', alias: 'Z' },
         { site: CHATGPT, word: 'ChatGPT', alias: 'C' },
         { site: GEMINI, word: 'Gemini', alias: 'G' },
         { site: STUDIO, word: 'AI Studio', alias: 'A' },
         { site: CLAUDE, word: 'Claude', alias: 'Cl' },
-        { site: GROK, word: 'Grok', alias: 'Gr' }
+        { site: GROK, word: 'Grok', alias: 'Gr' },
+        { site: ZCHAT, word: 'ZCHAT-GPT', alias: 'Z' }
     ];
 
     // 过滤掉被禁用的站点
@@ -329,11 +329,14 @@
     const BOOKMARK_ID_COUNTER = "bookmarkIdCounter"; // 书签ID计数器
     const CURRENT_BOOKMARK_KEY = "currentBookmarkKey"; // 当前书签key
     // 已移除BOOKMARK_KEY_LIST，改为从分组映射叠加获取全部书签
-    const BOOKMARK_GROUP_LIST = "bookmarkGroupList"; // 分组列表
+    const BOOKMARK_GROUP_LIST = "bookmarkGroupList"; // 分组列表（二级分组）
     const BOOKMARK_GROUP_MAP = "bookmarkGroupMap"; // 分组到书签ID的映射 {groupId: [bookmarkId数组]}，存储时移除"bookmark-"前缀以节省空间
     const BOOKMARK_LAST_SELECTED_GROUP = "bookmarkLastSelectedGroup"; // 上次选中的分组ID
     const DEFAULT_GROUP_NAME = "默认"; // 默认分组名称
     const DEFAULT_GROUP_ID = 0; // 默认分组代号
+    const TOP_LEVEL_GROUP_LIST = "topLevelGroupList"; // 一级分组列表 {id: name}
+    const TOP_LEVEL_GROUP_MAP = "topLevelGroupMap"; // 一级分组到二级分组的映射 {topLevelId: [secondLevelId数组]}
+    const TOP_LEVEL_GROUP_ID_COUNTER = "topLevelGroupIdCounter"; // 一级分组ID计数器（从1000开始）
     const BOOKMARK_QUESTION_MAX_LENGTH = 150; // 书签question最大长度
     // 书签按钮公共样式（不包含 bottom 和 background）
     const BOOKMARK_BTN_BASE_STYLE = "position:fixed;right:0;color:white;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:10000;border-radius:6px 0 0 6px;box-shadow:-2px 2px 8px rgba(0,0,0,0.2);user-select:none;padding:3px 5px";
@@ -632,6 +635,7 @@
                 GM_setValue(imageKey, base64);
                 setS(T + currentAskHasImage, "1");
 
+
                 break; // 手动粘贴图片后，脚本读取最后一张图，存入共享存储
             }
         }
@@ -786,10 +790,11 @@
                 if (!isEmpty(pendingQuestion)) {
 
                     // 延迟检测输入框是否被清空
-                    // 轮询检测输入框是否清空，最多持续1000ms，每200ms检查一次，满足则提前结束
+                    // 轮询检测输入框是否清空，每200ms检查一次，满足则提前结束
                     const checkInterval = 200;
-                    const checkTotal = 1000;
+                    const checkTotal = 2000;
                     const checkStart = Date.now();
+
                     const mouseUpTimer = setInterval(function() {
                         const inputArea = getInputArea();
                         let contentAfterUp = "";
@@ -1128,9 +1133,8 @@
         }
     };
 
-    const TOGGLE_FLOAT_GAP = 3;
     // 创建按钮容器（垂直排列，右对齐）
-    const toggleButtonContainer = createTag('div', '', 'position:fixed;z-index:99999999;display:flex;flex-direction:column;align-items:flex-end;gap:' + TOGGLE_FLOAT_GAP + 'px;');
+    const toggleButtonContainer = createTag('div', '', 'position:fixed;z-index:99999999;display:flex;flex-direction:column;align-items:flex-end;gap:5px;');
     
     const toggleButton = createTag('div', TOGGLE_STATES.show.text, TOGGLE_BUTTON_STYLE);
     toggleButton.title = '临时隐藏输入框获得更大的视野高度';
@@ -1497,7 +1501,7 @@
 
     const SUB_NAV_LEFT = "270px";     // 副目录的水平位置（距离屏幕左侧）
     const SUB_NAV_MIN_ITEMS = 2;      // 副目录标题总条数超过此阈值才显示
-    const SUB_NAV_TOP_THRESHOLD = 15; // 副目录标题条数超过此阈值时，top位置抬高
+    const SUB_NAV_TOP_THRESHOLD = 14; // 副目录标题条数超过此阈值时，top位置抬高
     const SUB_NAV_PREV_LEVEL_THRESHOLD = 15; // 总条数超过此阈值时，默认显示到上一层级（如h4显示到h3，h3显示到h2）
 
     // 查找回答内容区域的查找限制（用于性能优化）
@@ -4620,7 +4624,7 @@
 
     // 弹窗样式常量
     const POPUP_CONTAINER_STYLE = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:2147483647;display:flex;align-items:center;justify-content:center';
-    const POPUP_CONTENT_BASE_STYLE = 'min-width:400px;background:white;border-radius:12px;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,0.3)';
+    const POPUP_CONTENT_BASE_STYLE = 'min-width:400px;background:white;border-radius:12px;padding:5px 20px;box-shadow:0 10px 40px rgba(0,0,0,0.3)';
     const POPUP_TITLE_STYLE = 'font-size:16px;font-weight:bold;color:#222;margin-bottom:10px';
 
     // 设置面板公共样式常量（提取公共基础，通过组合减少重复）
@@ -5201,6 +5205,9 @@
 
     const BOOKMARK_SIGNAL_KEY = "bookmarkSignal"; // 书签创建信号key
     const BOOKMARK_JUMP_SIGNAL_KEY = "bookmarkJumpSignal"; // 书签跳转信号key
+    
+    // 当前选中的书签key（用于切换分组）- 模块级变量
+    let selectedBookmarkKey = null;
     const NEW_CHAT_JUMP_SIGNAL_KEY = "newChatJumpSignal"; // 新对话跳转信号key
     const SITE_JUMP_REQUEST_PREFIX = "site-jump-request-"; // 单站点跳转请求信号前缀
     const SITE_JUMP_ACK_PREFIX = "site-jump-ack-"; // 单站点跳转确认信号前缀
@@ -5779,7 +5786,73 @@
     /**
      * 分组管理函数
      */
-    // 获取分组列表（对象数组：{id, name}）
+    // 获取一级分组列表 {id: name}
+    function getTopLevelGroups() {
+        const groups = getGV(TOP_LEVEL_GROUP_LIST);
+        return groups && typeof groups === 'object' ? groups : {};
+    }
+
+    // 设置一级分组列表
+    function setTopLevelGroups(groups) {
+        setGV(TOP_LEVEL_GROUP_LIST, groups);
+    }
+
+    // 获取一级分组到二级分组的映射 {topLevelId: [secondLevelId数组]}
+    function getTopLevelGroupMap() {
+        const map = getGV(TOP_LEVEL_GROUP_MAP);
+        return map && typeof map === 'object' ? map : {};
+    }
+
+    // 设置一级分组到二级分组的映射
+    function setTopLevelGroupMap(map) {
+        setGV(TOP_LEVEL_GROUP_MAP, map);
+    }
+
+    // 获取下一个一级分组ID（从1000开始）
+    function getNextTopLevelGroupId() {
+        const counter = parseInt(getGV(TOP_LEVEL_GROUP_ID_COUNTER)) || 999;
+        const nextId = Math.max(counter, 999) + 1;
+        setGV(TOP_LEVEL_GROUP_ID_COUNTER, nextId);
+        return nextId;
+    }
+
+    // 将二级分组移动到指定的一级分组
+    function moveSecondLevelGroupToTopLevel(secondLevelId, targetTopLevelId) {
+        const topLevelGroupMap = getTopLevelGroupMap();
+        
+        // 从所有一级分组中移除该二级分组
+        Object.keys(topLevelGroupMap).forEach(topLevelId => {
+            if (topLevelGroupMap[topLevelId]) {
+                topLevelGroupMap[topLevelId] = topLevelGroupMap[topLevelId].filter(id => id !== secondLevelId);
+            }
+        });
+        
+        // 添加到目标一级分组
+        if (!topLevelGroupMap[targetTopLevelId]) {
+            topLevelGroupMap[targetTopLevelId] = [];
+        }
+        if (!topLevelGroupMap[targetTopLevelId].includes(secondLevelId)) {
+            topLevelGroupMap[targetTopLevelId].push(secondLevelId);
+        }
+        
+        setTopLevelGroupMap(topLevelGroupMap);
+    }
+
+    // 从一级分组中移除二级分组（变为未归类）
+    function removeSecondLevelGroupFromTopLevel(secondLevelId) {
+        const topLevelGroupMap = getTopLevelGroupMap();
+        
+        // 从所有一级分组中移除该二级分组
+        Object.keys(topLevelGroupMap).forEach(topLevelId => {
+            if (topLevelGroupMap[topLevelId]) {
+                topLevelGroupMap[topLevelId] = topLevelGroupMap[topLevelId].filter(id => id !== secondLevelId);
+            }
+        });
+        
+        setTopLevelGroupMap(topLevelGroupMap);
+    }
+
+    // 获取分组列表（对象数组：{id, name}）- 二级分组
     function getBookmarkGroups() {
         let groups = getGV(BOOKMARK_GROUP_LIST) || [];
         // 确保默认分组存在
@@ -5808,7 +5881,6 @@
 
     // 分组背景色数组（用于区分不同分组）
     const GROUP_BACKGROUND_COLORS = [
-        '#f5f5f5', // 默认灰色
         '#e3f2fd', // 浅蓝色
         '#f3e5f5', // 浅紫色
         '#e8f5e9', // 浅绿色
@@ -5828,6 +5900,67 @@
         }
         const index = Math.abs(groupId) % GROUP_BACKGROUND_COLORS.length;
         return GROUP_BACKGROUND_COLORS[index];
+    }
+
+    // 添加一级分组（标签）
+    function addTopLevelGroup(groupName) {
+        if (!groupName || !groupName.trim()) {
+            return false;
+        }
+        const trimmedName = groupName.trim();
+        const topLevelGroups = getTopLevelGroups();
+        // 检查名称是否已存在
+        if (Object.values(topLevelGroups).some(name => name === trimmedName)) {
+            return false; // 已存在
+        }
+        // 获取下一个ID（从1000开始）
+        const newId = getNextTopLevelGroupId();
+        topLevelGroups[newId] = trimmedName;
+        setTopLevelGroups(topLevelGroups);
+        // 初始化映射（空数组）
+        const topLevelGroupMap = getTopLevelGroupMap();
+        topLevelGroupMap[newId] = [];
+        setTopLevelGroupMap(topLevelGroupMap);
+        return true;
+    }
+
+    // 更新一级分组名称
+    function updateTopLevelGroupName(topLevelId, newName) {
+        if (!newName || !newName.trim()) {
+            return false;
+        }
+        const trimmedName = newName.trim();
+        const topLevelGroups = getTopLevelGroups();
+        // 检查名称是否已存在（排除当前分组）
+        if (Object.entries(topLevelGroups).some(([id, name]) => name === trimmedName && parseInt(id) !== topLevelId)) {
+            return false; // 已存在
+        }
+        topLevelGroups[topLevelId] = trimmedName;
+        setTopLevelGroups(topLevelGroups);
+        return true;
+    }
+
+    // 更新二级分组名称
+    function updateSecondLevelGroupName(groupId, newName) {
+        if (!newName || !newName.trim()) {
+            return false;
+        }
+        if (groupId === DEFAULT_GROUP_ID) {
+            return false; // 不能修改默认分组名称
+        }
+        const trimmedName = newName.trim();
+        const groups = getBookmarkGroups();
+        // 检查名称是否已存在（排除当前分组）
+        if (groups.some(g => g.name === trimmedName && g.id !== groupId)) {
+            return false; // 已存在
+        }
+        const group = groups.find(g => g.id === groupId);
+        if (!group) {
+            return false;
+        }
+        group.name = trimmedName;
+        setGV(BOOKMARK_GROUP_LIST, groups);
+        return true;
     }
 
     // 添加分组
@@ -6547,7 +6680,7 @@
      */
     function renderTableOfBookmark(content, currentGroupId, groups) {
         // CSS样式变量（属性超过2个的样式）
-        const EMPTY_TABLE_TIP_STYLE = 'color:#666;text-align:center;padding:20px';
+        const EMPTY_TABLE_TIP_STYLE = 'color:#666;text-align:center;padding:5px 20px';
         const TABLE_STYLE = 'width:100%;border-collapse:collapse;font-size:14px';
         const TH_STYLE = 'padding:10px;text-align:left;border:1px solid #ddd';
         const TD_STYLE = 'padding:5px;vertical-align:top;white-space:nowrap;border:1px solid #ddd';
@@ -6572,8 +6705,9 @@
         // 创建表格
         const table = createTag('table', "", TABLE_STYLE);
 
-        // 表头
-        let theadHtml = `<tr style="background:#f5f5f5"><th style="${TH_STYLE}">分组</th><th style="${TH_STYLE}">提问</th><th style="${TH_STYLE}">站点链接</th><th style="${TH_STYLE}">操作</th><th style="${TH_STYLE}">排序</th></tr>`;
+        // 表头（冻结）
+        const TH_STICKY_STYLE = `${TH_STYLE};position:sticky;top:0;background:#f5f5f5;z-index:5`;
+        let theadHtml = `<tr style="background:#f5f5f5"><th style="${TH_STICKY_STYLE}">分组</th><th style="${TH_STICKY_STYLE}">提问</th><th style="${TH_STICKY_STYLE}">站点链接</th><th style="${TH_STICKY_STYLE}">操作</th><th style="${TH_STICKY_STYLE}">排序</th></tr>`;
         const thead = createHtml('thead', theadHtml, '');
         table.appendChild(thead);
 
@@ -6589,28 +6723,31 @@
             // 1、分组列
             const groupBgColor = getGroupBackgroundColor(bookmarkGroupId);
             const tdGroup = createTag('td', "", TD_STYLE);
-            const groupSelect = document.createElement('select');
-            groupSelect.style.cssText = `${GROUP_SELECT_BASE_STYLE};background:${groupBgColor}`;
-
-            // 添加所有分组选项（显示名称，但value存储代号）
-            groups.forEach(group => {
-                const option = document.createElement('option');
-                option.value = group.id;
-                option.textContent = group.name;
-                groupSelect.appendChild(option);
-            });
-
-            // 选中当前分组（必须在 options 都加完之后再设，使用代号）
-            groupSelect.value = bookmarkGroupId;
-
-            groupSelect.addEventListener('change', (e) => {
-                const newGroupId = parseInt(e.target.value);
-                if (setBookmarkGroup(bookmarkKey, newGroupId)) {
-                    // 保持当前Tab选中状态
-                    showBookmarkWindow(currentGroupId);
+            const groupSelect = createTag('div', bookmarkGroupName, `${GROUP_SELECT_BASE_STYLE};background:${groupBgColor};cursor:pointer;color:#333;text-align:center`);
+            groupSelect.setAttribute('data-bookmark-key', bookmarkKey);
+            groupSelect.title = '点击选中此行，然后点击表格上方的分组按钮来更换此条书签的分组；再次点击可取消选中';
+            
+            // 点击分组列时选中/取消选中该行
+            groupSelect.addEventListener('click', () => {
+                const isCurrentlySelected = selectedBookmarkKey === bookmarkKey;
+                
+                if (isCurrentlySelected) {
+                    // 当前行已选中，取消选中
+                    tr.style.backgroundColor = '';
+                    selectedBookmarkKey = null;
+                } else {
+                    // 清除之前选中的行
+                    const allRows = document.querySelectorAll('#bookmark-popup tr[data-bookmark-key]');
+                    allRows.forEach(row => {
+                        row.style.backgroundColor = '';
+                    });
+                    // 选中当前行
+                    tr.style.backgroundColor = '#e3f2fd';
+                    selectedBookmarkKey = bookmarkKey;
                 }
             });
-
+            
+            tr.setAttribute('data-bookmark-key', bookmarkKey);
             tdGroup.appendChild(groupSelect);
             tr.appendChild(tdGroup);
 
@@ -6686,7 +6823,11 @@
             tbody.appendChild(tr);
         });
         table.appendChild(tbody);
-        content.appendChild(table);
+        
+        // 创建可滚动的表格容器
+        const tableContainer = createTag('div', "", 'flex:1;overflow-y:auto;overflow-x:auto;min-height:0');
+        tableContainer.appendChild(table);
+        content.appendChild(tableContainer);
     }
 
     /**
@@ -6695,13 +6836,24 @@
      * @param {boolean} skipSaveGroup - 是否跳过保存分组选择，true时不更新GV
      */
     function showBookmarkWindow(selectedGroupId = null, skipSaveGroup = false) {
+        // 重置选中的书签（每次打开弹窗时）
+        selectedBookmarkKey = null;
+        
         // CSS样式变量（属性超过2个的样式）
-        const POPUP_SIZE_STYLE = 'width:65%;height:90%;overflow:auto';
-        const HEADER_STYLE = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee';
+        const POPUP_SIZE_STYLE = 'width:65%;height:90%;overflow:hidden;display:flex;flex-direction:column';
+        const HEADER_STYLE = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee;flex-shrink:0;background:white;z-index:10';
         const CLOSE_BTN_STYLE = 'cursor:pointer;font-size:20px;color:#999;padding:5px';
         const TAB_BASE_STYLE = 'padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;color:#333';
-        const TAB_CONTAINER_STYLE = 'display:flex;align-items:center;gap:8px;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee;flex-wrap:wrap';
+        const TAB_CONTAINER_STYLE = 'display:flex;align-items:flex-start;gap:8px;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee;flex-wrap:wrap;flex-shrink:0;background:white;z-index:10;position:sticky;top:0';
         const ADD_GROUP_BTN_STYLE = 'padding:6px 12px;background:#4caf50;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px';
+        const ADD_TAG_BTN_STYLE = 'padding:6px 12px;background:#2196f3;color:white;border:none;border-radius:4px;cursor:pointer;font-size:13px';
+        
+        // 一级分组容器样式
+        const TOP_LEVEL_CONTAINER_STYLE = 'display:inline-block;margin-bottom:15px;margin-right:15px;padding:3px 8px;border:1px solid #ddd;border-radius:4px;width:fit-content;vertical-align:top';
+        // 一级分组标题样式
+        const TOP_LEVEL_HEADER_STYLE = 'font-weight:bold;font-size:14px;margin-bottom:3px;color:#333;padding:2px 0';
+        // 二级分组按钮容器默认样式
+        const SECOND_LEVEL_CONTAINER_DEFAULT_STYLE = 'margin-bottom:3px;max-height:80px;overflow:hidden;line-height:1.5';
 
         // 获取分组列表（提前获取，避免重复调用），按名称排序
         const groups = getBookmarkGroups()
@@ -6769,27 +6921,300 @@
         };
 
         // 创建Tab函数（统一处理全部和分组tab）
-        const createGroupTab = (text, groupId, isSelected, bgColor, isBold = false) => {
+        const createGroupTab = (text, groupId, isSelected, bgColor, isBold = false, isSecondLevel = true) => {
             const fontWeight = isBold ? 'font-weight:bold;' : '';
             const border = isSelected ? '2px solid #667eea' : '1px solid transparent';
-            const tab = createTag('div', text, `${TAB_BASE_STYLE};${fontWeight}background:${bgColor};border:${border}`);
-            tab.addEventListener('click', () => switchToGroup(groupId));
+            const displayStyle = isSecondLevel ? 'display:inline-block;' : '';
+            const tab = createTag('div', text, `${TAB_BASE_STYLE};${displayStyle}${fontWeight}background:${bgColor};border:${border}`);
+            
+            if (isSecondLevel && groupId !== null) {
+                // 二级分组按钮：点击时如果有选中的书签，则切换分组；否则切换视图
+                tab.setAttribute('data-group-id', groupId);
+                // 默认cursor为pointer，只有按住时才可拖拽
+                tab.style.cursor = 'pointer';
+                tab.draggable = false;
+                
+                let isDragging = false;
+                let isMouseDown = false;
+                
+                // 鼠标按下时启用拖拽
+                tab.addEventListener('mousedown', (e) => {
+                    isMouseDown = true;
+                    tab.draggable = true;
+                    // 延迟一点时间，避免立即触发拖拽
+                    setTimeout(() => {
+                        if (isMouseDown) {
+                            tab.style.cursor = 'move';
+                        }
+                    }, 100);
+                });
+                
+                // 鼠标释放时禁用拖拽
+                tab.addEventListener('mouseup', (e) => {
+                    isMouseDown = false;
+                    tab.draggable = false;
+                    tab.style.cursor = 'pointer';
+                });
+                
+                // 鼠标离开时也禁用拖拽
+                tab.addEventListener('mouseleave', (e) => {
+                    isMouseDown = false;
+                    tab.draggable = false;
+                    tab.style.cursor = 'pointer';
+                });
+                
+                tab.addEventListener('dragstart', (e) => {
+                    isDragging = true;
+                    e.dataTransfer.setData('text/plain', groupId.toString());
+                    e.dataTransfer.effectAllowed = 'move';
+                    tab.style.opacity = '0.5';
+                });
+                
+                tab.addEventListener('dragend', (e) => {
+                    tab.style.opacity = '1';
+                    tab.draggable = false;
+                    tab.style.cursor = 'pointer';
+                    isMouseDown = false;
+                    // 延迟重置，避免触发点击事件
+                    setTimeout(() => {
+                        isDragging = false;
+                    }, 100);
+                });
+                
+                // 双击编辑分组名称
+                let lastClickTime = 0;
+                tab.addEventListener('dblclick', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (isDragging) return;
+                    
+                    const currentName = text;
+                    const newName = prompt('请输入新的分组名称：', currentName);
+                    if (newName && newName.trim() && newName.trim() !== currentName) {
+                        if (updateSecondLevelGroupName(groupId, newName.trim())) {
+                            showBookmarkWindow(currentGroupId);
+                        } else {
+                            showMessagePopup('分组名称已存在或无效');
+                        }
+                    }
+                });
+                
+                tab.addEventListener('click', (e) => {
+                    // 如果刚刚拖拽过，不触发点击事件
+                    if (isDragging) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return;
+                    }
+                    
+                    // 处理双击：如果两次点击间隔很短，可能是双击，延迟处理单击
+                    const now = Date.now();
+                    if (now - lastClickTime < 300) {
+                        // 可能是双击，不处理单击
+                        lastClickTime = 0;
+                        return;
+                    }
+                    lastClickTime = now;
+                    
+                    // 延迟处理单击，避免与双击冲突
+                    setTimeout(() => {
+                        if (lastClickTime === now) {
+                            if (selectedBookmarkKey) {
+                                // 有选中的书签，切换分组
+                                if (setBookmarkGroup(selectedBookmarkKey, groupId)) {
+                                    selectedBookmarkKey = null;
+                                    // 清除所有行的选中状态
+                                    const allRows = document.querySelectorAll('#bookmark-popup tr[data-bookmark-key]');
+                                    allRows.forEach(row => {
+                                        row.style.backgroundColor = '';
+                                    });
+                                    showBookmarkWindow(currentGroupId);
+                                }
+                            } else {
+                                // 没有选中的书签，切换视图
+                                switchToGroup(groupId);
+                            }
+                        }
+                    }, 300);
+                });
+            } else {
+                // 一级分组或"全部"按钮：只切换视图
+                tab.addEventListener('click', () => switchToGroup(groupId));
+            }
             return tab;
         };
 
         // Tab切换区域
         const tabContainer = createTag('div', "", TAB_CONTAINER_STYLE);
 
+        // 全部和默认按钮容器（垂直排列）
+        const allAndDefaultContainer = createTag('div', "", 'display:flex;flex-direction:column;gap:8px;align-items:flex-start');
+        
         // 全部Tab
         const allTab = createGroupTab('全部', null, currentGroupId === null, '#f0f0f0', true);
-        tabContainer.appendChild(allTab);
+        allAndDefaultContainer.appendChild(allTab);
+        
+        // 默认分组按钮（显示在"全部"按钮下方）
+        const defaultGroup = groups.find(g => g.id === DEFAULT_GROUP_ID);
+        if (defaultGroup) {
+            const defaultGroupBgColor = getGroupBackgroundColor(DEFAULT_GROUP_ID);
+            const defaultTab = createGroupTab(defaultGroup.name, DEFAULT_GROUP_ID, currentGroupId === DEFAULT_GROUP_ID, defaultGroupBgColor);
+            allAndDefaultContainer.appendChild(defaultTab);
+        }
+        
+        tabContainer.appendChild(allAndDefaultContainer);
 
-        // 各分组Tab
-        groups.forEach(group => {
-            const groupBgColor = getGroupBackgroundColor(group.id);
-            const groupTab = createGroupTab(group.name, group.id, currentGroupId === group.id, groupBgColor);
-            tabContainer.appendChild(groupTab);
+        // 获取一级分组数据
+        const topLevelGroups = getTopLevelGroups();
+        const topLevelGroupMap = getTopLevelGroupMap();
+        const topLevelGroupIds = Object.keys(topLevelGroups).map(id => parseInt(id)).sort((a, b) => a - b);
+
+        // 创建按钮行的公共函数（提升到循环外部，供所有地方使用）
+        const createButtonRow = (groups, hasMarginBottom = false) => {
+            if (groups.length === 0) return null;
+            const row = createTag('div', "", hasMarginBottom ? 'margin-bottom:8px' : '');
+            groups.forEach((group, index) => {
+                const groupBgColor = getGroupBackgroundColor(group.id);
+                const groupTab = createGroupTab(group.name, group.id, currentGroupId === group.id, groupBgColor);
+                if (index > 0) {
+                    groupTab.style.marginLeft = '8px';
+                }
+                row.appendChild(groupTab);
+            });
+            return row;
+        };
+
+        // 添加拖拽放置功能的公共函数
+        const addDragDropHandlers = (container, topLevelId, onDropCallback) => {
+            container.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                container.style.borderColor = '#667eea';
+                container.style.backgroundColor = '#f0f4ff';
+            });
+            
+            container.addEventListener('dragleave', (e) => {
+                container.style.borderColor = '#ddd';
+            });
+            
+            container.addEventListener('drop', (e) => {
+                e.preventDefault();
+                container.style.borderColor = '#ddd';
+                
+                const secondLevelId = parseInt(e.dataTransfer.getData('text/plain'));
+                if (!isNaN(secondLevelId)) {
+                    onDropCallback(secondLevelId);
+                    showBookmarkWindow(currentGroupId);
+                }
+            });
+        };
+
+        // 创建按钮容器（包含两行按钮）的公共函数
+        const createButtonContainer = (secondLevelGroups, containerStyle = SECOND_LEVEL_CONTAINER_DEFAULT_STYLE) => {
+            const container = createTag('div', "", containerStyle);
+            
+            // 将二级分组分成两行
+            const row1Groups = secondLevelGroups.slice(0, Math.ceil(secondLevelGroups.length / 2));
+            const row2Groups = secondLevelGroups.slice(Math.ceil(secondLevelGroups.length / 2));
+
+            // 创建并添加两行按钮
+            const row1 = createButtonRow(row1Groups, true);
+            if (row1) container.appendChild(row1);
+            
+            const row2 = createButtonRow(row2Groups, false);
+            if (row2) container.appendChild(row2);
+            
+            return container;
+        };
+
+        // 为每个一级分组创建容器
+        topLevelGroupIds.forEach(topLevelId => {
+            const topLevelName = topLevelGroups[topLevelId] || `一级分组${topLevelId}`;
+            const secondLevelIds = topLevelGroupMap[topLevelId] || [];
+
+            // 创建一级分组容器（宽度自适应内容）
+            const topLevelContainer = createTag('div', "", TOP_LEVEL_CONTAINER_STYLE);
+            topLevelContainer.setAttribute('data-top-level-id', topLevelId);
+            
+            // 添加拖拽放置功能
+            addDragDropHandlers(topLevelContainer, topLevelId, (secondLevelId) => {
+                moveSecondLevelGroupToTopLevel(secondLevelId, topLevelId);
+            });
+            
+            // 一级分组标题div（支持双击编辑）
+            const topLevelHeader = createTag('div', topLevelName, TOP_LEVEL_HEADER_STYLE);
+            topLevelHeader.style.cursor = 'pointer';
+            topLevelHeader.title = '双击编辑标签名称';
+            topLevelHeader.addEventListener('dblclick', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const newName = prompt('请输入新的标签名称：', topLevelName);
+                if (newName && newName.trim() && newName.trim() !== topLevelName) {
+                    if (updateTopLevelGroupName(topLevelId, newName.trim())) {
+                        showBookmarkWindow(currentGroupId);
+                    } else {
+                        showMessagePopup('标签名称已存在或无效');
+                    }
+                }
+            });
+            topLevelContainer.appendChild(topLevelHeader);
+
+            // 获取对应的二级分组
+            const secondLevelGroups = secondLevelIds
+                .map(id => groups.find(g => g.id === id))
+                .filter(g => g !== undefined)
+                .slice(0, 100); // 限制最多显示100个，避免过多
+
+            // 创建按钮容器
+            const secondLevelContainer = createButtonContainer(secondLevelGroups);
+            topLevelContainer.appendChild(secondLevelContainer);
+            tabContainer.appendChild(topLevelContainer);
         });
+
+        // 未归类到一级分组的二级分组（单独显示，排除默认分组）
+        const allSecondLevelIds = new Set();
+        Object.values(topLevelGroupMap).forEach(ids => {
+            ids.forEach(id => allSecondLevelIds.add(id));
+        });
+        const ungroupedSecondLevelGroups = groups.filter(g => !allSecondLevelIds.has(g.id) && g.id !== DEFAULT_GROUP_ID);
+        
+        if (ungroupedSecondLevelGroups.length > 0) {
+            const ungroupedContainer = createTag('div', "", TOP_LEVEL_CONTAINER_STYLE);
+            ungroupedContainer.setAttribute('data-top-level-id', 'ungrouped');
+            
+            // 添加拖拽放置功能（未归类分组）
+            addDragDropHandlers(ungroupedContainer, 'ungrouped', (secondLevelId) => {
+                removeSecondLevelGroupFromTopLevel(secondLevelId);
+            });
+            
+            const ungroupedHeader = createTag('div', '未归类', TOP_LEVEL_HEADER_STYLE);
+            ungroupedContainer.appendChild(ungroupedHeader);
+            
+            // 创建按钮容器
+            const ungroupedButtonsContainer = createButtonContainer(ungroupedSecondLevelGroups, SECOND_LEVEL_CONTAINER_DEFAULT_STYLE);
+            ungroupedContainer.appendChild(ungroupedButtonsContainer);
+            tabContainer.appendChild(ungroupedContainer);
+        }
+
+        // 创建按钮容器（上下排列）
+        const buttonContainer = createTag('div', "", 'display:flex;flex-direction:column;gap:8px;align-items:flex-start');
+        
+        // 添加标签按钮（添加一级分组）
+        const addTagBtn = createTag('button', '+ 添加标签', ADD_TAG_BTN_STYLE);
+        addTagBtn.title = '添加新标签（一级分组）';
+        addTagBtn.addEventListener('click', () => {
+            const tagName = prompt('请输入标签名称：');
+            if (tagName && tagName.trim()) {
+                if (addTopLevelGroup(tagName.trim())) {
+                    showBookmarkWindow(currentGroupId);
+                } else {
+                    showMessagePopup('标签名称已存在或无效');
+                }
+            }
+        });
+        addTagBtn.addEventListener('mouseenter', () => addTagBtn.style.opacity = '0.85');
+        addTagBtn.addEventListener('mouseleave', () => addTagBtn.style.opacity = '1');
+        buttonContainer.appendChild(addTagBtn);
 
         // 添加分组按钮
         const addGroupBtn = createTag('button', '+ 添加分组', ADD_GROUP_BTN_STYLE);
@@ -6806,7 +7231,9 @@
         });
         addGroupBtn.addEventListener('mouseenter', () => addGroupBtn.style.opacity = '0.85');
         addGroupBtn.addEventListener('mouseleave', () => addGroupBtn.style.opacity = '1');
-        tabContainer.appendChild(addGroupBtn);
+        buttonContainer.appendChild(addGroupBtn);
+        
+        tabContainer.appendChild(buttonContainer);
 
         content.appendChild(tabContainer);
 
