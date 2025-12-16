@@ -32,8 +32,7 @@
     'use strict';
     console.log("ai script, start");
 
-    const STUDIO_CONTENT_MAX_WIDTH = "800px"; // ai studio 内容最大宽度
-    const GEMINI_MAX_WIDTH = "830px"; // gemini 内容最大宽度
+    const CONTENT_MAX_WIDTH = "830px"; // 部分站点内容最大宽度
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
     const MODEL_GROUP_INDEX = 6;
     const PANEL_BUTTON_WIDTH = "70px"; // 面板按钮固定宽度（顶部主按钮）
@@ -743,11 +742,36 @@
     const ADD_LISTENER_RETRY_DELAY = 200;
     const ADD_LISTENER_MAX_RETRIES = 100; // 最大重试次数
 
-    // 判断点击位置是否在忽略区域（左侧40%或上部10%）
+    // 判断点击位置是否在忽略区域。如果输入框父元素检测过了，以它的区域为准，否则用兜底的
     function isClickInIgnoredArea(event) {
-        return event.clientX < window.innerWidth * 0.4 || event.clientY < window.innerHeight * 0.1;
+        const level = getS(TOGGLE_LEVEL_KEY);
+        let hasTargetFlag = false;
+        if (level) {
+            const inputArea = getInputArea();
+            if (inputArea) {
+                const parentEl = getNthParent(inputArea, parseInt(level));
+                if (parentEl) {
+                    hasTargetFlag = true;
+                    const parentRect = parentEl.getBoundingClientRect();
+                    // 检查纵坐标是否在父元素范围内
+                    const isYInRange = event.clientY >= parentRect.top && event.clientY <= parentRect.bottom;
+                    // 检查横坐标是否距离父元素右边缘20%宽度以内
+                    const rightEdge = parentRect.right;
+                    const leftThreshold = rightEdge - parentRect.width * 0.2;
+                    const isXInRange = event.clientX >= leftThreshold && event.clientX <= rightEdge;
+                    if (isYInRange && isXInRange) {
+                        return false;
+                    }
+                }
+            }
+        }
+        if(!hasTargetFlag){
+            return event.clientX < window.innerWidth * 0.4 || event.clientY < window.innerHeight * 0.1;
+        }
+        return true;
     }
 
+    // 输入框内容变化
     function inputContentChanged(inputArea) {
         const currentContent = getInputContent(inputArea);
         // 当前空、上次非空
@@ -977,19 +1001,12 @@
         let questions = getQuestionList();
         updateNavQuestions(questions);
 
-        // 单独适配：gemini、studio的内容宽度
         setContentWidth();
-        if(site === STUDIO){
-            let studioContent = document.querySelector('.chat-session-content');
-            if(!isEmpty(studioContent)){
-                studioContent.style.maxWidth = STUDIO_CONTENT_MAX_WIDTH;
-            }
-        }
     }, 2000);
 
-
+    // 部分站点调整内容宽度（不依赖选择器）
     function setContentWidth(){
-        if(![GEMINI].includes(site)){
+        if(![GEMINI, STUDIO].includes(site)){
           return;
         }
 
@@ -1023,15 +1040,15 @@
             const ADAPTIVE_WIDTH = window.outerWidth * 0.8 + "px";
 
             let oldWidth = targetEle.getBoundingClientRect().width;
-            if([ADAPTIVE_WIDTH, GEMINI_MAX_WIDTH].includes(oldWidth + "px")){
+            if([ADAPTIVE_WIDTH, CONTENT_MAX_WIDTH].includes(oldWidth + "px")){
                 return;
             }
-            targetEle.style.maxWidth = GEMINI_MAX_WIDTH;
+            targetEle.style.maxWidth = CONTENT_MAX_WIDTH;
             targetEle.style.width = ADAPTIVE_WIDTH;
             let cur = targetEle.nextElementSibling;
 
             while (cur) {
-                cur.style.maxWidth = GEMINI_MAX_WIDTH;
+                cur.style.maxWidth = CONTENT_MAX_WIDTH;
                 cur.style.width = ADAPTIVE_WIDTH;
                 cur = cur.nextElementSibling;
             }
