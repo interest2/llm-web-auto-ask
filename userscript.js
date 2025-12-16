@@ -744,27 +744,31 @@
 
     // 判断点击位置是否在忽略区域。如果输入框父元素检测过了，以它的区域为准，否则用兜底的
     function isClickInIgnoredArea(event) {
-        const level = getS(TOGGLE_LEVEL_KEY);
         let hasTargetFlag = false;
-        if (level) {
-            const inputArea = getInputArea();
-            if (inputArea) {
-                const parentEl = getNthParent(inputArea, parseInt(level));
-                if (parentEl) {
-                    hasTargetFlag = true;
-                    const parentRect = parentEl.getBoundingClientRect();
-                    // 检查纵坐标是否在父元素范围内
-                    const isYInRange = event.clientY >= parentRect.top && event.clientY <= parentRect.bottom;
-                    // 检查横坐标是否距离父元素右边缘20%宽度以内
-                    const rightEdge = parentRect.right;
-                    const leftThreshold = rightEdge - parentRect.width * 0.2;
-                    const isXInRange = event.clientX >= leftThreshold && event.clientX <= rightEdge;
-                    if (isYInRange && isXInRange) {
-                        return false;
+        // 这个 if 判断意味着，只有非新对话才检测输入框右侧区域
+        if(getQuestionList().length > 0){
+            const level = getS(TOGGLE_LEVEL_KEY);
+            if (level) {
+                const inputArea = getInputArea();
+                if (inputArea) {
+                    const parentEl = getNthParent(inputArea, parseInt(level));
+                    if (parentEl) {
+                        hasTargetFlag = true;
+                        const parentRect = parentEl.getBoundingClientRect();
+                        // 检查纵坐标是否在父元素范围内
+                        const isYInRange = event.clientY >= parentRect.top && event.clientY <= parentRect.bottom;
+                        // 检查横坐标是否距离父元素右边缘20%宽度以内
+                        const rightEdge = parentRect.right;
+                        const leftThreshold = rightEdge - parentRect.width * 0.2;
+                        const isXInRange = event.clientX >= leftThreshold && event.clientX <= rightEdge;
+                        if (isYInRange && isXInRange) {
+                            return false;
+                        }
                     }
                 }
             }
         }
+
         if(!hasTargetFlag){
             return event.clientX < window.innerWidth * 0.4 || event.clientY < window.innerHeight * 0.1;
         }
