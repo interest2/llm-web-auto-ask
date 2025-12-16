@@ -731,157 +731,181 @@
 
     // 监听输入框回车键和页面鼠标事件
     let inputAreaListenerAdded = false;
-    let lastUrl = getUrl(); // 记录上次的URL
+    let lastUrl = getUrl(); // 记录上次的 URL
+
     let cachedInputContent = ""; // 缓存的输入框内容
     let previousInputContent = ""; // 上一次的输入框内容，用于检测清空
-    let isSendingByEnter = false; // 标记是否通过回车键发送，避免重复触发
-    let pendingQuestion = null; // 临时存储mousedown时的问题
-    let isProcessingMouseUp = false; // 标记是否正在处理mouseup检测
-    let mouseEventListenerAdded = false; // 标记页面鼠标事件监听器是否已添加
-    const ADD_LISTENER_AFTER_URL_CHANGE = 500;
+    let pendingQuestion = null; // 临时存储 mousedown 时的问题
 
-    function addAskEventListener() {
-        const inputArea = getInputArea();
+    let isSendingByEnter = false;        // 是否通过回车键发送，避免重复触发
+    let isProcessingMouseUp = false;     // 是否正在处理 mouseup 检测
+    let mouseEventListenerAdded = false; // 是否已添加鼠标监听器
+    const ADD_LISTENER_RETRY_DELAY = 200;
+    const ADD_LISTENER_MAX_RETRIES = 100; // 最大重试次数
 
-        // 判断点击位置是否在忽略区域（左侧40%或上部10%）
-        function isClickInIgnoredArea(event) {
-            return event.clientX < window.innerWidth * 0.4 || event.clientY < window.innerHeight * 0.1;
+    // 判断点击位置是否在忽略区域（左侧40%或上部10%）
+    function isClickInIgnoredArea(event) {
+        return event.clientX < window.innerWidth * 0.4 || event.clientY < window.innerHeight * 0.1;
+    }
+
+    function inputContentChanged(inputArea) {
+        const currentContent = getInputContent(inputArea);
+        // 当前空、上次非空
+        if (isEmpty(currentContent) && !isEmpty(previousInputContent)) {
+            // mouseup、enter 事件会处理，这里只重置内容
+            previousInputContent = currentContent;
+            cachedInputContent = currentContent;
+            return;
         }
 
-        // 监听页面任意位置的鼠标事件，通过检测输入框清空来判断发送
+        // 当前非空、上次非空；当前非空、上次空 --> 更新上一次的内容和缓存
+        previousInputContent = currentContent;
+        cachedInputContent = currentContent;
+        pendingQuestion = currentContent; // 这里是给鼠标事件兜底用
+    }
 
-        if (!mouseEventListenerAdded) {
-            // 页面 mousedown：记录输入框内容作为mouseup前的基准
-            document.addEventListener('mousedown', function(event) {
-                // 如果点击位置位于网页左侧40%或上部10%，则return
-                if (isClickInIgnoredArea(event)) {
-                    return;
-                }
-                if(isProcessingMouseUp){
-                    return;
-                }
+    // mousedown 事件：记录输入框内容
+    function handleMouseDown(event) {
+        // 如果点击位置位于网页左侧40%或上部10%，则return
+        if (isClickInIgnoredArea(event) || isProcessingMouseUp) {
+            return;
+        }
+        const inputArea = getInputArea();
+        let hasContentFlag = false;
+        let contentBeforeDown = "";
+        if (!isEmpty(inputArea)) {
+            contentBeforeDown = getInputContent(inputArea);
+            if (!isEmpty(contentBeforeDown)) {
+                hasContentFlag = true;
+            }
+        }
+        if(hasContentFlag){
+            pendingQuestion = contentBeforeDown;
+        }else{
+            pendingQuestion = null;
+        }
+    }
+
+    // mouseup 事件：延迟检测输入框是否清空
+    function handleMouseUp(event) {
+        // 如果点击位置位于网页左侧 40% 或上部 10%，则return
+        if (isClickInIgnoredArea(event) || isProcessingMouseUp) {
+            return;
+        }
+        isProcessingMouseUp = true;
+
+        // 只有 up 前内容非空 才进行检测
+        if (isEmpty(pendingQuestion)) {
+            isProcessingMouseUp = false;
+        } else {
+            // 赋值给 temp 变量才行，（可能）是为了防止 pendingQuestion 在轮询开始前提前变空
+            let pendingQuestionTemp = pendingQuestion;
+            // 轮询检测输入框是否清空，每 200ms 检查一次，满足则提前结束
+            const checkInterval = 200;
+            const checkTotal = 2000;
+            const checkStart = Date.now();
+
+            const mouseUpTimer = setInterval(function() {
                 const inputArea = getInputArea();
-                let hasContentFlag = false;
-                let contentBeforeDown = "";
+                let contentAfterUp = "";
                 if (!isEmpty(inputArea)) {
-                    contentBeforeDown = getInputContent(inputArea);
-                    if (!isEmpty(contentBeforeDown)) {
-                        hasContentFlag = true;
-                    }
+                    contentAfterUp = getInputContent(inputArea);
                 }
-                if(hasContentFlag){
-                    pendingQuestion = contentBeforeDown;
-                }else{
+                if (!isEmpty(pendingQuestionTemp) && isEmpty(contentAfterUp)) {
+                    const questionToSend = pendingQuestionTemp;
                     pendingQuestion = null;
-                }
-            });
-
-            // 页面 mouseup：延迟检测输入框是否清空
-            document.addEventListener('mouseup', function(event) {
-                // 如果点击位置位于网页左侧40%或上部10%，则return
-                if (isClickInIgnoredArea(event)) {
+                    clearInterval(mouseUpTimer);
+                    setTimeout(function() {
+                        masterCheck(questionToSend);
+                    }, 100);
+                    isProcessingMouseUp = false;
                     return;
                 }
-                if(isProcessingMouseUp){
-                    return;
-                }
-                isProcessingMouseUp = true;
-                // 只有up前内容非空时才进行检测
-                if (!isEmpty(pendingQuestion)) {
-
-                    // 延迟检测输入框是否被清空
-                    // 轮询检测输入框是否清空，每200ms检查一次，满足则提前结束
-                    const checkInterval = 200;
-                    const checkTotal = 2000;
-                    const checkStart = Date.now();
-
-                    const mouseUpTimer = setInterval(function() {
-                        const inputArea = getInputArea();
-                        let contentAfterUp = "";
-                        if (!isEmpty(inputArea)) {
-                            contentAfterUp = getInputContent(inputArea);
-                        }
-                        if (!isEmpty(pendingQuestion) && isEmpty(contentAfterUp)) {
-                            const questionToSend = pendingQuestion;
-                            pendingQuestion = null;
-                            clearInterval(mouseUpTimer);
-                            setTimeout(function() {
-                                masterCheck(questionToSend);
-                            }, 100);
-                            isProcessingMouseUp = false;
-                            return;
-                        }
-                        if (Date.now() - checkStart >= checkTotal) {
-                            // 输入框未被清空，不是发送
-                            pendingQuestion = null;
-                            clearInterval(mouseUpTimer);
-                            isProcessingMouseUp = false;
-                        }
-                    }, checkInterval);
-                } else {
+                if (Date.now() - checkStart >= checkTotal) {
+                    // 输入框未被清空，不是发送
+                    pendingQuestion = null;
+                    clearInterval(mouseUpTimer);
                     isProcessingMouseUp = false;
                 }
-            });
+            }, checkInterval);
+        }
+    }
 
+    // keydown 事件：检测回车键发送
+    function handleKeyDown(event, inputArea) {
+        // 忽略模拟的回车事件
+        if (!event.isSimulated && isEnterTrigger(event)) {
+
+            const lastestQ = getInputContent(inputArea);
+            console.log("lastestQ: "+lastestQ);
+            const questionToUse = isEmpty(lastestQ) ? cachedInputContent : lastestQ;
+            if (!isEmpty(questionToUse)) {
+                // 标记通过回车键发送，避免 input 事件和 mouseup 检测重复触发
+                isSendingByEnter = true;
+                pendingQuestion = null; // 清空 pendingQuestion，避免 mouseup 重复触发
+                // 更新 previousInputContent，以便 input 事件检测时不会重复
+                previousInputContent = "";
+                setTimeout(function() {
+                    masterCheck(questionToUse);
+                }, 100);
+            }
+        }
+    }
+
+    function addAskEventListener(retryCount = 0) {
+        const inputArea = getInputArea();
+
+        // 输入框尚未渲染完成时，延迟重试
+        if (isEmpty(inputArea)) {
+            if (retryCount >= ADD_LISTENER_MAX_RETRIES) {
+                console.warn("⚠ 输入框加载超时，已达到最大重试次数");
+                return;
+            }
+            setTimeout(() => addAskEventListener(retryCount + 1), ADD_LISTENER_RETRY_DELAY);
+            return;
+        }
+
+        // 增加 MutationObserver 兜底
+        const observer = new MutationObserver(() => {
+            requestAnimationFrame(() => inputContentChanged(inputArea));
+        });
+
+        observer.observe(inputArea, {
+            childList: true,
+            subtree: true,
+            characterData: true
+        });
+
+        // 监听鼠标（注意内部其实也依赖了输入框，需要输入框先就绪）
+        if (!mouseEventListenerAdded) {
+            // 记录输入框内容作为 mouseup 前的基准
+            document.addEventListener('mousedown', handleMouseDown);
+            // mouseup：延迟检测输入框是否清空
+            document.addEventListener('mouseup', handleMouseUp);
             mouseEventListenerAdded = true;
             console.log("✓ 页面鼠标事件监听器已添加");
         }
 
-        // 监听输入框的回车键和输入内容
-        if (!isEmpty(inputArea) && !inputAreaListenerAdded) {
+        // 监听输入框：回车键和输入内容
+        if (inputAreaListenerAdded) {
+            // 输入框加载完成后，应用默认隐藏设置
+            applyDefaultHideInputArea();
+        }else {
             inputArea.setAttribute('data-listener-added', 'true');
 
             // 监听输入框内容变化，更新缓存
-            inputArea.addEventListener('input', function() {
-                const currentContent = getInputContent(inputArea);
-
-                // 如果正在处理 mouseup 检测，且检测到清空，说明是 mouseup 导致的发送
-                if (isEmpty(currentContent) && !isEmpty(previousInputContent)) {
-                    // mouseup检测会处理，这里只更新状态
-                    previousInputContent = currentContent;
-                    cachedInputContent = currentContent;
-                    return;
-                }
-
-                // 更新上一次的内容和缓存
-                previousInputContent = currentContent;
-                cachedInputContent = currentContent;
-                pendingQuestion = currentContent; // 这里是给鼠标事件兜底用
+            inputArea.addEventListener('input', (event) => {
+                inputContentChanged(inputArea);
             });
 
             inputArea.addEventListener('keydown', function(event) {
-                // 忽略模拟的回车事件
-                if (event.isSimulated) {
-                    return;
-                }
-                if (isEnterTrigger(event)) {
-                    const lastestQ = getInputContent(inputArea);
-                    console.log("lastestQ: "+lastestQ);
-                    const questionToUse = isEmpty(lastestQ) ? cachedInputContent : lastestQ;
-                    if (!isEmpty(questionToUse)) {
-                        // 标记通过回车键发送，避免 input 事件和 mouseup 检测重复触发
-                        isSendingByEnter = true;
-                        pendingQuestion = null; // 清空 pendingQuestion，避免 mouseup 重复触发
-                        // 更新 previousInputContent，以便 input 事件检测时不会重复
-                        previousInputContent = "";
-                        setTimeout(function() {
-                            masterCheck(questionToUse);
-                        }, 100);
-                    }
-                }
+                handleKeyDown(event, inputArea);
             });
             inputAreaListenerAdded = true;
             console.log("✓ 输入框回车监听器已添加");
         }
-
-        // 如果输入框还没加载，稍后重试
-        if (!inputAreaListenerAdded) {
-            setTimeout(addAskEventListener, 500);
-        } else {
-            // 输入框加载完成后，应用默认隐藏设置
-            applyDefaultHideInputArea();
-        }
     }
+
 
     // 检查监听器是否丢失（元素被替换）
     function checkListenerIntegrity() {
@@ -898,7 +922,7 @@
 
         // 如果发现监听器丢失，重新添加
         if (!inputAreaListenerAdded) {
-            setTimeout(addAskEventListener, 1000);
+            addAskEventListener();
         }
     }
     // 标记输入框是否处于隐藏状态
@@ -908,33 +932,34 @@
 
     // 监听URL变化，重新添加监听器
     function checkUrlChange() {
-        const currentUrl = getUrl();
-
-        if (currentUrl !== lastUrl) {
-            console.log("URL已变化，重新添加监听器");
-            lastUrl = currentUrl;
-            // 更新当前站点的URL
-            setGV(SITE_URL_PREFIX + site, currentUrl);
-
-            userManuallyShown = false;
-
-            let nthInputArea = getNthInputArea();
-
-            // 如果打开新对话，可能导致 display 值清空，此时输入框并未隐藏
-            if(nthInputArea && nthInputArea.style.display === ''){
-                toggleBtnStatus(true);
-                isInputAreaHidden = false;
-            }
-
-            mouseEventListenerAdded = false;
-            inputAreaListenerAdded = false;
-
-            // URL 变化时隐藏副目录
-            if (typeof hideSubNavBar === 'function') {
-                hideSubNavBar();
-            }
-            setTimeout(addAskEventListener, ADD_LISTENER_AFTER_URL_CHANGE);
+        let currentUrl = getUrl();
+        if (currentUrl === lastUrl) {
+            return;
         }
+        console.log("URL已变化，重新添加监听器");
+        lastUrl = currentUrl;
+
+        // 更新当前站点的URL
+        setGV(SITE_URL_PREFIX + site, currentUrl);
+
+        userManuallyShown = false;
+
+        let nthInputArea = getNthInputArea();
+
+        // 如果打开新对话，可能导致 display 值清空，此时输入框并未隐藏
+        if(nthInputArea && nthInputArea.style.display === ''){
+            toggleBtnStatus(true);
+            isInputAreaHidden = false;
+        }
+
+        mouseEventListenerAdded = false;
+        inputAreaListenerAdded = false;
+
+        // URL 变化时隐藏副目录
+        if (typeof hideSubNavBar === 'function') {
+            hideSubNavBar();
+        }
+        addAskEventListener();
     }
 
     let contentLevelKey = T + "contentWidthLevel";
@@ -944,6 +969,7 @@
         reloadCompactMode();
         checkUrlChange();
         checkListenerIntegrity();
+
         setGV(HEART_KEY_PREFIX + site, Date.now());
         // 同时更新当前站点的URL
         setGV(SITE_URL_PREFIX + site, getUrl());
@@ -952,57 +978,66 @@
         updateNavQuestions(questions);
 
         // 单独适配：gemini、studio的内容宽度
-        if(site === GEMINI){
-            const ADAPTIVE_WIDTH = window.outerWidth * 0.8 + "px";
-
-            let headQuestion = getQuestionList()[0];
-
-            let targetEle = null;
-            let cachedContentLevel = getS(contentLevelKey);
-            if(!isEmpty(cachedContentLevel)){
-                targetEle = getNthParent(headQuestion, cachedContentLevel)
-            }else {
-                let prevEle = null;
-                let nth = 1;
-
-                while (nth < 10) {
-                    let checkEle = getNthParent(headQuestion, nth);
-                    if (!checkEle) {
-                        break;
-                    }
-                    let checkWidth = checkEle.getBoundingClientRect().width;
-                    if (checkWidth > 1000) {
-                        targetEle = prevEle;
-                        setS(contentLevelKey, nth - 1);
-                        break;
-                    }
-                    prevEle = checkEle;
-                    nth++;
-                }
-            }
-            if(!isEmpty(targetEle)){
-                targetEle.style.maxWidth = GEMINI_MAX_WIDTH;
-                targetEle.style.width = ADAPTIVE_WIDTH;
-                let cur = targetEle.nextElementSibling;
-
-                while (cur) {
-                    cur.style.maxWidth = GEMINI_MAX_WIDTH;
-                    cur.style.width = ADAPTIVE_WIDTH;
-                    cur = cur.nextElementSibling;
-                }
-            }
-
-        }
+        setContentWidth();
         if(site === STUDIO){
             let studioContent = document.querySelector('.chat-session-content');
             if(!isEmpty(studioContent)){
                 studioContent.style.maxWidth = STUDIO_CONTENT_MAX_WIDTH;
             }
         }
+    }, 2000);
 
 
-    }, 1800);
+    function setContentWidth(){
+        if(![GEMINI].includes(site)){
+          return;
+        }
 
+        let headQuestion = getQuestionList()[0];
+
+        let targetEle = null;
+        let cachedContentLevel = getS(contentLevelKey);
+        if(!isEmpty(cachedContentLevel)){
+            targetEle = getNthParent(headQuestion, cachedContentLevel)
+        }else {
+            let prevEle = null;
+            let nth = 1;
+
+            while (nth < 10) {
+                let checkEle = getNthParent(headQuestion, nth);
+                if (!checkEle) {
+                    break;
+                }
+                let checkWidth = checkEle.getBoundingClientRect().width;
+                if (checkWidth > 1000) {
+                    targetEle = prevEle;
+                    setS(contentLevelKey, nth - 1);
+                    break;
+                }
+                prevEle = checkEle;
+                nth++;
+            }
+        }
+        // 遍历历次回答区域
+        if(!isEmpty(targetEle)){
+            const ADAPTIVE_WIDTH = window.outerWidth * 0.8 + "px";
+
+            let oldWidth = targetEle.getBoundingClientRect().width;
+            if([ADAPTIVE_WIDTH, GEMINI_MAX_WIDTH].includes(oldWidth + "px")){
+                return;
+            }
+            targetEle.style.maxWidth = GEMINI_MAX_WIDTH;
+            targetEle.style.width = ADAPTIVE_WIDTH;
+            let cur = targetEle.nextElementSibling;
+
+            while (cur) {
+                cur.style.maxWidth = GEMINI_MAX_WIDTH;
+                cur.style.width = ADAPTIVE_WIDTH;
+                cur = cur.nextElementSibling;
+            }
+        }
+
+    }
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -1084,17 +1119,12 @@
             if(isEmpty(getGV(FIRST_RUN_KEY))){
                 setGV(FIRST_RUN_KEY, 1);
                 let updateHint = "网页右下方的多选面板可勾选提问范围，\n\n" +
-                    "点击\"设置\"按钮可进行多种设置；\n\n";
+                    "点击\"设置\"按钮可进行多种设置\n\n";
 
                 showMessagePopup(updateHint, "脚本使用提示");
             } else {
                 // 非首次运行，检查版本更新
-                let VERSION_MARK = FIRST_RUN_KEY + "_5";
-                if(isEmpty(getGV(VERSION_MARK))){
-                    setGV(VERSION_MARK, 1);
-                    let updateHint = "多选面板上新增了【设置】按钮，可进行多种自定义设置；\n\n";
-                    showMessagePopup(updateHint, "近期更新");
-                }
+                // 注意：如果是新用户，将短时间内出现第二次弹窗，体验不好
             }
 
         }, 800);
@@ -6222,29 +6252,42 @@
         // 将ID转换为完整key
         const keyList = bookmarkIds.map(id => getBookmarkKey(id));
 
+        // 无数据时直接返回，避免循环边界错误导致死循环
+        if (keyList.length === 0) return [];
+
         const bookmarks = [];
-        // 全部视图已排序，直接遍历；分组视图倒序遍历（让最新的在上面）
-        const startIndex = filterGroupId === null ? 0 : keyList.length - 1;
-        const endIndex = filterGroupId === null ? keyList.length - 1 : -1;
-        const step = filterGroupId === null ? 1 : -1;
-        for (let i = startIndex; i !== endIndex; i += step) {
-            const key = keyList[i];
-            const data = getBookmarkData(key);
-            if (data && data.sites && data.sites.length > 0) {
-                // 如果指定了分组过滤，再次验证（双重保险）
-                if (filterGroupId !== null && data.group !== filterGroupId) {
-                    continue;
-                }
-                // 从value中读取question和title
+        if (filterGroupId === null) {
+            // 全部视图：按排序后的keyList正序遍历
+            for (let i = 0; i < keyList.length; i += 1) {
+                const key = keyList[i];
+                const data = getBookmarkData(key);
+                if (!data || !data.sites || data.sites.length === 0) continue;
                 const question = data.question || '';
                 const title = data.title || '';
-                // 返回时转换为名称显示
                 bookmarks.push({
                     question,
                     title,
                     sites: data.sites,
                     group: getGroupNameById(data.group || DEFAULT_GROUP_ID),
-                    groupId: data.group || DEFAULT_GROUP_ID, // 同时保存代号用于操作
+                    groupId: data.group || DEFAULT_GROUP_ID,
+                    bookmarkKey: key
+                });
+            }
+        } else {
+            // 分组视图：倒序让最新的在上面
+            for (let i = keyList.length - 1; i >= 0; i -= 1) {
+                const key = keyList[i];
+                const data = getBookmarkData(key);
+                if (!data || !data.sites || data.sites.length === 0) continue;
+                if (data.group !== filterGroupId) continue; // 双重校验分组
+                const question = data.question || '';
+                const title = data.title || '';
+                bookmarks.push({
+                    question,
+                    title,
+                    sites: data.sites,
+                    group: getGroupNameById(data.group || DEFAULT_GROUP_ID),
+                    groupId: data.group || DEFAULT_GROUP_ID,
                     bookmarkKey: key
                 });
             }
