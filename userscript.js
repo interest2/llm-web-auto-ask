@@ -32,11 +32,11 @@
     'use strict';
     console.log("ai script, start");
 
-    const CONTENT_MAX_WIDTH = "830px"; // 部分站点内容最大宽度
+    let CONTENT_MAX_WIDTH = 830; // 部分站点内容最大宽度 px
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
     const MODEL_GROUP_INDEX = 6;
-    const PANEL_BUTTON_WIDTH = "70px"; // 面板按钮固定宽度（顶部主按钮）
-    const PANEL_COLUMN_WIDTH = "135px"; // 面板模型列固定宽度
+    const PANEL_BUTTON_WIDTH = "70px";       // 多选面板按钮固定宽度（顶部主按钮）
+    const PANEL_COLUMN_WIDTH = "135px";      // 多选面板模型列固定宽度
     const PANEL_SMALL_BUTTON_WIDTH = "40px"; // 全选/清空等小按钮宽度
     const PANEL_DISABLE_BUTTON_COMPACT_WIDTH = "24px"; // 缩略模式下禁用按钮宽度
 
@@ -105,7 +105,7 @@
         // 尝试从缓存获取
         const TEXTAREA_CACHE_KEY = 'textarea_input_cache';
         const cacheStr = getS(TEXTAREA_CACHE_KEY);
-        if (cacheStr) {
+        if (!isEmpty(cacheStr)) {
             try {
                 const cache = JSON.parse(cacheStr);
                 if (cache && cache.id) {
@@ -399,13 +399,11 @@
         setGV("msg", msg);
         lastQuestion = lastestQ;
 
-        addCurrentToStorage();
-
         let isDisable = getGV("disable");
         if(isDisable){
             return;
         }
-
+        addCurrentToStorage();
     }
 
     // 监听是否有新的提问
@@ -748,7 +746,7 @@
         // 这个 if 判断意味着，只有非新对话才检测输入框右侧区域
         if(getQuestionList().length > 0){
             const level = getS(TOGGLE_LEVEL_KEY);
-            if (level) {
+            if (!isEmpty(level)) {
                 const inputArea = getInputArea();
                 if (inputArea) {
                     const parentEl = getNthParent(inputArea, parseInt(level));
@@ -991,6 +989,11 @@
     }
 
     let contentLevelKey = T + "contentWidthLevel";
+    let contentMaxWidthKey = T + "contentMaxWidth";
+    let cachedContentMaxWidth = getS(contentMaxWidthKey);
+    if(!isEmpty(cachedContentMaxWidth)){
+        CONTENT_MAX_WIDTH = cachedContentMaxWidth;
+    }
 
     // 定期检查URL变化和监听器完整性
     setInterval(function() {
@@ -1008,30 +1011,35 @@
         setContentWidth();
     }, 2000);
 
+
     // 部分站点调整内容宽度（不依赖选择器）
     function setContentWidth(){
-        if(![GEMINI, STUDIO].includes(site)){
+        if(![GEMINI, STUDIO].includes(site) && !cachedContentMaxWidth){
           return;
         }
 
-        let headQuestion = getQuestionList()[0];
+        let quesList = getQuestionList();
+        if(!quesList || quesList.length === 0){
+            return;
+        }
+        let tailQuestion = quesList[quesList.length - 1];
 
-        let targetEle = null;
+        let tailContentZone = null;
         let cachedContentLevel = getS(contentLevelKey);
         if(!isEmpty(cachedContentLevel)){
-            targetEle = getNthParent(headQuestion, cachedContentLevel)
+            tailContentZone = getNthParent(tailQuestion, cachedContentLevel)
         }else {
             let prevEle = null;
             let nth = 1;
 
             while (nth < 10) {
-                let checkEle = getNthParent(headQuestion, nth);
+                let checkEle = getNthParent(tailQuestion, nth);
                 if (!checkEle) {
                     break;
                 }
                 let checkWidth = checkEle.getBoundingClientRect().width;
                 if (checkWidth > 1000) {
-                    targetEle = prevEle;
+                    tailContentZone = prevEle;
                     setS(contentLevelKey, nth - 1);
                     break;
                 }
@@ -1039,25 +1047,41 @@
                 nth++;
             }
         }
-        // 遍历历次回答区域
-        if(!isEmpty(targetEle)){
-            const ADAPTIVE_WIDTH = window.outerWidth * 0.8 + "px";
+        // 回答区域
+        if(!isEmpty(tailContentZone)){
+            const ratioWidth = window.outerWidth * 0.9;
 
-            let oldWidth = targetEle.getBoundingClientRect().width;
-            if([ADAPTIVE_WIDTH, CONTENT_MAX_WIDTH].includes(oldWidth + "px")){
-                return;
-            }
-            targetEle.style.maxWidth = CONTENT_MAX_WIDTH;
-            targetEle.style.width = ADAPTIVE_WIDTH;
-            let cur = targetEle.nextElementSibling;
+            const ADAPTIVE_WIDTH = ratioWidth + "px";
+            const MAX_WIDTH = CONTENT_MAX_WIDTH + "px";
 
-            while (cur) {
-                cur.style.maxWidth = CONTENT_MAX_WIDTH;
-                cur.style.width = ADAPTIVE_WIDTH;
-                cur = cur.nextElementSibling;
+            // 最后一个回答的宽度如果不符合
+            if(eleWidthNotMatched(tailContentZone, ratioWidth)){
+                tailContentZone.style.maxWidth = MAX_WIDTH;
+                tailContentZone.style.width = ADAPTIVE_WIDTH;
+
+                let traverseFlag = false;
+                let cur = tailContentZone.previousElementSibling;
+
+                while (cur) {
+                    // 倒数第二个回答，如果宽度符合，则终止；不符合，说明需要遍历，下个游标无需再判断宽度
+                    if(!traverseFlag && !eleWidthNotMatched(cur, ratioWidth)){
+                        return;
+                    }
+                    traverseFlag = true;
+                    cur.style.maxWidth = MAX_WIDTH;
+                    cur.style.width = ADAPTIVE_WIDTH;
+                    cur = cur.previousElementSibling;
+                }
             }
+
         }
+    }
 
+    function eleWidthNotMatched(ele, ratioWidth){
+        let targetWidth = Math.min(ratioWidth, CONTENT_MAX_WIDTH);
+
+        let oldWidth = ele.getBoundingClientRect().width;
+        return Math.abs(oldWidth - targetWidth) > 3;
     }
 
     /******************************************************************************
@@ -1512,7 +1536,7 @@
     // 获取副目录的最大宽度值（从localStorage读取，如果没有则使用默认值）
     const getSubNavMaxWidth = () => {
         const savedMaxWidth = getS(subNavMaxWidthKey);
-        if (savedMaxWidth) return savedMaxWidth;
+        if (!isEmpty(savedMaxWidth)) return savedMaxWidth;
         return DEFAULT_SUB_NAV_MAX_WIDTH;
     };
 
@@ -1605,7 +1629,7 @@
         [GROK]: "255px"
     };
 
-    const subNavMinWidth = "190px";
+    const subNavMinWidth = "170px";
 
     // 获取导航样式（动态生成，支持运行时修改变量）
     const getNavStyles = () => {
@@ -1706,7 +1730,7 @@
     // 获取副目录的left值（优先从localStorage，其次站点预设，最后默认值）
     const getSubNavLeft = () => {
         const savedLeft = getS(subNavLeftKey);
-        if (savedLeft) return savedLeft;
+        if (!isEmpty(savedLeft)) return savedLeft;
         const presetLeft = SUB_NAV_LEFT_PRESETS[site];
         if (presetLeft) return presetLeft;
         return SUB_NAV_LEFT;
