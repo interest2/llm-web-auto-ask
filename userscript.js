@@ -336,6 +336,7 @@
     const TOP_LEVEL_GROUP_LIST = "topLevelGroupList"; // 一级分组列表 {id: name}
     const TOP_LEVEL_GROUP_MAP = "topLevelGroupMap"; // 一级分组到二级分组的映射 {topLevelId: [secondLevelId数组]}
     const TOP_LEVEL_GROUP_ID_COUNTER = "topLevelGroupIdCounter"; // 一级分组ID计数器（从1000开始）
+    const TOP_LEVEL_MINIMIZED_STATES = "topLevelMinimizedStates"; // 一级分组最小化状态 {topLevelId: true/false}
     const BOOKMARK_QUESTION_MAX_LENGTH = 150; // 书签question最大长度
     // 书签按钮公共样式（不包含 bottom 和 background）
     const BOOKMARK_BTN_BASE_STYLE = "position:fixed;right:0;color:white;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:10000;border-radius:6px 0 0 6px;box-shadow:-2px 2px 8px rgba(0,0,0,0.2);user-select:none;padding:3px 5px";
@@ -6928,7 +6929,7 @@
         selectedBookmarkKey = null;
         
         // CSS样式变量（属性超过2个的样式）
-        const POPUP_SIZE_STYLE = 'width:65%;height:90%;overflow:hidden;display:flex;flex-direction:column';
+        const POPUP_SIZE_STYLE = 'width:70%;height:90%;overflow:hidden;display:flex;flex-direction:column';
         const HEADER_STYLE = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee;flex-shrink:0;background:white;z-index:10';
         const CLOSE_BTN_STYLE = 'cursor:pointer;font-size:20px;color:#999;padding:5px';
         const TAB_BASE_STYLE = 'padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;color:#333';
@@ -7215,13 +7216,86 @@
             return container;
         };
 
+        // 为一级分组容器添加最小化功能的公共函数
+        const addMinimizeFeature = (container, header, secondLevelContainer, originalHeaderText, topLevelId) => {
+            // 创建最小化按钮（emoji，默认隐藏）
+            const minimizeBtn = createTag('div', '📦', 'position:absolute;top:2px;right:2px;cursor:pointer;font-size:14px;opacity:0;transition:opacity 0.2s;z-index:100;padding:2px 4px;background:rgba(255,255,255,0.9);border-radius:3px;');
+            minimizeBtn.title = '最小化/展开';
+            container.appendChild(minimizeBtn);
+            
+            // 从GM存储读取最小化状态
+            const minimizedStates = getGV(TOP_LEVEL_MINIMIZED_STATES) || {};
+            let isMinimized = minimizedStates[topLevelId] === true;
+            let hoverTimeout = null;
+            const firstChar = originalHeaderText.charAt(0);
+            
+            // 保存最小化状态到GM存储
+            const saveMinimizedState = () => {
+                const states = getGV(TOP_LEVEL_MINIMIZED_STATES) || {};
+                states[topLevelId] = isMinimized;
+                setGV(TOP_LEVEL_MINIMIZED_STATES, states);
+            };
+            
+            // 应用最小化状态
+            const applyMinimizedState = () => {
+                if (isMinimized) {
+                    header.textContent = firstChar;
+                    secondLevelContainer.style.display = 'none';
+                    minimizeBtn.style.opacity = '0';
+                } else {
+                    header.textContent = originalHeaderText;
+                    secondLevelContainer.style.display = '';
+                }
+            };
+            
+            // 初始化时应用保存的状态
+            applyMinimizedState();
+            
+            // 最小化/展开切换函数
+            const toggleMinimize = () => {
+                isMinimized = !isMinimized;
+                applyMinimizedState();
+                saveMinimizedState();
+                // 最小化时立即隐藏按钮
+                if (isMinimized && hoverTimeout) {
+                    clearTimeout(hoverTimeout);
+                    hoverTimeout = null;
+                }
+            };
+            
+            minimizeBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleMinimize();
+            });
+            
+            // 悬停500ms后显示按钮（仅在未最小化时）
+            container.addEventListener('mouseenter', () => {
+                if (!isMinimized) {
+                    hoverTimeout = setTimeout(() => {
+                        minimizeBtn.style.opacity = '1';
+                    }, 1000);
+                }
+            });
+            
+            container.addEventListener('mouseleave', () => {
+                if (hoverTimeout) {
+                    clearTimeout(hoverTimeout);
+                    hoverTimeout = null;
+                }
+                if (!isMinimized) {
+                    minimizeBtn.style.opacity = '0';
+                }
+            });
+        };
+
         // 为每个一级分组创建容器
         topLevelGroupIds.forEach(topLevelId => {
             const topLevelName = topLevelGroups[topLevelId] || `一级分组${topLevelId}`;
             const secondLevelIds = topLevelGroupMap[topLevelId] || [];
 
-            // 创建一级分组容器（宽度自适应内容）
-            const topLevelContainer = createTag('div', "", TOP_LEVEL_CONTAINER_STYLE);
+            // 创建一级分组容器（宽度自适应内容，相对定位以放置按钮）
+            const topLevelContainer = createTag('div', "", TOP_LEVEL_CONTAINER_STYLE + ';position:relative');
             topLevelContainer.setAttribute('data-top-level-id', topLevelId);
             
             // 添加拖拽放置功能
@@ -7256,6 +7330,10 @@
             // 创建按钮容器
             const secondLevelContainer = createButtonContainer(secondLevelGroups);
             topLevelContainer.appendChild(secondLevelContainer);
+            
+            // 使用公共函数添加最小化功能
+            addMinimizeFeature(topLevelContainer, topLevelHeader, secondLevelContainer, topLevelName, topLevelId);
+            
             tabContainer.appendChild(topLevelContainer);
         });
 
@@ -7267,7 +7345,7 @@
         const ungroupedSecondLevelGroups = groups.filter(g => !allSecondLevelIds.has(g.id) && g.id !== DEFAULT_GROUP_ID);
         
         if (ungroupedSecondLevelGroups.length > 0) {
-            const ungroupedContainer = createTag('div', "", TOP_LEVEL_CONTAINER_STYLE);
+            const ungroupedContainer = createTag('div', "", TOP_LEVEL_CONTAINER_STYLE + ';position:relative');
             ungroupedContainer.setAttribute('data-top-level-id', 'ungrouped');
             
             // 添加拖拽放置功能（未归类分组）
@@ -7275,12 +7353,18 @@
                 removeSecondLevelGroupFromTopLevel(secondLevelId);
             });
             
+            // 未归类标题div（统一样式，但不支持双击编辑）
             const ungroupedHeader = createTag('div', '未归类', TOP_LEVEL_HEADER_STYLE);
+            ungroupedHeader.style.cursor = 'default';
             ungroupedContainer.appendChild(ungroupedHeader);
             
-            // 创建按钮容器
-            const ungroupedButtonsContainer = createButtonContainer(ungroupedSecondLevelGroups, SECOND_LEVEL_CONTAINER_DEFAULT_STYLE);
+            // 创建按钮容器（统一使用默认样式）
+            const ungroupedButtonsContainer = createButtonContainer(ungroupedSecondLevelGroups);
             ungroupedContainer.appendChild(ungroupedButtonsContainer);
+            
+            // 使用公共函数添加最小化功能
+            addMinimizeFeature(ungroupedContainer, ungroupedHeader, ungroupedButtonsContainer, '未归类', 'ungrouped');
+            
             tabContainer.appendChild(ungroupedContainer);
         }
 
@@ -7288,7 +7372,7 @@
         const buttonContainer = createTag('div', "", 'display:flex;flex-direction:column;gap:8px;align-items:flex-start');
         
         // 添加标签按钮（添加一级分组）
-        const addTagBtn = createTag('button', '+ 添加标签', ADD_TAG_BTN_STYLE);
+        const addTagBtn = createTag('button', '+ 加标签', ADD_TAG_BTN_STYLE);
         addTagBtn.title = '添加新标签（一级分组）';
         addTagBtn.addEventListener('click', () => {
             const tagName = prompt('请输入标签名称：');
@@ -7305,7 +7389,7 @@
         buttonContainer.appendChild(addTagBtn);
 
         // 添加分组按钮
-        const addGroupBtn = createTag('button', '+ 添加分组', ADD_GROUP_BTN_STYLE);
+        const addGroupBtn = createTag('button', '+ 加分组', ADD_GROUP_BTN_STYLE);
         addGroupBtn.title = '添加新分组';
         addGroupBtn.addEventListener('click', () => {
             const groupName = prompt('请输入分组名称：');
