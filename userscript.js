@@ -340,6 +340,8 @@
     const BOOKMARK_QUESTION_MAX_LENGTH = 150; // 书签question最大长度
     // 书签按钮公共样式（不包含 bottom 和 background）
     const BOOKMARK_BTN_BASE_STYLE = "position:fixed;right:0;color:white;font-size:14px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:10000;border-radius:6px 0 0 6px;box-shadow:-2px 2px 8px rgba(0,0,0,0.2);user-select:none;padding:3px 5px";
+    // 书签表格单元格公共基础样式（只设置右边和下边边框，避免相邻单元格叠加）
+    const BOOKMARK_TABLE_CELL_BASE = 'padding:5px;vertical-align:center;border-right:1px solid #ddd;border-bottom:1px solid #ddd';
 
     let userid = getGV("userid");
     if(isEmpty(userid)){
@@ -6399,7 +6401,7 @@
      * @param {number} index - 当前索引
      */
     function createSortColumn(bookmarkKey, index, bookmarks, currentGroupId, tr) {
-        const TD_SORT_STYLE =    'padding:2px;vertical-align:top;white-space:nowrap;text-align:left;border:1px solid #ddd';
+        const TD_SORT_STYLE = `${BOOKMARK_TABLE_CELL_BASE};padding:2px;white-space:nowrap;text-align:left`;
         const TOP_BTN_STYLE =    'padding:4px 2px;background:transparent;border:none;cursor:pointer;font-size:16px;color:#3498db';
         const UP_DOWN_BTN_STYLE ='padding:4px 2px;background:transparent;border:none;cursor:pointer;font-size:16px;color:#95a5a6';
 
@@ -6466,7 +6468,7 @@
      * 创建站点列单元格
      */
     function createSitesColumn(sites, bookmarkKey, currentGroupId, linkStyle) {
-        const tdSites = createTag('td', "", 'max-width:160px;padding:5px;vertical-align:middle;border:1px solid #ddd');
+        const tdSites = createTag('td', "", `${BOOKMARK_TABLE_CELL_BASE};max-width:160px;vertical-align:middle`);
 
         // 按星标状态排序：星标的在前
         const sortedSites = [...sites].sort((a, b) => {
@@ -6770,11 +6772,12 @@
     function renderTableOfBookmark(content, currentGroupId, groups) {
         // CSS样式变量（属性超过2个的样式）
         const EMPTY_TABLE_TIP_STYLE = 'color:#666;text-align:center;padding:5px 20px';
-        const TABLE_STYLE = 'width:100%;border-collapse:collapse;font-size:14px';
-        const TH_STYLE = 'padding:10px;text-align:left;border:1px solid #ddd';
-        const TD_STYLE = 'padding:5px;vertical-align:top;white-space:nowrap;border:1px solid #ddd';
-        const TD_OPERATION_STYLE = 'max-width:150px;padding:5px;vertical-align:top;white-space:nowrap;border:1px solid #ddd';
-        const TD_QUESTION_STYLE = 'padding:10px;max-width:300px;word-break:break-all;vertical-align:top;position:relative;border:1px solid #ddd';
+        const TABLE_STYLE = 'width:100%;border-collapse:separate;border-spacing:0;font-size:14px;margin:0;border-left:1px solid #ddd;';
+        const TH_STYLE = `${BOOKMARK_TABLE_CELL_BASE};padding:10px;text-align:left`;
+        const GROUP_COLUMN_WIDTH = '110px'; // 分组列宽度
+        const TD_GROUP_STYLE = `${BOOKMARK_TABLE_CELL_BASE};white-space:nowrap;width:${GROUP_COLUMN_WIDTH}`;
+        const TD_OPERATION_STYLE = `${BOOKMARK_TABLE_CELL_BASE};max-width:150px;white-space:nowrap`;
+        const TD_QUESTION_STYLE = `${BOOKMARK_TABLE_CELL_BASE};padding:10px;max-width:300px;word-break:break-all;position:relative`;
         const QUESTION_CONTAINER_STYLE = 'display:flex;align-items:center;gap:0px';
         const EDIT_BTN_STYLE = 'padding:4px;background:transparent;border:none;cursor:pointer;font-size:16px;flex-shrink:0;color:#666';
         const LINK_STYLE = 'color:#1e3a8a;text-decoration:none;margin-right:auto 10px;cursor:pointer';
@@ -6794,16 +6797,17 @@
         // 创建表格
         const table = createTag('table', "", TABLE_STYLE);
 
-        // 表头（冻结）
-        const TH_STICKY_STYLE = `${TH_STYLE};position:sticky;top:0;background:#f5f5f5;z-index:5`;
-        let theadHtml = `<tr style="background:#f5f5f5"><th style="${TH_STICKY_STYLE}">分组</th><th style="${TH_STICKY_STYLE}">提问</th><th style="${TH_STICKY_STYLE}">站点链接</th><th style="${TH_STICKY_STYLE}">操作</th><th style="${TH_STICKY_STYLE}">排序</th></tr>`;
-        const thead = createHtml('thead', theadHtml, '');
+        // 表头（冻结）- 使用强制样式确保完全覆盖
+        const TH_STICKY_STYLE = `${TH_STYLE};position:sticky;top:0;background:#f5f5f5 !important;z-index:100;margin:0`;
+        const TH_GROUP_STYLE = `${TH_STICKY_STYLE};width:${GROUP_COLUMN_WIDTH}`;
+        let theadHtml = `<tr style="background:#f5f5f5 !important;margin:0"><th style="${TH_GROUP_STYLE}">分组</th><th style="${TH_STICKY_STYLE}">提问</th><th style="${TH_STICKY_STYLE}">站点链接</th><th style="${TH_STICKY_STYLE}">操作</th><th style="${TH_STICKY_STYLE}">排序</th></tr>`;
+        const thead = createHtml('thead', theadHtml, 'position:sticky;top:0;z-index:100;background:#f5f5f5');
         table.appendChild(thead);
 
         // 表体
-        const tbody = createTag('tbody', "", "");
+        const tbody = createTag('tbody', "");
         bookmarks.forEach((bookmark, index) => {
-            const tr = createTag('tr', "", 'border-bottom:1px solid #eee');
+            const tr = createTag('tr', "", 'border-bottom:1px solid #ddd');
 
             const bookmarkKey = bookmark.bookmarkKey;
             const bookmarkGroupName = bookmark.group || DEFAULT_GROUP_NAME;
@@ -6811,7 +6815,7 @@
 
             // 1、分组列
             const groupBgColor = getGroupBackgroundColor(bookmarkGroupId);
-            const tdGroup = createTag('td', "", TD_STYLE);
+            const tdGroup = createTag('td', "", TD_GROUP_STYLE);
             const groupSelect = createTag('div', bookmarkGroupName, `${GROUP_SELECT_BASE_STYLE};background:${groupBgColor};cursor:pointer;color:#333;text-align:center`);
             groupSelect.setAttribute('data-bookmark-key', bookmarkKey);
             groupSelect.title = '点击选中此行，然后点击表格上方的分组按钮来更换此条书签的分组；再次点击可取消选中';
@@ -6914,7 +6918,7 @@
         table.appendChild(tbody);
         
         // 创建可滚动的表格容器
-        const tableContainer = createTag('div', "", 'flex:1;overflow-y:auto;overflow-x:auto;min-height:0');
+        const tableContainer = createTag('div', "", 'flex:1;overflow-y:auto;overflow-x:auto;min-height:0;margin:0;padding:0');
         tableContainer.appendChild(table);
         content.appendChild(tableContainer);
     }
@@ -6929,7 +6933,7 @@
         selectedBookmarkKey = null;
         
         // CSS样式变量（属性超过2个的样式）
-        const POPUP_SIZE_STYLE = 'width:70%;height:90%;overflow:hidden;display:flex;flex-direction:column';
+        const POPUP_SIZE_STYLE = 'width:65%;height:90%;overflow:hidden;display:flex;flex-direction:column';
         const HEADER_STYLE = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid #eee;flex-shrink:0;background:white;z-index:10';
         const CLOSE_BTN_STYLE = 'cursor:pointer;font-size:20px;color:#999;padding:5px';
         const TAB_BASE_STYLE = 'padding:6px 12px;border-radius:4px;cursor:pointer;font-size:13px;color:#333';
@@ -7117,7 +7121,8 @@
                                     allRows.forEach(row => {
                                         row.style.backgroundColor = '';
                                     });
-                                    showBookmarkWindow(currentGroupId);
+                                    // 迁移后切换到目标分组
+                                    switchToGroup(groupId);
                                 }
                             } else {
                                 // 没有选中的书签，切换视图
@@ -7227,7 +7232,7 @@
             const minimizedStates = getGV(TOP_LEVEL_MINIMIZED_STATES) || {};
             let isMinimized = minimizedStates[topLevelId] === true;
             let hoverTimeout = null;
-            const firstChar = originalHeaderText.charAt(0);
+            const firstChar = originalHeaderText.substring(0,2);
             
             // 保存最小化状态到GM存储
             const saveMinimizedState = () => {
