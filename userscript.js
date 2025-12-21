@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         多模型同时回答 & 目录导航
 // @namespace    http://tampermonkey.net/
-// @version      5.2.0
+// @version      5.3.0
 // @description  一键自动同时在各家大模型官网提问，免去复制粘贴的麻烦；提供历次提问、回答细节的目录导航，方便快速定位。支持范围：DS，Kimi，千问，豆包，元宝，ChatGPT，Gemini，Claude，Grok 等
 // @author       interest2
 // @match        https://chat.deepseek.com/*
@@ -23,6 +23,9 @@
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_addValueChangeListener
+// @require      https://cdn.jsdelivr.net/npm/d3@7
+// @require      https://cdn.jsdelivr.net/npm/markmap-view@0.15
+// @require      https://cdn.jsdelivr.net/npm/markmap-lib@0.15
 // @license      MIT
 // @downloadURL https://update.greasyfork.org/scripts/536504/%E5%A4%9A%E5%AE%B6%E5%A4%A7%E6%A8%A1%E5%9E%8B%E5%90%8C%E6%97%B6%E5%9B%9E%E7%AD%94%EF%BC%8C%E5%8E%9F%E7%AB%99%E6%A0%B7%E5%BC%8F%E5%B1%95%E7%A4%BA.user.js
 // @updateURL https://update.greasyfork.org/scripts/536504/%E5%A4%9A%E5%AE%B6%E5%A4%A7%E6%A8%A1%E5%9E%8B%E5%90%8C%E6%97%B6%E5%9B%9E%E7%AD%94%EF%BC%8C%E5%8E%9F%E7%AB%99%E6%A0%B7%E5%BC%8F%E5%B1%95%E7%A4%BA.meta.js
@@ -1073,6 +1076,7 @@
                     traverseFlag = true;
                     cur.style.maxWidth = MAX_WIDTH;
                     cur.style.width = ADAPTIVE_WIDTH;
+
                     cur = cur.previousElementSibling;
                 }
             }
@@ -1102,21 +1106,15 @@
             policy = trustedTypes.createPolicy("forceInner", {
                 createHTML: (to_escape) => to_escape
             });
+            // 创建 default policy，让第三方库的 innerHTML 也能通过
+            if (!trustedTypes.defaultPolicy) {
+                trustedTypes.createPolicy("default", {
+                    createHTML: (to_escape) => to_escape
+                });
+            }
         }
     } catch(e) {
         policy = null;
-    }
-
-    function makeHTML(content){
-        if(isEmpty(policy)){
-            return content;
-        }else{
-            try {
-                return policy.createHTML(content);
-            } catch(e) {
-                return content;
-            }
-        }
     }
 
     // 安全设置 innerHTML，如果失败则使用 DOM 方法
@@ -1139,6 +1137,18 @@
             } catch(parseError) {
                 // 如果 DOMParser 也失败，使用 textContent 作为最后手段
                 element.textContent = html.replace(/<[^>]*>/g, '');
+            }
+        }
+    }
+    
+    function makeHTML(content){
+        if(isEmpty(policy)){
+            return content;
+        }else{
+            try {
+                return policy.createHTML(content);
+            } catch(e) {
+                return content;
             }
         }
     }
@@ -1691,7 +1701,18 @@
             subNavAlignRightBtnHover: `background-color:#f0f0f0;`,
             subNavAlignRightBtnActive: `background-color:${SUB_ALIGN_RIGHT_ACTIVE_BG};`,
             subNavAlignRightBtnNormal: `background-color:transparent;`,
-            subNavButtonRow: `display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:4px;`
+            subNavButtonRow: `display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:4px;`,
+
+            // 思维导图按钮样式
+            mindmapBtn: `padding:2px 6px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;transition:all 0.2s;user-select:none;margin-right:4px;`,
+            mindmapBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
+            // 思维导图弹窗样式
+            mindmapPopup: `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:85vw;height:90vh;background:#fff;border:1px solid #ccc;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.25);z-index:2147483647;display:flex;flex-direction:column;`,
+            mindmapHeader: `display:flex;justify-content:space-between;align-items:center;padding:10px 15px;border-bottom:1px solid #eee;background:#f8f8f8;border-radius:8px 8px 0 0;`,
+            mindmapTitle: `font-weight:bold;font-size:15px;color:#333;`,
+            mindmapCloseBtn: `font-size:20px;cursor:pointer;color:#666;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;`,
+            mindmapContent: `flex:1;overflow:hidden;min-height:500px;`,
+            mindmapOverlay: `position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:2147483646;`
         };
     };
 
@@ -1767,6 +1788,15 @@
     let isSubNavLevelManuallySet = false; // 用户是否手动选择了层级
     let h1Count = 0; // h1标题的数量
     let navCountText = null; // 主目录条数显示元素
+
+    // 获取过滤后的标题列表（公共方法，供副目录和思维导图复用）
+    const getFilteredHeadings = () => {
+        let filtered = currentSubNavHeadings.filter(h => h.level <= currentSubNavLevel);
+        if (h1Count === 1) {
+            filtered = filtered.filter(h => h.level !== 1);
+        }
+        return filtered;
+    };
 
     // 从localStorage读取最小化状态，默认为false
     let navMinimized = getS(T + 'navMinimized') === 'true';
@@ -2310,13 +2340,8 @@
         const items = subNavBar.querySelectorAll('.sub-nav-item');
         items.forEach(item => item.remove());
 
-        // 根据当前选择的层级过滤标题
-        let filteredHeadings = currentSubNavHeadings.filter(h => h.level <= currentSubNavLevel);
-
-        // 如果h1只有1个，则过滤掉h1标题项
-        if (h1Count === 1) {
-            filteredHeadings = filteredHeadings.filter(h => h.level !== 1);
-        }
+        // 获取过滤后的标题
+        const filteredHeadings = getFilteredHeadings();
 
         // 获取所有出现的标题层级（从小到大排序）
         const allLevels = [...new Set(currentSubNavHeadings.map(h => h.level))].sort((a, b) => a - b);
@@ -2734,6 +2759,108 @@
         return closeBtn;
     };
 
+    // 将层次化标题转换为 Markdown 格式（使用所有层级）
+    const convertHeadingsToMarkdown = () => {
+        if (currentSubNavHeadings.length === 0) return '# 无内容';
+        return currentSubNavHeadings.map(h => `${'#'.repeat(h.level)} ${h.text}`).join('\n');
+    };
+
+    // 思维导图弹窗元素
+    let mindmapPopup = null;
+    let mindmapOverlay = null;
+
+    // 隐藏思维导图弹窗
+    const hideMindmapPopup = () => {
+        if (mindmapPopup) {
+            mindmapPopup.remove();
+            mindmapPopup = null;
+        }
+        if (mindmapOverlay) {
+            mindmapOverlay.remove();
+            mindmapOverlay = null;
+        }
+    };
+
+    // 显示思维导图弹窗
+    const showMindmapPopup = () => {
+        // 如果已有弹窗，先关闭
+        hideMindmapPopup();
+
+        const styles = getNavStyles();
+
+        // 创建遮罩层
+        mindmapOverlay = createTag('div', '', styles.mindmapOverlay);
+        mindmapOverlay.addEventListener('click', hideMindmapPopup);
+        document.body.appendChild(mindmapOverlay);
+
+        // 创建弹窗
+        mindmapPopup = createTag('div', '', styles.mindmapPopup);
+
+        // 创建头部
+        const header = createTag('div', '', styles.mindmapHeader);
+        const title = createTag('span', '', styles.mindmapTitle);
+        title.textContent = '思维导图';
+        const closeBtn = createTag('div', '', styles.mindmapCloseBtn);
+        closeBtn.textContent = '×';
+        closeBtn.addEventListener('mouseenter', () => {
+            closeBtn.style.backgroundColor = '#eee';
+            closeBtn.style.color = '#333';
+        });
+        closeBtn.addEventListener('mouseleave', () => {
+            closeBtn.style.backgroundColor = 'transparent';
+            closeBtn.style.color = '#666';
+        });
+        closeBtn.addEventListener('click', hideMindmapPopup);
+        appendSeveral(header, title, closeBtn);
+        mindmapPopup.appendChild(header);
+
+        // 创建内容区域
+        const content = createTag('div', '', styles.mindmapContent);
+        content.id = 'mindmap-content-container';
+        mindmapPopup.appendChild(content);
+
+        document.body.appendChild(mindmapPopup);
+
+        // 创建 SVG 并渲染思维导图（使用 setInnerHTML 避免 TrustedHTML 问题）
+        setInnerHTML(content, '<svg style="width:100%;height:100%;"></svg>');
+        const svg = content.querySelector('svg');
+
+        const markdown = convertHeadingsToMarkdown();
+        const { Transformer, Markmap } = window.markmap;
+        const transformer = new Transformer();
+        const { root } = transformer.transform(markdown);
+        
+        // Markmap 配置
+        const options = {
+            nodeMinHeight: 24,      // 节点最小高度，让文字远离线条
+            spacingVertical: 14,     // 垂直间距
+            spacingHorizontal: 80,  // 水平间距
+            duration: 0             // 动画时长
+        };
+        Markmap.create(svg, options, root);
+    };
+
+    // 创建思维导图按钮
+    const createSubNavMindmapBtn = () => {
+        const btn = createTag('div', '', NAV_STYLES.mindmapBtn);
+        btn.textContent = '🗺️';
+        btn.title = '思维导图';
+
+        btn.addEventListener('mouseenter', () => {
+            btn.style.cssText = NAV_STYLES.mindmapBtn + NAV_STYLES.mindmapBtnHover;
+        });
+        btn.addEventListener('mouseleave', () => {
+            btn.style.cssText = NAV_STYLES.mindmapBtn;
+        });
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            showMindmapPopup();
+        });
+
+        return btn;
+    };
+
     // 创建副目录层级按钮组
     const createSubNavLevelBtnGroup = (existingLevels) => {
         const levelBtnGroup = createTag('div', "", NAV_STYLES.levelBtnGroup);
@@ -2815,7 +2942,7 @@
         // 创建层级按钮组
         const levelBtnGroup = createSubNavLevelBtnGroup(existingLevels);
 
-        // 组装左侧（标题和按钮组）
+        // 组装左侧（标题、按钮组）
         appendSeveral(titleLeft, titleText, levelBtnGroup);
         titleRow.appendChild(titleLeft);
         
@@ -2824,8 +2951,9 @@
         titleRow.appendChild(closeBtn);
         titleContainer.appendChild(titleRow);
 
-        // 第二行：最大宽度、位置、靠左、靠右按钮
+        // 第二行：思维导图、最大宽度、位置、靠左、靠右按钮
         const buttonRow = createTag('div', "", NAV_STYLES.subNavButtonRow);
+        const mindmapBtn = createSubNavMindmapBtn();
         const maxWidthBtn = createSubNavMaxWidthBtn(buttonRow);
         const positionBtn = createSubNavPositionBtn(buttonRow);
         const alignLeftBtn = createSubNavAlignLeftBtn();
@@ -2839,7 +2967,7 @@
         alignRightBtn.style.top = 'auto';
         alignRightBtn.style.right = 'auto';
         
-        appendSeveral(buttonRow, maxWidthBtn, positionBtn, alignLeftBtn, alignRightBtn);
+        appendSeveral(buttonRow, mindmapBtn, maxWidthBtn, positionBtn, alignLeftBtn, alignRightBtn);
         titleContainer.appendChild(buttonRow);
 
         // 添加到副目录栏
@@ -5968,7 +6096,27 @@
         '#fff9c4', // 浅黄色
         '#f1f8e9', // 浅黄绿色
         '#ede7f6', // 浅蓝紫色
-        '#e8eaf6'  // 浅靛蓝色
+        '#e8eaf6', // 浅靛蓝色
+        '#fef5e7', // 浅杏色
+        '#e8f4f8', // 浅天蓝色
+        '#f5e6f3', // 浅紫红色
+        '#e0f7fa', // 浅青蓝色
+        '#fff8e1', // 浅柠檬色
+        '#f9fbe7', // 浅灰绿色
+        '#fce4ec', // 浅玫瑰色
+        '#e1bee7', // 浅薰衣草色
+        '#d1c4e9', // 浅淡紫色
+        '#c5cae9', // 浅淡蓝色
+        '#b2dfdb', // 浅薄荷色
+        '#b2ebf2', // 浅水蓝色
+        '#b3e5fc', // 浅天空蓝
+        '#c8e6c9', // 浅草绿色
+        '#dcedc8', // 浅橄榄绿
+        '#f0f4c3', // 浅酸橙绿
+        '#fff9c4', // 浅金黄色
+        '#ffe0b2', // 浅桃色
+        '#ffccbc', // 浅珊瑚色
+        '#f8bbd0'  // 浅樱花粉
     ];
 
     // 根据分组ID获取对应的背景色
@@ -7016,7 +7164,7 @@
         // 创建Tab函数（统一处理全部和分组tab）
         const createGroupTab = (text, groupId, isSelected, bgColor, isBold = false, isSecondLevel = true) => {
             const fontWeight = isBold ? 'font-weight:bold;' : '';
-            const border = isSelected ? '2px solid #667eea' : '1px solid transparent';
+            const border = isSelected ? '2px solid #667eea' : '1px solid #ddd';
             const displayStyle = isSecondLevel ? 'display:inline-block;' : '';
             const tab = createTag('div', text, `${TAB_BASE_STYLE};${displayStyle}${fontWeight}background:${bgColor};border:${border}`);
             
