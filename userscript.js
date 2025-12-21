@@ -1055,6 +1055,10 @@
         }
         // 回答区域
         if(!isEmpty(tailContentZone)){
+
+            var nthParent = getNthParent(tailContentZone, getS(T + "map1"));
+            nthParent.style.left = getS(T + "map2");
+
             const ratioWidth = window.outerWidth * 0.9;
 
             const ADAPTIVE_WIDTH = ratioWidth + "px";
@@ -1707,12 +1711,12 @@
             mindmapBtn: `padding:2px 6px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;transition:all 0.2s;user-select:none;margin-right:4px;`,
             mindmapBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
             // 思维导图弹窗样式
-            mindmapPopup: `position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:85vw;height:90vh;background:#fff;border:1px solid #ccc;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.25);z-index:2147483647;display:flex;flex-direction:column;`,
-            mindmapHeader: `display:flex;justify-content:space-between;align-items:center;padding:10px 15px;border-bottom:1px solid #eee;background:#f8f8f8;border-radius:8px 8px 0 0;`,
+            mindmapPopup: `position:fixed;top:50%;left:5px;transform:translate(0%,-50%);width:45vw;height:90vh;background:#fff;border:1px solid #ccc;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.25);z-index:2147483647;display:flex;flex-direction:column;`,
+            mindmapHeader: `display:flex;justify-content:center;align-items:center;padding:10px 15px;border-bottom:1px solid #eee;background:#f8f8f8;border-radius:8px 8px 0 0;position:relative;`,
             mindmapTitle: `font-weight:bold;font-size:15px;color:#333;`,
-            mindmapCloseBtn: `font-size:20px;cursor:pointer;color:#666;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;`,
-            mindmapContent: `flex:1;overflow:hidden;min-height:500px;`,
-            mindmapOverlay: `position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:2147483646;`
+            mindmapCloseBtn: `font-size:22px;cursor:pointer;color:#666;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;`,
+            mindmapMaximizeBtn: `font-size:12px;cursor:pointer;color:#666;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;font-weight:bold;text-shadow:0 0 2px rgba(0,0,0,0.5), 0 1px 1px rgba(0,0,0,0.3);`,
+            mindmapContent: `padding:5px;flex:1;overflow:hidden;min-height:500px;`,
         };
     };
 
@@ -2330,6 +2334,46 @@
         return uniqueHeadings;
     };
 
+    // 通用的标题跳转函数（供副目录和思维导图复用）
+    const scrollToHeading = (heading) => {
+        if (!heading) return false;
+        
+        // 先尝试使用保存的元素引用
+        let targetElement = heading.element;
+        
+        // 如果元素引用失效，重新查找对应的标题元素
+        if (!targetElement || !document.body.contains(targetElement)) {
+            // 获取当前问题索引
+            const questionIndex = currentSubNavQuestionIndex;
+            if (questionIndex >= 0 && navQuestions && questionIndex < navQuestions.length) {
+                const targetEl = navQuestions[questionIndex];
+                if (targetEl && document.body.contains(targetEl)) {
+                    // 查找回答内容区域
+                    const answerContent = findAnswerContent(targetEl);
+                    if (answerContent) {
+                        // 重新查找所有标题
+                        const headings = findHeadingsInContent(answerContent);
+                        // 查找匹配的标题（通过文本和级别）
+                        const matchedHeading = headings.find(h =>
+                            h.text === heading.text && h.level === heading.level
+                        );
+                        if (matchedHeading && matchedHeading.element) {
+                            targetElement = matchedHeading.element;
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (!targetElement || !document.body.contains(targetElement)) {
+            console.warn('标题元素不存在，无法跳转');
+            return false;
+        }
+        
+        targetElement.scrollIntoView({ block: 'start' });
+        return true;
+    };
+
     // 渲染副目录项（根据当前选择的层级过滤）
     const renderSubNavItems = () => {
         // 获取标题容器后的所有元素
@@ -2405,39 +2449,7 @@
             item.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-
-                // 先尝试使用保存的元素引用
-                let targetElement = heading.element;
-
-                // 如果元素引用失效，重新查找对应的标题元素
-                if (!targetElement || !document.body.contains(targetElement)) {
-                    // 获取当前问题索引
-                    const questionIndex = currentSubNavQuestionIndex;
-                    if (questionIndex >= 0 && navQuestions && questionIndex < navQuestions.length) {
-                        const targetEl = navQuestions[questionIndex];
-                        if (targetEl && document.body.contains(targetEl)) {
-                            // 查找回答内容区域
-                            const answerContent = findAnswerContent(targetEl);
-                            if (answerContent) {
-                                // 重新查找所有标题
-                                const headings = findHeadingsInContent(answerContent);
-                                // 查找匹配的标题（通过文本和级别）
-                                const matchedHeading = headings.find(h =>
-                                    h.text === heading.text && h.level === heading.level
-                                );
-                                if (matchedHeading && matchedHeading.element) {
-                                    targetElement = matchedHeading.element;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (!targetElement || !document.body.contains(targetElement)) {
-                    console.warn('标题元素不存在，无法跳转');
-                    return;
-                }
-                targetElement.scrollIntoView({ block: 'start' });
+                scrollToHeading(heading);
             });
 
             subNavBar.appendChild(item);
@@ -2767,17 +2779,12 @@
 
     // 思维导图弹窗元素
     let mindmapPopup = null;
-    let mindmapOverlay = null;
 
     // 隐藏思维导图弹窗
     const hideMindmapPopup = () => {
         if (mindmapPopup) {
             mindmapPopup.remove();
             mindmapPopup = null;
-        }
-        if (mindmapOverlay) {
-            mindmapOverlay.remove();
-            mindmapOverlay = null;
         }
     };
 
@@ -2788,18 +2795,51 @@
 
         const styles = getNavStyles();
 
-        // 创建遮罩层
-        mindmapOverlay = createTag('div', '', styles.mindmapOverlay);
-        mindmapOverlay.addEventListener('click', hideMindmapPopup);
-        document.body.appendChild(mindmapOverlay);
-
         // 创建弹窗
         mindmapPopup = createTag('div', '', styles.mindmapPopup);
 
         // 创建头部
         const header = createTag('div', '', styles.mindmapHeader);
-        const title = createTag('span', '', styles.mindmapTitle);
-        title.textContent = '思维导图';
+        
+        // 创建按钮容器（居中显示）
+        const buttonContainer = createTag('div', '', 'display:flex;align-items:center;gap:8px;');
+        
+        // 创建最大化按钮
+        const maximizeBtn = createTag('div', '', styles.mindmapMaximizeBtn);
+        const maxEmoji = '⬜';
+        maximizeBtn.textContent = maxEmoji;
+        maximizeBtn.title = '最大化';
+        let isMaximized = false;
+        
+        // 最大化/还原功能
+        const toggleMaximize = () => {
+            isMaximized = !isMaximized;
+            if (isMaximized) {
+                mindmapPopup.style.width = '80vw';
+                maximizeBtn.textContent = maxEmoji;
+                maximizeBtn.title = '还原';
+            } else {
+                mindmapPopup.style.width = '45vw';
+                maximizeBtn.textContent = maxEmoji;
+                maximizeBtn.title = '最大化';
+            }
+        };
+        
+        maximizeBtn.addEventListener('mouseenter', () => {
+            maximizeBtn.style.backgroundColor = '#eee';
+            maximizeBtn.style.color = '#333';
+        });
+        maximizeBtn.addEventListener('mouseleave', () => {
+            maximizeBtn.style.backgroundColor = 'transparent';
+            maximizeBtn.style.color = '#333';
+        });
+        maximizeBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            toggleMaximize();
+        });
+        
+        // 创建关闭按钮
         const closeBtn = createTag('div', '', styles.mindmapCloseBtn);
         closeBtn.textContent = '×';
         closeBtn.addEventListener('mouseenter', () => {
@@ -2810,8 +2850,23 @@
             closeBtn.style.backgroundColor = 'transparent';
             closeBtn.style.color = '#666';
         });
-        closeBtn.addEventListener('click', hideMindmapPopup);
-        appendSeveral(header, title, closeBtn);
+        closeBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            hideMindmapPopup();
+        });
+        
+        // 顶栏点击事件：点击任意位置（关闭按钮除外）触发最大化
+        header.addEventListener('click', (e) => {
+            // 如果点击的是关闭按钮或其子元素，不触发最大化
+            if (closeBtn.contains(e.target)) {
+                return;
+            }
+            // 其他位置都触发最大化
+            toggleMaximize();
+        });
+        
+        appendSeveral(buttonContainer, maximizeBtn, closeBtn);
+        header.appendChild(buttonContainer);
         mindmapPopup.appendChild(header);
 
         // 创建内容区域
@@ -2824,11 +2879,33 @@
         // 创建 SVG 并渲染思维导图（使用 setInnerHTML 避免 TrustedHTML 问题）
         setInnerHTML(content, '<svg style="width:100%;height:100%;"></svg>');
         const svg = content.querySelector('svg');
+        
+        // 点击空白处取消选中文字（在内容区域和SVG上监听）
+        const clearSelection = (e) => {
+            const target = e.target;
+            // 如果点击的是SVG背景、内容区域，或者不是markmap节点，清除选中
+            const isMarkmapNode = target.closest && target.closest('g.markmap-node');
+            if (target === content || target === svg || target.tagName === 'svg' || !isMarkmapNode) {
+                window.getSelection().removeAllRanges();
+            }
+        };
+        content.addEventListener('mousedown', clearSelection);
+        svg.addEventListener('mousedown', clearSelection);
 
         const markdown = convertHeadingsToMarkdown();
         const { Transformer, Markmap } = window.markmap;
         const transformer = new Transformer();
         const { root } = transformer.transform(markdown);
+        
+        // 创建文本到原始标题的映射（用于点击跳转）
+        // 由于 markmap 的 depth 是思维导图层级，不是原始 h 标签级别，所以只通过文本匹配
+        const textToHeadingMap = new Map();
+        currentSubNavHeadings.forEach(heading => {
+            // 使用规范化文本作为 key，避免空格等差异
+            const normalizedText = normalizeHeadingText(heading.text);
+            // 如果文本重复，保存最后一个（通常不会重复）
+            textToHeadingMap.set(normalizedText, heading);
+        });
         
         // Markmap 配置
         const options = {
@@ -2837,7 +2914,47 @@
             spacingHorizontal: 80,  // 水平间距
             duration: 0             // 动画时长
         };
-        Markmap.create(svg, options, root);
+        const markmapInstance = Markmap.create(svg, options, root);
+        
+        // 为思维导图节点添加点击跳转功能
+        setTimeout(() => {
+            const d3 = window.d3;
+            if (!d3) return;
+            
+            // 为所有节点添加点击事件
+            d3.select(svg).selectAll('g[data-depth]').on('click', function(event) {
+                event.stopPropagation();
+                
+                const node = d3.select(this);
+                const nodeData = node.datum();
+                
+                // 从节点数据中获取标题文本
+                if (!nodeData || !nodeData.data) return;
+                
+                const nodeText = nodeData.data.content || nodeData.content || '';
+                if (!nodeText) return;
+                
+                // 通过规范化文本匹配原始标题（不依赖 markmap 的 depth）
+                const normalizedNodeText = normalizeHeadingText(nodeText);
+                const heading = textToHeadingMap.get(normalizedNodeText);
+                
+                // 如果映射中找不到，尝试直接文本匹配（兼容性处理）
+                let matchedHeading = heading;
+                if (!matchedHeading) {
+                    matchedHeading = currentSubNavHeadings.find(h => 
+                        normalizeHeadingText(h.text) === normalizedNodeText
+                    );
+                }
+                
+                // 跳转到对应位置（不关闭弹窗，方便继续查看和点击）
+                if (matchedHeading) {
+                    scrollToHeading(matchedHeading);
+                }
+            });
+            
+            // 添加鼠标样式，提示可点击
+            d3.select(svg).selectAll('g[data-depth]').style('cursor', 'pointer');
+        }, 100);
     };
 
     // 创建思维导图按钮
