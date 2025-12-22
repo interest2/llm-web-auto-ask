@@ -1579,45 +1579,25 @@
     const SUB_NAV_TOP_KEY = "subNavTop";
     const SUB_NAV_TOP_OVERFLOW_KEY = "subNavTopOverflow";
 
-    // 从GM存储读取导航变量，如果没有则使用默认值
-    const getNavMaxWidth = () => {
-        return getGV(NAV_MAX_WIDTH_KEY) || DEFAULT_NAV_MAX_WIDTH;
-    };
-
-    const getNavTop = () => {
-        return getGV(NAV_TOP_KEY) || DEFAULT_NAV_TOP;
-    };
-
-    const getNavTopOverflow = () => {
-        return getGV(NAV_TOP_OVERFLOW_KEY) || DEFAULT_NAV_TOP_OVERFLOW;
-    };
+    // 通用 GM 存储 getter（带默认值）
+    const getGVWithDefault = (key, defaultVal) => getGV(key) || defaultVal;
+    
+    // 从GM存储读取导航变量
+    const getNavMaxWidth = () => getGVWithDefault(NAV_MAX_WIDTH_KEY, DEFAULT_NAV_MAX_WIDTH);
+    const getNavTop = () => getGVWithDefault(NAV_TOP_KEY, DEFAULT_NAV_TOP);
+    const getNavTopOverflow = () => getGVWithDefault(NAV_TOP_OVERFLOW_KEY, DEFAULT_NAV_TOP_OVERFLOW);
+    const getSubNavTopOverflow = () => getGVWithDefault(SUB_NAV_TOP_OVERFLOW_KEY, DEFAULT_SUB_NAV_TOP_OVERFLOW);
 
     let subNavMaxWidthKey = T + "subNavMaxWidth";
 
-    // 获取副目录的最大宽度值（从localStorage读取，如果没有则使用默认值）
+    // 获取/设置副目录最大宽度值
     const getSubNavMaxWidth = () => {
-        const savedMaxWidth = getS(subNavMaxWidthKey);
-        if (!isEmpty(savedMaxWidth)) return savedMaxWidth;
-        return DEFAULT_SUB_NAV_MAX_WIDTH;
+        const saved = getS(subNavMaxWidthKey);
+        return isEmpty(saved) ? DEFAULT_SUB_NAV_MAX_WIDTH : saved;
     };
+    const setSubNavMaxWidth = (maxWidth) => { setS(subNavMaxWidthKey, maxWidth); updateNavStyles(); };
 
-    // 设置副目录的最大宽度值到localStorage
-    const setSubNavMaxWidth = (maxWidth) => {
-        setS(subNavMaxWidthKey, maxWidth);
-        updateNavStyles();
-    };
-
-    const getSubNavTop = () => {
-        const saved = getGV(SUB_NAV_TOP_KEY);
-        if (saved) {
-            return saved;
-        }
-        return site === STUDIO ? "35%" : DEFAULT_SUB_NAV_TOP;
-    };
-
-    const getSubNavTopOverflow = () => {
-        return getGV(SUB_NAV_TOP_OVERFLOW_KEY) || DEFAULT_SUB_NAV_TOP_OVERFLOW;
-    };
+    const getSubNavTop = () => getGV(SUB_NAV_TOP_KEY) || (site === STUDIO ? "35%" : DEFAULT_SUB_NAV_TOP);
 
     // 根据top值计算max-height，使总和为99vh
     const calculateSubNavMaxHeight = (topValue) => {
@@ -1658,8 +1638,6 @@
     const NAV_NEAR_TOP_THRESHOLD = 24; // 接近顶部阈值（像素）
     const NAV_CLICK_LOCK_DURATION = 1200; // 点击锁定持续时间（毫秒）
     const NAV_UPDATE_TEXT_DELAY = 500; // 导航链接文本更新延迟（毫秒）
-    const NAV_RETRY_MAX_COUNT = 10; // 导航链接跳转最大重试次数
-    const NAV_RETRY_INTERVAL = 100; // 导航链接跳转重试间隔（毫秒）
     // 副目录标题级别配置（可配置为 h1~h4、h2~h4 或 h2~h3）
     const SUB_NAV_HEADING_LEVELS = [4, 3, 2, 1]; // 支持 h4, h3, h2, h1（顺序从低到高）
     const SUB_NAV_HEADING_SELECTOR = SUB_NAV_HEADING_LEVELS.map(level => `h${level}`).join(', '); // 生成选择器字符串，如 "h1, h2, h3, h4"
@@ -1715,7 +1693,6 @@
 
             // 副目录样式
             subNavBar: `position:fixed;left:${SUB_NAV_LEFT};top:${subNavTop};max-width:${subNavMaxWidth};min-width:${subNavMinWidth};max-height:${subNavMaxHeight};background:rgba(255,255,255,1);border:1px solid #ccc;border-radius:6px;padding:0 8px;z-index:2147483646;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,0.15);overflow-y:auto;box-sizing:border-box;display:none;`,
-            subNavTitle: `font-weight:bold;color:#111;padding:4px 0;border-bottom:1px solid #eaeaea;margin-bottom:6px;font-size:14px;`,
             subNavCloseBtn: `position:absolute;top:0;right:5px;font-size:18px;cursor:pointer;color:#333;width:20px;height:20px;display:flex;align-items:center;justify-content:center;border-radius:3px;transition:background-color 0.2s;`,
 
             subNavItem: `padding:4px 2px;cursor:pointer;color:#333;font-size:13px;line-height:1.6;border-radius:3px;margin:2px 0;transition:background-color 0.2s;word-break:break-word;`,
@@ -1731,33 +1708,17 @@
             levelBtnLeave: `background-color:#fff;border-color:#ddd;color:#333;`,
 
             subNavMaxWidthBtn: `position:absolute;top:0;right:${SUB_POS_RIGHT};font-size:12px;margin:0 3px;padding:0 4px;cursor:pointer;color:#111;height:20px;display:flex;align-items:center;justify-content:center;border:1px solid #ccc;border-radius:3px;transition:background-color 0.2s;`,
-            subNavMaxWidthBtnHover: `background-color:#f0f0f0;`,
-            subNavMaxWidthBtnNormal: `background-color:transparent;`,
             subNavMaxWidthInput: `position:absolute;top:0;right:${SUB_POS_RIGHT};width:45px;height:20px;padding:0 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;`,
-
             subNavPositionBtn: `position:absolute;top:0;right:${SUB_POS_RIGHT};font-size:12px;margin:0 3px;padding:0 4px;cursor:pointer;color:#111;height:20px;display:flex;align-items:center;justify-content:center;border:1px solid #ccc;border-radius:3px;transition:background-color 0.2s;`,
-            subNavPositionBtnHover: `background-color:#f0f0f0;`,
-            subNavPositionBtnNormal: `background-color:transparent;`,
             subNavPositionInput: `position:absolute;top:0;right:${SUB_POS_RIGHT};width:45px;height:20px;padding:0 4px;font-size:12px;border:1px solid #ccc;border-radius:3px;outline:none;`,
-
             subNavAlignLeftBtn: `position:absolute;top:${SUB_ALIGN_LEFT_TOP};right:${SUB_POS_RIGHT};font-size:12px;padding:0 3px;margin:0 3px;cursor:pointer;color:#111;display:flex;align-items:center;justify-content:center;border:1px solid #ccc;border-radius:3px;transition:background-color 0.2s;`,
-            subNavAlignLeftBtnHover: `background-color:#f0f0f0;`,
-            subNavAlignLeftBtnActive: `background-color:${SUB_ALIGN_LEFT_ACTIVE_BG};`,
-            subNavAlignLeftBtnNormal: `background-color:transparent;`,
-
             subNavAlignRightBtn: `position:absolute;top:${SUB_ALIGN_LEFT_TOP};right:${SUB_POS_RIGHT};font-size:12px;padding:0 3px;margin:0 3px;cursor:pointer;color:#111;display:flex;align-items:center;justify-content:center;border:1px solid #ccc;border-radius:3px;transition:background-color 0.2s;`,
-            subNavAlignRightBtnHover: `background-color:#f0f0f0;`,
-            subNavAlignRightBtnActive: `background-color:${SUB_ALIGN_RIGHT_ACTIVE_BG};`,
-            subNavAlignRightBtnNormal: `background-color:transparent;`,
             subNavButtonRow: `display:flex;align-items:center;justify-content:flex-end;gap:4px;margin-top:4px;`,
 
-            // 思维导图按钮样式
+            // 思维导图样式
             mindmapBtn: `padding:2px 6px;font-size:11px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;transition:all 0.2s;user-select:none;margin-right:4px;`,
-            mindmapBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
-            // 思维导图弹窗样式
             mindmapPopup: `position:fixed;top:50%;left:5px;transform:translate(0%,-50%);width:45vw;height:90vh;background:#fff;border:1px solid #ccc;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.25);z-index:2147483647;display:flex;flex-direction:column;`,
             mindmapHeader: `display:flex;justify-content:space-between;align-items:center;padding:10px 15px;border-bottom:1px solid #eee;background:#f8f8f8;border-radius:8px 8px 0 0;position:relative;`,
-            mindmapTitle: `font-weight:bold;font-size:15px;color:#333;`,
             mindmapCloseBtn: `font-size:22px;cursor:pointer;color:#666;width:100px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;`,
             mindmapMaximizeBtn: `font-size:12px;cursor:pointer;color:#666;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;font-weight:bold;`,
             mindmapContent: `padding:5px;flex:1;overflow:hidden;min-height:35vh;position:relative;`,
@@ -1827,7 +1788,7 @@
     let subNavLeftBeforeAlignRight = subNavLeft;
 
     // 状态变量
-    let navQuestions, navLinks = [], navIO, elToLink = new Map();
+    let navQuestions, navLinks = [], navIO;
     let clickedTarget = null, clickLockUntil = 0, scrollDebounceTimer;
     let currentSubNavQuestionIndex = -1; // 当前显示的副目录对应的主目录索引
     let preservedNavTextsUrl = null; // 保存保留文本时的 URL
@@ -1878,12 +1839,9 @@
         return rect ? Math.abs(rect.top) < threshold : false;
     };
 
-    // 获取视口高度
-    const getViewportHeight = () => window.innerHeight || document.documentElement.clientHeight;
-
     // 计算元素在视口中的位置百分比
     const getElementPositionPercent = (rect) => {
-        const viewportHeight = getViewportHeight();
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
         return rect.top / viewportHeight;
     };
 
@@ -2384,30 +2342,14 @@
     const scrollToHeading = (heading) => {
         if (!heading) return false;
         
-        // 先尝试使用保存的元素引用
         let targetElement = heading.element;
         
         // 如果元素引用失效，重新查找对应的标题元素
         if (!targetElement || !document.body.contains(targetElement)) {
-            // 获取当前问题索引
-            const questionIndex = currentSubNavQuestionIndex;
-            if (questionIndex >= 0 && navQuestions && questionIndex < navQuestions.length) {
-                const targetEl = navQuestions[questionIndex];
-                if (targetEl && document.body.contains(targetEl)) {
-                    // 查找回答内容区域
-                    const answerContent = findAnswerContent(targetEl);
-                    if (answerContent) {
-                        // 重新查找所有标题
-                        const headings = findHeadingsInContent(answerContent);
-                        // 查找匹配的标题（通过文本和级别）
-                        const matchedHeading = headings.find(h =>
-                            h.text === heading.text && h.level === heading.level
-                        );
-                        if (matchedHeading && matchedHeading.element) {
-                            targetElement = matchedHeading.element;
-                        }
-                    }
-                }
+            const result = loadHeadingsForQuestion(currentSubNavQuestionIndex);
+            if (result) {
+                const matchedHeading = result.headings.find(h => h.text === heading.text && h.level === heading.level);
+                if (matchedHeading?.element) targetElement = matchedHeading.element;
             }
         }
         
@@ -2567,254 +2509,146 @@
         return existingLevels;
     };
 
+    // px格式验证正则
+    const PX_FORMAT_REGEX = /^\d+(\.\d+)?px$/;
+
     // 创建副目录最大宽度按钮
     const createSubNavMaxWidthBtn = (buttonRow) => {
-        const maxWidthBtn = createTag('div', "", NAV_STYLES.subNavMaxWidthBtn);
-        maxWidthBtn.textContent = '最大宽';
-        maxWidthBtn.title = '设置副目录最大宽度';
-        maxWidthBtn.style.position = 'relative';
-        maxWidthBtn.style.top = 'auto';
-        maxWidthBtn.style.right = 'auto';
-        maxWidthBtn.addEventListener('mouseenter', () => {
-            maxWidthBtn.style.backgroundColor = '#f0f0f0';
-        });
-        maxWidthBtn.addEventListener('mouseleave', () => {
-            maxWidthBtn.style.backgroundColor = 'transparent';
-        });
-        maxWidthBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-
-            // 创建输入框
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.value = getSubNavMaxWidth();
-            input.style.cssText = NAV_STYLES.subNavMaxWidthInput.replace('position:absolute;top:0;right:', 'position:relative;top:auto;right:auto;');
-
-            // 替换按钮为输入框（使用insertBefore保持位置）
-            buttonRow.insertBefore(input, maxWidthBtn);
-            maxWidthBtn.style.display = 'none';
-            input.focus();
-            input.select();
-
-            // blur事件：保存值并更新宽度
-            input.addEventListener('blur', () => {
-                const newMaxWidth = input.value.trim();
-                const formatRegex = /^\d+(\.\d+)?px$/;
-                if (newMaxWidth && formatRegex.test(newMaxWidth)) {
-                    const minWidthNum = parseFloat(subNavMinWidth);
-                    const newMaxWidthNum = parseFloat(newMaxWidth);
-                    if (newMaxWidthNum >= minWidthNum) {
-                        // 格式正确且大于等于最小宽度，保存并更新
-                        setSubNavMaxWidth(newMaxWidth);
-                        subNavBar.style.maxWidth = newMaxWidth;
-                    } else {
-                        input.value = getSubNavMaxWidth();
-                        alert(`最大宽度不能小于最小宽度 ${subNavMinWidth}`);
-                    }
-                } else if (newMaxWidth) {
-                    input.value = getSubNavMaxWidth();
-                    alert('格式错误，请输入"数字+px"格式，例如：260px');
+        return createEditableButton({
+            text: '最大宽',
+            title: '设置副目录最大宽度',
+            btnStyle: NAV_STYLES.subNavMaxWidthBtn,
+            inputStyle: NAV_STYLES.subNavMaxWidthInput,
+            getValue: getSubNavMaxWidth,
+            setValue: setSubNavMaxWidth,
+            container: buttonRow,
+            validate: (val) => {
+                if (!PX_FORMAT_REGEX.test(val)) {
+                    return { valid: false, error: '格式错误，请输入"数字+px"格式，例如：260px' };
                 }
-                // 恢复按钮（使用insertBefore保持位置）
-                buttonRow.insertBefore(maxWidthBtn, input);
-                input.remove();
-                maxWidthBtn.style.display = 'flex';
-            });
-
-            // Enter键也触发blur
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    input.blur();
+                if (parseFloat(val) < parseFloat(subNavMinWidth)) {
+                    return { valid: false, error: `最大宽度不能小于最小宽度 ${subNavMinWidth}` };
                 }
-            });
+                return { valid: true };
+            },
+            onSave: (val) => { subNavBar.style.maxWidth = val; }
         });
-        return maxWidthBtn;
     };
 
     // 创建副目录位置按钮
     const createSubNavPositionBtn = (buttonRow) => {
-        const positionBtn = createTag('div', "", NAV_STYLES.subNavPositionBtn);
-        positionBtn.textContent = '位置';
-        positionBtn.title = '设置副目录水平位置';
-        positionBtn.style.position = 'relative';
-        positionBtn.style.top = 'auto';
-        positionBtn.style.right = 'auto';
-        positionBtn.addEventListener('mouseenter', () => {
-            positionBtn.style.backgroundColor = '#f0f0f0';
-        });
-        positionBtn.addEventListener('mouseleave', () => {
-            positionBtn.style.backgroundColor = 'transparent';
-        });
-        positionBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-
-            // 创建输入框
-            const input = document.createElement('input');
-            input.type = 'text';
-            input.value = getSubNavLeft();
-            input.style.cssText = NAV_STYLES.subNavPositionInput.replace('position:absolute;top:0;right:', 'position:relative;top:auto;right:auto;');
-
-            // 替换按钮为输入框（使用insertBefore保持位置）
-            buttonRow.insertBefore(input, positionBtn);
-            positionBtn.style.display = 'none';
-            input.focus();
-            input.select();
-
-            // blur事件：保存值并更新位置
-            input.addEventListener('blur', () => {
-                const newLeft = input.value.trim();
-                const formatRegex = /^\d+(\.\d+)?px$/;
-                if (newLeft && formatRegex.test(newLeft)) {
-                    // 格式正确，保存到localStorage，更新副目录的left位置
-                    setSubNavLeft(newLeft);
-                    subNavBar.style.left = newLeft;
-                    subNavBar.style.right = 'auto';
-                    isSubNavAlignedLeft = newLeft === alignLeftValue;
-                    isSubNavAlignedRight = false;
-                    if (!isSubNavAlignedLeft) {
-                        subNavLeftBeforeAlign = newLeft;
-                        subNavLeftBeforeAlignRight = newLeft;
-                    }
-                } else if (newLeft) {
-                    input.value = getSubNavLeft();
-                    alert('位置格式错误，请输入"数字+px"格式，例如：270px');
+        return createEditableButton({
+            text: '位置',
+            title: '设置副目录水平位置',
+            btnStyle: NAV_STYLES.subNavPositionBtn,
+            inputStyle: NAV_STYLES.subNavPositionInput,
+            getValue: getSubNavLeft,
+            setValue: (val) => {
+                setSubNavLeft(val);
+                subNavBar.style.left = val;
+                subNavBar.style.right = 'auto';
+                isSubNavAlignedLeft = val === alignLeftValue;
+                isSubNavAlignedRight = false;
+                if (!isSubNavAlignedLeft) {
+                    subNavLeftBeforeAlign = val;
+                    subNavLeftBeforeAlignRight = val;
                 }
-                // 恢复按钮（使用insertBefore保持位置）
-                buttonRow.insertBefore(positionBtn, input);
-                input.remove();
-                positionBtn.style.display = 'flex';
-            });
-
-            // Enter键也触发blur
-            input.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    input.blur();
+            },
+            container: buttonRow,
+            validate: (val) => {
+                if (!PX_FORMAT_REGEX.test(val)) {
+                    return { valid: false, error: '位置格式错误，请输入"数字+px"格式，例如：270px' };
                 }
-            });
+                return { valid: true };
+            }
         });
-        return positionBtn;
     };
 
     // 创建副目录靠左按钮
     const createSubNavAlignLeftBtn = () => {
-        const alignLeftBtn = createTag('div', "", NAV_STYLES.subNavAlignLeftBtn + (isSubNavAlignedLeft ? NAV_STYLES.subNavAlignLeftBtnActive : NAV_STYLES.subNavAlignLeftBtnNormal));
-        alignLeftBtn.textContent = '左';
-        alignLeftBtn.title = '靠左/恢复原位置';
-
-        const refreshAlignLeftBtnStyle = (isHover = false) => {
-            const baseBg = isSubNavAlignedLeft ? SUB_ALIGN_LEFT_ACTIVE_BG : 'transparent';
-            const hoverBg = isHover ? '#f0f0f0' : baseBg;
-            alignLeftBtn.style.backgroundColor = hoverBg;
-        };
-
-        alignLeftBtn.addEventListener('mouseenter', () => {
-            refreshAlignLeftBtnStyle(true);
-        });
-        alignLeftBtn.addEventListener('mouseleave', () => {
-            refreshAlignLeftBtnStyle(false);
-        });
-        alignLeftBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const currentLeft = getSubNavLeft();
-            if (!isSubNavAlignedLeft) {
-                if (isSubNavAlignedRight) {
-                    subNavLeftBeforeAlign = subNavLeftBeforeAlignRight || SUB_NAV_LEFT;
-                } else if (currentLeft !== alignLeftValue) {
-                    subNavLeftBeforeAlign = currentLeft;
-                } else if (!subNavLeftBeforeAlign) {
-                    subNavLeftBeforeAlign = SUB_NAV_LEFT;
+        return createAlignButton({
+            text: '左',
+            title: '靠左/恢复原位置',
+            style: NAV_STYLES.subNavAlignLeftBtn,
+            activeBg: SUB_ALIGN_LEFT_ACTIVE_BG,
+            isActive: () => isSubNavAlignedLeft,
+            onClick: () => {
+                const currentLeft = getSubNavLeft();
+                if (!isSubNavAlignedLeft) {
+                    if (isSubNavAlignedRight) {
+                        subNavLeftBeforeAlign = subNavLeftBeforeAlignRight || SUB_NAV_LEFT;
+                    } else if (currentLeft !== alignLeftValue) {
+                        subNavLeftBeforeAlign = currentLeft;
+                    } else if (!subNavLeftBeforeAlign) {
+                        subNavLeftBeforeAlign = SUB_NAV_LEFT;
+                    }
+                    setSubNavLeft(alignLeftValue);
+                    subNavBar.style.left = alignLeftValue;
+                    subNavBar.style.right = 'auto';
+                    isSubNavAlignedLeft = true;
+                    isSubNavAlignedRight = false;
+                } else {
+                    const restoreLeft = subNavLeftBeforeAlign || SUB_NAV_LEFT;
+                    setSubNavLeft(restoreLeft);
+                    subNavBar.style.left = restoreLeft;
+                    subNavBar.style.right = 'auto';
+                    isSubNavAlignedLeft = false;
                 }
-                setSubNavLeft(alignLeftValue);
-                subNavBar.style.left = alignLeftValue;
-                subNavBar.style.right = 'auto';
-                isSubNavAlignedLeft = true;
-                isSubNavAlignedRight = false;
-            } else {
-                const restoreLeft = subNavLeftBeforeAlign || SUB_NAV_LEFT;
-                setSubNavLeft(restoreLeft);
-                subNavBar.style.left = restoreLeft;
-                subNavBar.style.right = 'auto';
-                isSubNavAlignedLeft = false;
             }
-            refreshAlignLeftBtnStyle(false);
         });
-
-        return alignLeftBtn;
     };
 
     // 创建副目录靠右按钮
     const createSubNavAlignRightBtn = () => {
-        const alignRightBtn = createTag('div', "", NAV_STYLES.subNavAlignRightBtn + (isSubNavAlignedRight ? NAV_STYLES.subNavAlignRightBtnActive : NAV_STYLES.subNavAlignRightBtnNormal));
-        alignRightBtn.textContent = '右';
-        alignRightBtn.title = '靠右/恢复原位置';
-
-        const refreshAlignRightBtnStyle = (isHover = false) => {
-            const baseBg = isSubNavAlignedRight ? SUB_ALIGN_RIGHT_ACTIVE_BG : 'transparent';
-            const hoverBg = isHover ? '#f0f0f0' : baseBg;
-            alignRightBtn.style.backgroundColor = hoverBg;
-        };
-
-        alignRightBtn.addEventListener('mouseenter', () => {
-            refreshAlignRightBtnStyle(true);
-        });
-        alignRightBtn.addEventListener('mouseleave', () => {
-            refreshAlignRightBtnStyle(false);
-        });
-        alignRightBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const currentLeft = getSubNavLeft();
-            if (!isSubNavAlignedRight) {
-                if (isSubNavAlignedLeft) {
-                    subNavLeftBeforeAlignRight = subNavLeftBeforeAlign || SUB_NAV_LEFT;
-                } else if (currentLeft !== alignRightValue) {
-                    subNavLeftBeforeAlignRight = currentLeft;
-                } else if (!subNavLeftBeforeAlignRight) {
-                    subNavLeftBeforeAlignRight = SUB_NAV_LEFT;
+        return createAlignButton({
+            text: '右',
+            title: '靠右/恢复原位置',
+            style: NAV_STYLES.subNavAlignRightBtn,
+            activeBg: SUB_ALIGN_RIGHT_ACTIVE_BG,
+            isActive: () => isSubNavAlignedRight,
+            onClick: () => {
+                const currentLeft = getSubNavLeft();
+                if (!isSubNavAlignedRight) {
+                    if (isSubNavAlignedLeft) {
+                        subNavLeftBeforeAlignRight = subNavLeftBeforeAlign || SUB_NAV_LEFT;
+                    } else if (currentLeft !== alignRightValue) {
+                        subNavLeftBeforeAlignRight = currentLeft;
+                    } else if (!subNavLeftBeforeAlignRight) {
+                        subNavLeftBeforeAlignRight = SUB_NAV_LEFT;
+                    }
+                    subNavBar.style.left = 'auto';
+                    subNavBar.style.right = alignRightValue;
+                    isSubNavAlignedRight = true;
+                    isSubNavAlignedLeft = false;
+                } else {
+                    const restoreLeft = subNavLeftBeforeAlignRight || SUB_NAV_LEFT;
+                    setSubNavLeft(restoreLeft);
+                    subNavBar.style.left = restoreLeft;
+                    subNavBar.style.right = 'auto';
+                    isSubNavAlignedRight = false;
                 }
-                subNavBar.style.left = 'auto';
-                subNavBar.style.right = alignRightValue;
-                isSubNavAlignedRight = true;
-                isSubNavAlignedLeft = false;
-            } else {
-                const restoreLeft = subNavLeftBeforeAlignRight || SUB_NAV_LEFT;
-                setSubNavLeft(restoreLeft);
-                subNavBar.style.left = restoreLeft;
-                subNavBar.style.right = 'auto';
-                isSubNavAlignedRight = false;
             }
-            refreshAlignRightBtnStyle(false);
         });
-
-        return alignRightBtn;
     };
 
     // 创建副目录关闭按钮
     const createSubNavCloseBtn = () => {
-        const closeBtn = createTag('div', "", NAV_STYLES.subNavCloseBtn);
-        closeBtn.textContent = '×';
-        closeBtn.title = '关闭副目录';
-        closeBtn.addEventListener('mouseenter', () => {
-            closeBtn.style.backgroundColor = '#f0f0f0';
-        });
-        closeBtn.addEventListener('mouseleave', () => {
-            closeBtn.style.backgroundColor = 'transparent';
-        });
-        closeBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-
-            // 检查是否是首次点击（用GM存储标记状态）
-            const firstCloseKey = `${T}subNavFirstCloseShown`;
-            const hasShownFirstClose = GM_getValue(firstCloseKey, false);
-            if (!hasShownFirstClose) {
-                alert("这家大模型将不再显示副目录；\n若需恢复，点击主目录每条提问前的小图标即可");
-                GM_setValue(firstCloseKey, true);
+        return createNavButton({
+            text: '×',
+            title: '关闭副目录',
+            style: NAV_STYLES.subNavCloseBtn,
+            onClick: (e) => {
+                e.stopPropagation();
+                // 检查是否是首次点击（用GM存储标记状态）
+                const firstCloseKey = `${T}subNavFirstCloseShown`;
+                if (!GM_getValue(firstCloseKey, false)) {
+                    alert("这家大模型将不再显示副目录；\n若需恢复，点击主目录每条提问前的小图标即可");
+                    GM_setValue(firstCloseKey, true);
+                }
+                setSubNavClosed(true);
+                hideSubNavBar();
             }
-
-            // 记录关闭状态
-            setSubNavClosed(true);
-            hideSubNavBar();
         });
-        return closeBtn;
     };
 
     // 将层次化标题转换为 Markdown 格式（使用所有层级）
@@ -2869,37 +2703,41 @@
         setInnerHTML(content, '<svg style="width:100%;height:100%;"></svg>');
         const svg = content.querySelector('svg');
 
-        // 创建重置缩放按钮（右上角，默认隐藏）
-        const resetScaleBtn = createTag('div', '', NAV_STYLES.mindmapResetScaleBtn);
+        // 创建重置缩放按钮（右上角，默认隐藏，支持切换还原）
+        let savedTransform = null; // 保存重置前的缩放状态
+        let isResetState = false;  // 当前是否处于重置状态
+        
+        const resetScaleBtn = createNavButton({
+            text: '🔍',
+            title: '重置缩放为 1.0',
+            style: NAV_STYLES.mindmapResetScaleBtn,
+            onClick: (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (!markmapInstance) return;
+                const d3 = window.d3;
+                if (!d3) return;
+                const svgEl = markmapInstance.svg.node();
+                const { height } = svgEl.getBoundingClientRect();
+                
+                if (!isResetState) {
+                    // 保存当前缩放状态，然后重置为 1.0
+                    savedTransform = d3.zoomTransform(svgEl);
+                    markmapInstance.svg.call(markmapInstance.zoom.transform, d3.zoomIdentity.translate(0, height / 2).scale(1.0));
+                    resetScaleBtn.textContent = '🔍';
+                    isResetState = true;
+                } else {
+                    // 还原到之前的缩放状态
+                    if (savedTransform) {
+                        markmapInstance.svg.call(markmapInstance.zoom.transform, savedTransform);
+                    }
+                    resetScaleBtn.textContent = '🔍';
+                    isResetState = false;
+                }
+            }
+        });
         resetScaleBtn.className = 'mindmap-reset-scale-btn';
-        resetScaleBtn.textContent = '🔍';
-        resetScaleBtn.title = '重置缩放为 1.0';
-        resetScaleBtn.style.display = 'none'; // 默认隐藏
-        resetScaleBtn.addEventListener('mouseenter', () => {
-            resetScaleBtn.style.cssText = NAV_STYLES.mindmapResetScaleBtn + NAV_STYLES.mindmapResetScaleBtnHover;
-        });
-        resetScaleBtn.addEventListener('mouseleave', () => {
-            resetScaleBtn.style.cssText = NAV_STYLES.mindmapResetScaleBtn;
-        });
-        resetScaleBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            
-            if (!markmapInstance) return;
-            
-            const d3 = window.d3;
-            if (!d3) return;
-            
-            // 获取 SVG 元素和尺寸
-            const svgEl = markmapInstance.svg.node();
-            const { width, height } = svgEl.getBoundingClientRect();
-            
-            // 重置缩放为 1.0 并居中
-            markmapInstance.svg.call(
-                markmapInstance.zoom.transform,
-                d3.zoomIdentity.translate(0, height / 2).scale(1.0)
-            );
-        });
+        resetScaleBtn.style.display = 'none';
         content.appendChild(resetScaleBtn);
 
         // 点击空白处取消选中文字
@@ -2989,53 +2827,25 @@
 
     // 更新思维导图内容（当点击主目录条目时调用）
     const updateMindmapContent = (questionIndex) => {
-        if (!isMindmapOpen || !mindmapPopup || questionIndex < 0 || !navQuestions || questionIndex >= navQuestions.length) {
-            return;
-        }
-
-        const targetEl = navQuestions[questionIndex];
-        if (!targetEl || !document.body.contains(targetEl)) {
-            return;
-        }
-
-        // 查找回答内容区域
-        const answerContent = findAnswerContent(targetEl);
-        if (!answerContent) {
-            return;
-        }
-
-        // 查找标题
-        const headings = findHeadingsInContent(answerContent);
+        if (!isMindmapOpen || !mindmapPopup) return;
+        
+        const result = loadHeadingsForQuestion(questionIndex);
+        const headings = result ? result.headings : [];
         
         // 更新标题数据和问题索引（无论是否满足条件都要更新，保持状态一致）
         currentSubNavHeadings = headings;
         currentSubNavQuestionIndex = questionIndex;
-        h1Count = headings ? headings.filter(h => h.level === 1).length : 0;
+        h1Count = headings.filter(h => h.level === 1).length;
         
-        if (headings.length === 0) {
-            // 如果没有标题，关闭导图（条件不满足自动关闭）
+        // 条件不满足时关闭导图
+        if (headings.length === 0 || headings.length <= SUB_NAV_MIN_ITEMS) {
             hideMindmapPopup(false);
             return;
-        }
-
-        // 检测标题总条数，超过指定数量才显示思维导图（复用副目录的阈值逻辑）
-        if (headings.length <= SUB_NAV_MIN_ITEMS) {
-            // 如果新内容不满足条件，关闭已打开的导图（条件不满足自动关闭）
-            hideMindmapPopup(false);
-            return;
-        }
-
-        // 更新头部序号显示
-        const indexText = mindmapPopup.querySelector('.mindmap-index-text');
-        if (indexText) {
-            // indexText.textContent = `图 ${questionIndex + 1}`;
         }
 
         // 获取内容区域并重新渲染
         const content = mindmapPopup.querySelector('#mindmap-content-container');
-        if (!content) return;
-        
-        renderMindmapContent(content);
+        if (content) renderMindmapContent(content);
     };
 
     // 显示思维导图弹窗
@@ -3064,55 +2874,29 @@
         // 创建右侧按钮容器（最大化按钮和关闭按钮）
         const rightButtonContainer = createTag('div', '', 'display:flex;align-items:center;gap:8px;');
         
-        // 创建最大化按钮
-        const maximizeBtn = createTag('div', '', styles.mindmapMaximizeBtn);
-        const maxEmoji = '⬜';
-        maximizeBtn.textContent = maxEmoji;
-        maximizeBtn.title = '最大化';
+        // 最大化状态和切换函数
         let isMaximized = false;
-        
-        // 最大化/还原功能
         const toggleMaximize = () => {
             isMaximized = !isMaximized;
-            if (isMaximized) {
-                mindmapPopup.style.width = '80vw';
-                maximizeBtn.textContent = maxEmoji;
-                maximizeBtn.title = '还原';
-            } else {
-                mindmapPopup.style.width = '45vw';
-                maximizeBtn.textContent = maxEmoji;
-                maximizeBtn.title = '最大化';
-            }
+            mindmapPopup.style.width = isMaximized ? '80vw' : '45vw';
+            maximizeBtn.title = isMaximized ? '还原' : '最大化';
         };
         
-        maximizeBtn.addEventListener('mouseenter', () => {
-            maximizeBtn.style.backgroundColor = '#eee';
-            maximizeBtn.style.color = '#333';
-        });
-        maximizeBtn.addEventListener('mouseleave', () => {
-            maximizeBtn.style.backgroundColor = 'transparent';
-            maximizeBtn.style.color = '#333';
-        });
-        maximizeBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            toggleMaximize();
+        // 创建最大化按钮
+        const maximizeBtn = createNavButton({
+            text: '⬜',
+            title: '最大化',
+            style: styles.mindmapMaximizeBtn,
+            hoverBg: '#eee',
+            onClick: (e) => { e.preventDefault(); e.stopPropagation(); toggleMaximize(); }
         });
         
         // 创建关闭按钮
-        const closeBtn = createTag('div', '', styles.mindmapCloseBtn);
-        closeBtn.textContent = '×';
-        closeBtn.addEventListener('mouseenter', () => {
-            closeBtn.style.backgroundColor = '#eee';
-            closeBtn.style.color = '#333';
-        });
-        closeBtn.addEventListener('mouseleave', () => {
-            closeBtn.style.backgroundColor = 'transparent';
-            closeBtn.style.color = '#666';
-        });
-        closeBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            hideMindmapPopup(true); // 手动关闭
+        const closeBtn = createNavButton({
+            text: '×',
+            style: styles.mindmapCloseBtn,
+            hoverBg: '#eee',
+            onClick: (e) => { e.stopPropagation(); hideMindmapPopup(true); }
         });
         
         rightButtonContainer.appendChild(maximizeBtn);
@@ -3179,23 +2963,16 @@
 
     // 创建思维导图按钮
     const createSubNavMindmapBtn = () => {
-        const btn = createTag('div', '', NAV_STYLES.mindmapBtn);
-        btn.textContent = '🗺️';
-        btn.title = '思维导图';
-
-        btn.addEventListener('mouseenter', () => {
-            btn.style.cssText = NAV_STYLES.mindmapBtn + NAV_STYLES.mindmapBtnHover;
+        return createNavButton({
+            text: '🗺️',
+            title: '思维导图',
+            style: NAV_STYLES.mindmapBtn,
+            onClick: (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                showMindmapPopup();
+            }
         });
-        btn.addEventListener('mouseleave', () => {
-            btn.style.cssText = NAV_STYLES.mindmapBtn;
-        });
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            showMindmapPopup();
-        });
-
-        return btn;
     };
 
     // 创建副目录层级按钮组
@@ -3441,37 +3218,14 @@
 
     // 根据问题索引自动显示对应的副目录
     const autoShowSubNav = (questionIndex) => {
-        if (questionIndex < 0 || !navQuestions || questionIndex >= navQuestions.length) {
-            return;
-        }
+        if (isSubNavClosed()) return;
+        
+        const result = loadHeadingsForQuestion(questionIndex);
+        if (!result || result.headings.length === 0) return;
 
-        // 如果已关闭，则不加载
-        if (isSubNavClosed()) {
-            return;
-        }
-
-        const targetEl = navQuestions[questionIndex];
-        if (!targetEl || !document.body.contains(targetEl)) {
-            return;
-        }
-
-        // 查找回答内容区域
-        const answerContent = findAnswerContent(targetEl);
-        if (!answerContent) {
-            return;
-        }
-
-        // 查找标题
-        const headings = findHeadingsInContent(answerContent);
-        if (headings.length === 0) {
-            return;
-        }
-
-        // 显示副目录栏
-        // 检查是否是轮询调用（通过检查副目录栏是否已显示来判断）
-        const isPolling = subNavBar.style.display === 'block' &&
-                         currentSubNavQuestionIndex === questionIndex;
-        showSubNavBar(questionIndex, headings, isPolling);
+        // 检查是否是轮询调用
+        const isPolling = subNavBar.style.display === 'block' && currentSubNavQuestionIndex === questionIndex;
+        showSubNavBar(questionIndex, result.headings, isPolling);
     };
 
     // 处理导航链接点击事件
@@ -3537,26 +3291,15 @@
                     } else {
                         updateMindmapContent(i);
                     }
-                } else if (!isMindmapManuallyClosed) {
+                } else if (!isMindmapManuallyClosed && subNavUpdated) {
                     // 如果之前是条件不满足自动关闭的，检查新内容是否满足条件，满足则自动展示
-                    // 只有副目录更新了（满足条件）才自动展示导图
-                    if (subNavUpdated) {
-                        const targetEl = navQuestions[i];
-                        if (targetEl && document.body.contains(targetEl)) {
-                            const answerContent = findAnswerContent(targetEl);
-                            if (answerContent) {
-                                const headings = findHeadingsInContent(answerContent);
-                                // 更新标题数据和问题索引（无论是否满足条件都要更新，保持状态一致）
-                                currentSubNavHeadings = headings || [];
-                                currentSubNavQuestionIndex = i;
-                                h1Count = headings ? headings.filter(h => h.level === 1).length : 0;
-                                
-                                // 只有满足条件时才自动展示
-                                if (headings && headings.length > SUB_NAV_MIN_ITEMS) {
-                                    // 自动展示思维导图（传入 true 表示自动展示，会检查手动关闭标记）
-                                    showMindmapPopup(true);
-                                }
-                            }
+                    const result = loadHeadingsForQuestion(i);
+                    if (result) {
+                        currentSubNavHeadings = result.headings;
+                        currentSubNavQuestionIndex = i;
+                        h1Count = result.headings.filter(h => h.level === 1).length;
+                        if (result.headings.length > SUB_NAV_MIN_ITEMS) {
+                            showMindmapPopup(true);
                         }
                     }
                 }
@@ -3591,39 +3334,15 @@
                 return;
             }
 
-            // 查找问题对应的回答内容区域
-            let targetEl = el;
-            if (!targetEl || !document.body.contains(targetEl)) {
-                const questions = getQuestionList();
-                if (questions && questions.length > i) {
-                    targetEl = questions[i];
-                }
-            }
-
-            if (!targetEl) {
-                console.warn('问题元素不存在');
-                return;
-            }
-
-            // 查找回答内容区域
-            const answerContent = findAnswerContent(targetEl);
-            if (!answerContent) {
-                console.log('未找到回答内容区域');
-                return;
-            }
-
-            // 查找标题
-            const headings = findHeadingsInContent(answerContent);
-            if (headings.length === 0) {
+            const result = loadHeadingsForQuestion(i);
+            if (!result || result.headings.length === 0) {
                 console.log('未找到h2~h4标题');
                 return;
             }
 
             // 清除关闭状态（恢复副目录）
             setSubNavClosed(false);
-
-            // 显示副目录栏
-            showSubNavBar(i, headings);
+            showSubNavBar(i, result.headings);
         });
 
         // 创建链接内容
@@ -3841,7 +3560,6 @@
 
         navBar.replaceChildren();
         navLinks = [];
-        elToLink.clear();
         if(navIO) try { navIO.disconnect(); } catch(e) {}
 
         // 更新当前导航栏对应的 URL
@@ -3857,7 +3575,6 @@
             const link = createNavLink(el, i, preservedText);
             navBar.appendChild(link);
             navLinks.push(link);
-            elToLink.set(el, link);
         });
 
         refreshNavBarVisibility();
@@ -4957,6 +4674,129 @@
             ele.textContent = textContent;
         }
         return ele;
+    }
+
+    /**
+     * 添加通用 hover 效果
+     */
+    function addHoverEffect(el, hoverBg = '#f0f0f0', normalBg = 'transparent', getActiveBg = null) {
+        el.addEventListener('mouseenter', () => {
+            el.style.backgroundColor = hoverBg;
+        });
+        el.addEventListener('mouseleave', () => {
+            el.style.backgroundColor = getActiveBg ? getActiveBg() : normalBg;
+        });
+    }
+
+    /**
+     * 创建通用导航按钮
+     */
+    function createNavButton(config) {
+        const { text, title, style, onClick, hoverBg = '#f0f0f0', normalBg = 'transparent' } = config;
+        const btn = createTag('div', text, style);
+        if (title) btn.title = title;
+        addHoverEffect(btn, hoverBg, normalBg);
+        if (onClick) btn.addEventListener('click', onClick);
+        return btn;
+    }
+
+    /**
+     * 创建可编辑输入框按钮（点击后变为输入框）
+     */
+    function createEditableButton(config) {
+        const { text, title, btnStyle, inputStyle, getValue, setValue, validate, onSave, container } = config;
+        const btn = createTag('div', text, btnStyle);
+        btn.title = title;
+        btn.style.position = 'relative';
+        btn.style.top = 'auto';
+        btn.style.right = 'auto';
+        addHoverEffect(btn);
+        
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = getValue();
+            input.style.cssText = inputStyle.replace('position:absolute;top:0;right:', 'position:relative;top:auto;right:auto;');
+            
+            container.insertBefore(input, btn);
+            btn.style.display = 'none';
+            input.focus();
+            input.select();
+            
+            const restoreBtn = () => {
+                container.insertBefore(btn, input);
+                input.remove();
+                btn.style.display = 'flex';
+            };
+            
+            input.addEventListener('blur', () => {
+                const newValue = input.value.trim();
+                if (newValue) {
+                    const validation = validate ? validate(newValue) : { valid: true };
+                    if (validation.valid) {
+                        setValue(newValue);
+                        if (onSave) onSave(newValue);
+                    } else {
+                        input.value = getValue();
+                        alert(validation.error);
+                    }
+                }
+                restoreBtn();
+            });
+            
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') input.blur();
+            });
+        });
+        
+        return btn;
+    }
+
+    /**
+     * 创建对齐按钮（靠左/靠右）
+     */
+    function createAlignButton(config) {
+        const { text, title, style, activeBg, isActive, onClick } = config;
+        const initialActive = isActive();
+        const btn = createTag('div', text, style + (initialActive ? `background-color:${activeBg};` : 'background-color:transparent;'));
+        btn.title = title;
+        
+        const refreshStyle = (isHover = false) => {
+            const baseBg = isActive() ? activeBg : 'transparent';
+            btn.style.backgroundColor = isHover ? '#f0f0f0' : baseBg;
+        };
+        
+        btn.addEventListener('mouseenter', () => refreshStyle(true));
+        btn.addEventListener('mouseleave', () => refreshStyle(false));
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            onClick();
+            refreshStyle(false);
+        });
+        
+        return btn;
+    }
+
+    /**
+     * 加载指定问题的标题数据
+     * @param {number} questionIndex - 问题索引
+     * @returns {Object|null} - { targetEl, answerContent, headings } 或 null
+     */
+    function loadHeadingsForQuestion(questionIndex) {
+        if (questionIndex < 0 || !navQuestions || questionIndex >= navQuestions.length) {
+            return null;
+        }
+        const targetEl = navQuestions[questionIndex];
+        if (!targetEl || !document.body.contains(targetEl)) {
+            return null;
+        }
+        const answerContent = findAnswerContent(targetEl);
+        if (!answerContent) {
+            return null;
+        }
+        const headings = findHeadingsInContent(answerContent);
+        return { targetEl, answerContent, headings };
     }
 
     function createHtml(tag, html, css){
