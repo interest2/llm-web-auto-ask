@@ -24,8 +24,8 @@
 // @grant        GM_deleteValue
 // @grant        GM_addValueChangeListener
 // @require      https://cdn.jsdelivr.net/npm/d3@7
-// @require      https://cdn.jsdelivr.net/npm/markmap-view@0.15
-// @require      https://cdn.jsdelivr.net/npm/markmap-lib@0.15
+// @require      https://cdn.jsdelivr.net/npm/markmap-view@0.18.12
+// @require      https://cdn.jsdelivr.net/npm/markmap-lib@0.18.12
 // @license      MIT
 // @downloadURL https://update.greasyfork.org/scripts/536504/%E5%A4%9A%E5%AE%B6%E5%A4%A7%E6%A8%A1%E5%9E%8B%E5%90%8C%E6%97%B6%E5%9B%9E%E7%AD%94%EF%BC%8C%E5%8E%9F%E7%AB%99%E6%A0%B7%E5%BC%8F%E5%B1%95%E7%A4%BA.user.js
 // @updateURL https://update.greasyfork.org/scripts/536504/%E5%A4%9A%E5%AE%B6%E5%A4%A7%E6%A8%A1%E5%9E%8B%E5%90%8C%E6%97%B6%E5%9B%9E%E7%AD%94%EF%BC%8C%E5%8E%9F%E7%AB%99%E6%A0%B7%E5%BC%8F%E5%B1%95%E7%A4%BA.meta.js
@@ -996,6 +996,7 @@
 
     // 思维导图打开状态
     let isMindmapOpen = false;
+    let isMindmapManuallyClosed = false; // 是否手动关闭（true=手动关闭，false=条件不满足自动关闭）
     let contentLevelKey = T + "contentWidthLevel";
     let contentMaxWidthKey = T + "contentMaxWidth";
     let cachedContentMaxWidth = getS(contentMaxWidthKey);
@@ -1757,9 +1758,11 @@
             mindmapPopup: `position:fixed;top:50%;left:5px;transform:translate(0%,-50%);width:45vw;height:90vh;background:#fff;border:1px solid #ccc;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.25);z-index:2147483647;display:flex;flex-direction:column;`,
             mindmapHeader: `display:flex;justify-content:space-between;align-items:center;padding:10px 15px;border-bottom:1px solid #eee;background:#f8f8f8;border-radius:8px 8px 0 0;position:relative;`,
             mindmapTitle: `font-weight:bold;font-size:15px;color:#333;`,
-            mindmapCloseBtn: `font-size:22px;cursor:pointer;color:#666;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;`,
-            mindmapMaximizeBtn: `font-size:12px;cursor:pointer;color:#666;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;font-weight:bold;text-shadow:0 0 2px rgba(0,0,0,0.5), 0 1px 1px rgba(0,0,0,0.3);`,
-            mindmapContent: `padding:5px;flex:1;overflow:hidden;min-height:500px;`,
+            mindmapCloseBtn: `font-size:22px;cursor:pointer;color:#666;width:100px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;`,
+            mindmapMaximizeBtn: `font-size:12px;cursor:pointer;color:#666;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;font-weight:bold;`,
+            mindmapContent: `padding:5px;flex:1;overflow:hidden;min-height:35vh;position:relative;`,
+            mindmapResetScaleBtn: `position:absolute;top:5px;right:15px;font-size:16px;cursor:pointer;color:#666;width:36px;height:36px;display:flex;align-items:center;justify-content:center;border:1px solid #ddd;border-radius:4px;background:#fff;transition:all 0.2s;z-index:10;`,
+            mindmapResetScaleBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
         };
     };
 
@@ -2817,27 +2820,238 @@
     // 将层次化标题转换为 Markdown 格式（使用所有层级）
     const convertHeadingsToMarkdown = () => {
         if (currentSubNavHeadings.length === 0) return '# 无内容';
-        return currentSubNavHeadings.map(h => `${'#'.repeat(h.level)} ${h.text}`).join('\n');
+        // 如果 h1 只有1个，则过滤掉 h1 标题
+        let filteredHeadings = currentSubNavHeadings;
+        if (h1Count === 1) {
+            filteredHeadings = filteredHeadings.filter(h => h.level !== 1);
+        }
+        if (filteredHeadings.length === 0) return '# 无内容';
+        return filteredHeadings.map(h => `${'#'.repeat(h.level)} ${h.text}`).join('\n');
     };
 
     // 思维导图弹窗元素
     let mindmapPopup = null;
+    let mindmapClickOutsideHandler = null;
+    let markmapInstance = null; // 保存 Markmap 实例，用于更新
 
     // 隐藏思维导图弹窗
-    const hideMindmapPopup = () => {
+    const hideMindmapPopup = (isManual = false) => {
+        if (mindmapClickOutsideHandler) {
+            document.removeEventListener('mousedown', mindmapClickOutsideHandler);
+            mindmapClickOutsideHandler = null;
+        }
         if (mindmapPopup) {
             mindmapPopup.remove();
             mindmapPopup = null;
         }
+        markmapInstance = null;
         isMindmapOpen = false;
+        isMindmapManuallyClosed = isManual; // 记录关闭方式
         // 取消1060行的left设置
         updateMindmapLeft();
     };
 
+    // 渲染思维导图内容（公共函数，供 showMindmapPopup 和 updateMindmapContent 复用）
+    const renderMindmapContent = (content) => {
+        // 更新弹窗高度
+        const headingCount = currentSubNavHeadings.length;
+        const calculatedHeight = 5 * headingCount;
+        const height = Math.max(40, Math.min(90, calculatedHeight));
+        mindmapPopup.style.height = `${height}vh`;
+
+        // 移除旧的重置缩放按钮（如果存在）
+        const oldResetBtn = content.querySelector('.mindmap-reset-scale-btn');
+        if (oldResetBtn) {
+            oldResetBtn.remove();
+        }
+
+        // 清空并重新创建 SVG
+        setInnerHTML(content, '<svg style="width:100%;height:100%;"></svg>');
+        const svg = content.querySelector('svg');
+
+        // 创建重置缩放按钮（右上角，默认隐藏）
+        const resetScaleBtn = createTag('div', '', NAV_STYLES.mindmapResetScaleBtn);
+        resetScaleBtn.className = 'mindmap-reset-scale-btn';
+        resetScaleBtn.textContent = '🔍';
+        resetScaleBtn.title = '重置缩放为 1.0';
+        resetScaleBtn.style.display = 'none'; // 默认隐藏
+        resetScaleBtn.addEventListener('mouseenter', () => {
+            resetScaleBtn.style.cssText = NAV_STYLES.mindmapResetScaleBtn + NAV_STYLES.mindmapResetScaleBtnHover;
+        });
+        resetScaleBtn.addEventListener('mouseleave', () => {
+            resetScaleBtn.style.cssText = NAV_STYLES.mindmapResetScaleBtn;
+        });
+        resetScaleBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            if (!markmapInstance) return;
+            
+            const d3 = window.d3;
+            if (!d3) return;
+            
+            // 获取 SVG 元素和尺寸
+            const svgEl = markmapInstance.svg.node();
+            const { width, height } = svgEl.getBoundingClientRect();
+            
+            // 重置缩放为 1.0 并居中
+            markmapInstance.svg.call(
+                markmapInstance.zoom.transform,
+                d3.zoomIdentity.translate(0, height / 2).scale(1.0)
+            );
+        });
+        content.appendChild(resetScaleBtn);
+
+        // 点击空白处取消选中文字
+        const clearSelection = (e) => {
+            const target = e.target;
+            const isMarkmapNode = target.closest && target.closest('g.markmap-node');
+            if (target === content || target === svg || target.tagName === 'svg' || !isMarkmapNode) {
+                window.getSelection().removeAllRanges();
+            }
+        };
+        content.addEventListener('mousedown', clearSelection);
+        svg.addEventListener('mousedown', clearSelection);
+
+        // 转换为 Markdown 并渲染思维导图
+        const markdown = convertHeadingsToMarkdown();
+        const { Transformer, Markmap } = window.markmap;
+        const transformer = new Transformer();
+        const { root } = transformer.transform(markdown);
+
+        // 创建文本到原始标题的映射（用于点击跳转）
+        const textToHeadingMap = new Map();
+        currentSubNavHeadings.forEach(heading => {
+            const normalizedText = normalizeHeadingText(heading.text);
+            textToHeadingMap.set(normalizedText, heading);
+        });
+
+        // Markmap 配置
+        const options = {
+            autoFit: false,
+            maxInitialScale: 1,
+            nodeMinHeight: 24,
+            spacingVertical: 14,
+            spacingHorizontal: 80,
+            duration: 0
+        };
+        markmapInstance = Markmap.create(svg, options, root);
+
+        // 检测初始缩放，只有 scale < 1 时才显示重置按钮
+        setTimeout(() => {
+            const d3 = window.d3;
+            if (!d3 || !markmapInstance) return;
+            
+            const svgEl = markmapInstance.svg.node();
+            const currentTransform = d3.zoomTransform(svgEl);
+            
+            if (currentTransform.k < 1) {
+                resetScaleBtn.style.display = 'flex';
+            } else {
+                resetScaleBtn.style.display = 'none';
+            }
+        }, 150);
+
+        // 为思维导图节点添加点击跳转功能
+        setTimeout(() => {
+            const d3 = window.d3;
+            if (!d3) return;
+            
+            d3.select(svg).selectAll('g.markmap-node').on('click', function(event) {
+                event.stopPropagation();
+                
+                const gNode = this;
+                const foreignObj = gNode.querySelector('foreignObject.markmap-foreign');
+                if (!foreignObj) return;
+                
+                const innerDiv = foreignObj.querySelector('div > div');
+                const nodeText = innerDiv ? innerDiv.textContent : foreignObj.textContent;
+                if (!nodeText) return;
+                
+                const normalizedNodeText = normalizeHeadingText(nodeText);
+                const heading = textToHeadingMap.get(normalizedNodeText);
+                
+                let matchedHeading = heading;
+                if (!matchedHeading) {
+                    matchedHeading = currentSubNavHeadings.find(h => 
+                        normalizeHeadingText(h.text) === normalizedNodeText
+                    );
+                }
+                
+                if (matchedHeading) {
+                    scrollToHeading(matchedHeading);
+                }
+            });
+            
+            d3.select(svg).selectAll('g.markmap-node').style('cursor', 'pointer');
+        }, 100);
+    };
+
+    // 更新思维导图内容（当点击主目录条目时调用）
+    const updateMindmapContent = (questionIndex) => {
+        if (!isMindmapOpen || !mindmapPopup || questionIndex < 0 || !navQuestions || questionIndex >= navQuestions.length) {
+            return;
+        }
+
+        const targetEl = navQuestions[questionIndex];
+        if (!targetEl || !document.body.contains(targetEl)) {
+            return;
+        }
+
+        // 查找回答内容区域
+        const answerContent = findAnswerContent(targetEl);
+        if (!answerContent) {
+            return;
+        }
+
+        // 查找标题
+        const headings = findHeadingsInContent(answerContent);
+        
+        // 更新标题数据和问题索引（无论是否满足条件都要更新，保持状态一致）
+        currentSubNavHeadings = headings;
+        currentSubNavQuestionIndex = questionIndex;
+        h1Count = headings ? headings.filter(h => h.level === 1).length : 0;
+        
+        if (headings.length === 0) {
+            // 如果没有标题，关闭导图（条件不满足自动关闭）
+            hideMindmapPopup(false);
+            return;
+        }
+
+        // 检测标题总条数，超过指定数量才显示思维导图（复用副目录的阈值逻辑）
+        if (headings.length <= SUB_NAV_MIN_ITEMS) {
+            // 如果新内容不满足条件，关闭已打开的导图（条件不满足自动关闭）
+            hideMindmapPopup(false);
+            return;
+        }
+
+        // 更新头部序号显示
+        const indexText = mindmapPopup.querySelector('.mindmap-index-text');
+        if (indexText) {
+            // indexText.textContent = `图 ${questionIndex + 1}`;
+        }
+
+        // 获取内容区域并重新渲染
+        const content = mindmapPopup.querySelector('#mindmap-content-container');
+        if (!content) return;
+        
+        renderMindmapContent(content);
+    };
+
     // 显示思维导图弹窗
-    const showMindmapPopup = () => {
+    const showMindmapPopup = (isAutoShow = false) => {
+        // 只有在自动展示时才检查手动关闭标记，用户主动点击按钮时允许展示
+        if (isAutoShow && isMindmapManuallyClosed) {
+            return;
+        }
+
+        // 检测标题总条数，超过指定数量才显示思维导图（复用副目录的阈值逻辑）
+        if (!currentSubNavHeadings || currentSubNavHeadings.length <= SUB_NAV_MIN_ITEMS) {
+            return;
+        }
+
         // 如果已有弹窗，先关闭
-        hideMindmapPopup();
+        hideMindmapPopup(false);
 
         const styles = getNavStyles();
 
@@ -2898,14 +3112,21 @@
         });
         closeBtn.addEventListener('click', (e) => {
             e.stopPropagation();
-            hideMindmapPopup();
+            hideMindmapPopup(true); // 手动关闭
         });
         
         rightButtonContainer.appendChild(maximizeBtn);
         rightButtonContainer.appendChild(closeBtn);
+        
+        // 创建中间序号显示
+        const indexText = createTag('div', '', 'position:absolute;left:50%;transform:translateX(-50%);font-weight:bold;font-size:15px;color:#333;pointer-events:none;');
+        indexText.className = 'mindmap-index-text';
+        // indexText.textContent = `图 ${currentSubNavQuestionIndex + 1}`;
+        
         // 添加空的左侧占位元素，确保按钮在右侧
         const leftSpacer = createTag('div', '', 'flex:1;');
         appendSeveral(header, leftSpacer, rightButtonContainer);
+        header.appendChild(indexText);
         
         // 顶栏点击事件：点击任意位置（关闭按钮除外）触发最大化
         header.addEventListener('click', (e) => {
@@ -2921,6 +3142,7 @@
         
         // 标记思维导图已打开
         isMindmapOpen = true;
+        isMindmapManuallyClosed = false; // 重置手动关闭标记
         // 立刻触发对left的设置
         updateMindmapLeft();
 
@@ -2931,85 +3153,28 @@
 
         document.body.appendChild(mindmapPopup);
 
-        // 创建 SVG 并渲染思维导图（使用 setInnerHTML 避免 TrustedHTML 问题）
-        setInnerHTML(content, '<svg style="width:100%;height:100%;"></svg>');
-        const svg = content.querySelector('svg');
-        
-        // 点击空白处取消选中文字（在内容区域和SVG上监听）
-        const clearSelection = (e) => {
-            const target = e.target;
-            // 如果点击的是SVG背景、内容区域，或者不是markmap节点，清除选中
-            const isMarkmapNode = target.closest && target.closest('g.markmap-node');
-            if (target === content || target === svg || target.tagName === 'svg' || !isMarkmapNode) {
-                window.getSelection().removeAllRanges();
+        // 添加点击外部区域关闭弹窗的监听器
+        mindmapClickOutsideHandler = (e) => {
+            if (!mindmapPopup) return;
+            
+            // 判断点击是否在弹窗内
+            if (mindmapPopup.contains(e.target)) {
+                return;
+            }
+            
+            // 获取弹窗的位置和宽度
+            const popupRect = mindmapPopup.getBoundingClientRect();
+            const clickX = e.clientX;
+            
+            // 判断横坐标是否在弹窗的 x 范围内 [popupLeft, popupLeft + popupWidth]
+            if (clickX >= popupRect.left && clickX <= popupRect.left + popupRect.width) {
+                hideMindmapPopup(true); // 手动关闭
             }
         };
-        content.addEventListener('mousedown', clearSelection);
-        svg.addEventListener('mousedown', clearSelection);
+        document.addEventListener('mousedown', mindmapClickOutsideHandler);
 
-        const markdown = convertHeadingsToMarkdown();
-        const { Transformer, Markmap } = window.markmap;
-        const transformer = new Transformer();
-        const { root } = transformer.transform(markdown);
-        
-        // 创建文本到原始标题的映射（用于点击跳转）
-        // 由于 markmap 的 depth 是思维导图层级，不是原始 h 标签级别，所以只通过文本匹配
-        const textToHeadingMap = new Map();
-        currentSubNavHeadings.forEach(heading => {
-            // 使用规范化文本作为 key，避免空格等差异
-            const normalizedText = normalizeHeadingText(heading.text);
-            // 如果文本重复，保存最后一个（通常不会重复）
-            textToHeadingMap.set(normalizedText, heading);
-        });
-        
-        // Markmap 配置
-        const options = {
-            nodeMinHeight: 24,      // 节点最小高度，让文字远离线条
-            spacingVertical: 14,     // 垂直间距
-            spacingHorizontal: 80,  // 水平间距
-            duration: 0             // 动画时长
-        };
-        const markmapInstance = Markmap.create(svg, options, root);
-        
-        // 为思维导图节点添加点击跳转功能
-        setTimeout(() => {
-            const d3 = window.d3;
-            if (!d3) return;
-            
-            // 为所有节点添加点击事件
-            d3.select(svg).selectAll('g[data-depth]').on('click', function(event) {
-                event.stopPropagation();
-                
-                const node = d3.select(this);
-                const nodeData = node.datum();
-                
-                // 从节点数据中获取标题文本
-                if (!nodeData || !nodeData.data) return;
-                
-                const nodeText = nodeData.data.content || nodeData.content || '';
-                if (!nodeText) return;
-                
-                // 通过规范化文本匹配原始标题（不依赖 markmap 的 depth）
-                const normalizedNodeText = normalizeHeadingText(nodeText);
-                const heading = textToHeadingMap.get(normalizedNodeText);
-                
-                // 如果映射中找不到，尝试直接文本匹配（兼容性处理）
-                let matchedHeading = heading;
-                if (!matchedHeading) {
-                    matchedHeading = currentSubNavHeadings.find(h => 
-                        normalizeHeadingText(h.text) === normalizedNodeText
-                    );
-                }
-                
-                // 跳转到对应位置（不关闭弹窗，方便继续查看和点击）
-                if (matchedHeading) {
-                    scrollToHeading(matchedHeading);
-                }
-            });
-            
-            // 添加鼠标样式，提示可点击
-            d3.select(svg).selectAll('g[data-depth]').style('cursor', 'pointer');
-        }, 100);
+        // 渲染思维导图内容
+        renderMindmapContent(content);
     };
 
     // 创建思维导图按钮
@@ -3359,6 +3524,41 @@
                 // 自动显示当前点击项对应的副目录
                 if (typeof autoShowSubNav === 'function') {
                     autoShowSubNav(i);
+                }
+                
+                // 检查副目录是否真的更新了（如果 currentSubNavQuestionIndex 不等于 i，说明副目录因为不满足条件而没有更新）
+                const subNavUpdated = currentSubNavQuestionIndex === i;
+                
+                // 如果思维导图已打开，更新为当前点击项的内容
+                if (isMindmapOpen) {
+                    // 如果副目录没有更新（不满足条件），导图也应该关闭
+                    if (!subNavUpdated) {
+                        hideMindmapPopup(false);
+                    } else {
+                        updateMindmapContent(i);
+                    }
+                } else if (!isMindmapManuallyClosed) {
+                    // 如果之前是条件不满足自动关闭的，检查新内容是否满足条件，满足则自动展示
+                    // 只有副目录更新了（满足条件）才自动展示导图
+                    if (subNavUpdated) {
+                        const targetEl = navQuestions[i];
+                        if (targetEl && document.body.contains(targetEl)) {
+                            const answerContent = findAnswerContent(targetEl);
+                            if (answerContent) {
+                                const headings = findHeadingsInContent(answerContent);
+                                // 更新标题数据和问题索引（无论是否满足条件都要更新，保持状态一致）
+                                currentSubNavHeadings = headings || [];
+                                currentSubNavQuestionIndex = i;
+                                h1Count = headings ? headings.filter(h => h.level === 1).length : 0;
+                                
+                                // 只有满足条件时才自动展示
+                                if (headings && headings.length > SUB_NAV_MIN_ITEMS) {
+                                    // 自动展示思维导图（传入 true 表示自动展示，会检查手动关闭标记）
+                                    showMindmapPopup(true);
+                                }
+                            }
+                        }
+                    }
                 }
             } else {
                 // 元素不存在，等待一段时间后重试
