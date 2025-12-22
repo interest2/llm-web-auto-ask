@@ -994,6 +994,8 @@
         addAskEventListener();
     }
 
+    // 思维导图打开状态
+    let isMindmapOpen = false;
     let contentLevelKey = T + "contentWidthLevel";
     let contentMaxWidthKey = T + "contentMaxWidth";
     let cachedContentMaxWidth = getS(contentMaxWidthKey);
@@ -1017,6 +1019,48 @@
         setContentWidth();
     }, 2000);
 
+    // 封装设置思维导图相关left的逻辑（供setContentWidth和hideMindmapPopup复用）
+    const updateMindmapLeft = () => {
+        const quesList = getQuestionList();
+        if (!quesList || quesList.length === 0) {
+            return;
+        }
+        const tailQuestion = quesList[quesList.length - 1];
+        const cachedContentLevel = getS(contentLevelKey);
+        let tailContentZone = null;
+        
+        if (!isEmpty(cachedContentLevel)) {
+            tailContentZone = getNthParent(tailQuestion, cachedContentLevel);
+        } else {
+            // 如果没有缓存，动态查找
+            let prevEle = null;
+            let nth = 1;
+            while (nth < 10) {
+                const checkEle = getNthParent(tailQuestion, nth);
+                if (!checkEle) {
+                    break;
+                }
+                const checkWidth = checkEle.getBoundingClientRect().width;
+                if (checkWidth > 1000) {
+                    tailContentZone = prevEle;
+                    setS(contentLevelKey, nth - 1);
+                    break;
+                }
+                prevEle = checkEle;
+                nth++;
+            }
+        }
+        
+        if (!isEmpty(tailContentZone)) {
+            const map1 = getS(T + "map1");
+            if (!isEmpty(map1)) {
+                const nthParent = getNthParent(tailContentZone, map1);
+                if (nthParent) {
+                    nthParent.style.left = isMindmapOpen ? getS(T + "map2") : "";
+                }
+            }
+        }
+    };
 
     // 部分站点调整内容宽度（不依赖选择器）
     function setContentWidth(){
@@ -1055,9 +1099,8 @@
         }
         // 回答区域
         if(!isEmpty(tailContentZone)){
-
-            var nthParent = getNthParent(tailContentZone, getS(T + "map1"));
-            nthParent.style.left = getS(T + "map2");
+            // 使用封装的函数更新思维导图相关left
+            updateMindmapLeft();
 
             const ratioWidth = window.outerWidth * 0.9;
 
@@ -1712,7 +1755,7 @@
             mindmapBtnHover: `background-color:#f0f0f0;border-color:#ccc;`,
             // 思维导图弹窗样式
             mindmapPopup: `position:fixed;top:50%;left:5px;transform:translate(0%,-50%);width:45vw;height:90vh;background:#fff;border:1px solid #ccc;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.25);z-index:2147483647;display:flex;flex-direction:column;`,
-            mindmapHeader: `display:flex;justify-content:center;align-items:center;padding:10px 15px;border-bottom:1px solid #eee;background:#f8f8f8;border-radius:8px 8px 0 0;position:relative;`,
+            mindmapHeader: `display:flex;justify-content:space-between;align-items:center;padding:10px 15px;border-bottom:1px solid #eee;background:#f8f8f8;border-radius:8px 8px 0 0;position:relative;`,
             mindmapTitle: `font-weight:bold;font-size:15px;color:#333;`,
             mindmapCloseBtn: `font-size:22px;cursor:pointer;color:#666;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;`,
             mindmapMaximizeBtn: `font-size:12px;cursor:pointer;color:#666;width:28px;height:28px;display:flex;align-items:center;justify-content:center;border-radius:4px;transition:all 0.2s;font-weight:bold;text-shadow:0 0 2px rgba(0,0,0,0.5), 0 1px 1px rgba(0,0,0,0.3);`,
@@ -2786,6 +2829,9 @@
             mindmapPopup.remove();
             mindmapPopup = null;
         }
+        isMindmapOpen = false;
+        // 取消1060行的left设置
+        updateMindmapLeft();
     };
 
     // 显示思维导图弹窗
@@ -2801,8 +2847,8 @@
         // 创建头部
         const header = createTag('div', '', styles.mindmapHeader);
         
-        // 创建按钮容器（居中显示）
-        const buttonContainer = createTag('div', '', 'display:flex;align-items:center;gap:8px;');
+        // 创建右侧按钮容器（最大化按钮和关闭按钮）
+        const rightButtonContainer = createTag('div', '', 'display:flex;align-items:center;gap:8px;');
         
         // 创建最大化按钮
         const maximizeBtn = createTag('div', '', styles.mindmapMaximizeBtn);
@@ -2855,6 +2901,12 @@
             hideMindmapPopup();
         });
         
+        rightButtonContainer.appendChild(maximizeBtn);
+        rightButtonContainer.appendChild(closeBtn);
+        // 添加空的左侧占位元素，确保按钮在右侧
+        const leftSpacer = createTag('div', '', 'flex:1;');
+        appendSeveral(header, leftSpacer, rightButtonContainer);
+        
         // 顶栏点击事件：点击任意位置（关闭按钮除外）触发最大化
         header.addEventListener('click', (e) => {
             // 如果点击的是关闭按钮或其子元素，不触发最大化
@@ -2865,9 +2917,12 @@
             toggleMaximize();
         });
         
-        appendSeveral(buttonContainer, maximizeBtn, closeBtn);
-        header.appendChild(buttonContainer);
         mindmapPopup.appendChild(header);
+        
+        // 标记思维导图已打开
+        isMindmapOpen = true;
+        // 立刻触发对left的设置
+        updateMindmapLeft();
 
         // 创建内容区域
         const content = createTag('div', '', styles.mindmapContent);
