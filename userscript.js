@@ -623,6 +623,9 @@
     const currentAskHasImage = "currentAskHasImage";
 
     document.addEventListener('paste', async (e) => {
+        if(getGV("disable") === true){
+            return;
+        }
         const items = e.clipboardData?.items;
         if (!items) return;
 
@@ -996,7 +999,8 @@
 
     // 思维导图打开状态
     let isMindmapOpen = false;
-    let isMindmapManuallyClosed = false; // 是否手动关闭（true=手动关闭，false=条件不满足自动关闭）
+    const MINDMAP_CLOSED_KEY = T + "mindmapClosed"; // 思维导图手动关闭状态存储key
+    let isMindmapManuallyClosed = getS(MINDMAP_CLOSED_KEY) === 'true'; // 是否手动关闭（从GM读取，刷新后保持状态）
     let contentLevelKey = T + "contentWidthLevel";
     let contentMaxWidthKey = T + "contentMaxWidth";
     let cachedContentMaxWidth = getS(contentMaxWidthKey);
@@ -1578,6 +1582,10 @@
     const NAV_TOP_OVERFLOW_KEY = "navTopOverflow";
     const SUB_NAV_TOP_KEY = "subNavTop";
     const SUB_NAV_TOP_OVERFLOW_KEY = "subNavTopOverflow";
+    const SUB_NAV_FONT_SIZE_KEY = T + "subNavFontSize";
+    const DEFAULT_SUB_NAV_FONT_SIZE = 13;
+    const MIN_SUB_NAV_FONT_SIZE = 10;
+    const MAX_SUB_NAV_FONT_SIZE = 18;
 
     // 通用 GM 存储 getter（带默认值）
     const getGVWithDefault = (key, defaultVal) => getGV(key) || defaultVal;
@@ -1598,6 +1606,13 @@
     const setSubNavMaxWidth = (maxWidth) => { setS(subNavMaxWidthKey, maxWidth); updateNavStyles(); };
 
     const getSubNavTop = () => getGV(SUB_NAV_TOP_KEY) || (site === STUDIO ? "35%" : DEFAULT_SUB_NAV_TOP);
+
+    // 获取/设置副目录字体大小
+    const getSubNavFontSize = () => {
+        const saved = getS(SUB_NAV_FONT_SIZE_KEY);
+        return isEmpty(saved) ? DEFAULT_SUB_NAV_FONT_SIZE : parseInt(saved, 10);
+    };
+    const setSubNavFontSize = (size) => { setS(SUB_NAV_FONT_SIZE_KEY, size); };
 
     // 根据top值计算max-height，使总和为99vh
     const calculateSubNavMaxHeight = (topValue) => {
@@ -2375,16 +2390,21 @@
         // 获取过滤后的标题
         const filteredHeadings = getFilteredHeadings();
 
-        // 获取所有出现的标题层级（从小到大排序）
-        const allLevels = [...new Set(currentSubNavHeadings.map(h => h.level))].sort((a, b) => a - b);
+        // 获取所有出现的标题层级（从小到大排序），基于过滤后的标题（h1仅1条时已剔除）
+        const allLevels = [...new Set(filteredHeadings.map(h => h.level))].sort((a, b) => a - b);
         
-        // 从后往前分配字体粗细
-        const fontWeightValues = [400, 500, 600, 700];
+        // 根据层级数量选择对应的字体粗细数组
+        const weightsByLevelCount = {
+            1: [500],
+            2: [500, 400],
+            3: [700, 500, 400],
+            4: [700, 600, 500, 400]
+        };
+        const levelCount = allLevels.length;
+        const fontWeightValues = weightsByLevelCount[levelCount] || weightsByLevelCount[4];
         const levelToWeightMap = {};
         allLevels.forEach((level, index) => {
-            const reverseIndex = allLevels.length - 1 - index;
-            const weightIndex = Math.min(reverseIndex, fontWeightValues.length - 1);
-            levelToWeightMap[level] = fontWeightValues[weightIndex];
+            levelToWeightMap[level] = fontWeightValues[index] || fontWeightValues[fontWeightValues.length - 1];
         });
 
         // 创建标题级别样式映射，根据实际出现的层级动态设置字体粗细
@@ -2404,11 +2424,15 @@
             4: getStyleWithWeight(NAV_STYLES.subNavItemH4, 4)
         };
 
+        // 获取当前字体大小
+        const currentFontSize = getSubNavFontSize();
+
         // 添加过滤后的标题
         filteredHeadings.forEach((heading, index) => {
             const item = document.createElement('div');
             item.className = 'sub-nav-item';
-            let itemStyle = NAV_STYLES.subNavItem;
+            // 替换默认字体大小为当前设置的字体大小
+            let itemStyle = NAV_STYLES.subNavItem.replace(/font-size:\d+px/, `font-size:${currentFontSize}px`);
 
             // 根据标题级别设置不同的缩进（如果配置中包含该级别）
             if (SUB_NAV_HEADING_LEVELS.includes(heading.level) && headingStyleMap[heading.level]) {
@@ -2511,6 +2535,57 @@
 
     // px格式验证正则
     const PX_FORMAT_REGEX = /^\d+(\.\d+)?px$/;
+
+    // 创建副目录字体大小按钮组
+    const createSubNavFontSizeBtnGroup = () => {
+        const btnGroup = createTag('div', '', 'display:flex;align-items:center;gap:2px;margin-right:auto;');
+        
+        const btnStyle = 'width:20px;height:20px;font-size:14px;cursor:pointer;border:1px solid #ddd;border-radius:4px;background:#fff;color:#333;display:flex;align-items:center;justify-content:center;transition:all 0.2s;user-select:none;';
+        
+        const minusBtn = createTag('span', '-', btnStyle);
+        minusBtn.title = '缩小字体';
+        const plusBtn = createTag('span', '+', btnStyle);
+        plusBtn.title = '放大字体';
+        
+        const updateBtns = () => {
+            const currentSize = getSubNavFontSize();
+            minusBtn.style.opacity = currentSize <= MIN_SUB_NAV_FONT_SIZE ? '0.4' : '1';
+            minusBtn.style.cursor = currentSize <= MIN_SUB_NAV_FONT_SIZE ? 'not-allowed' : 'pointer';
+            plusBtn.style.opacity = currentSize >= MAX_SUB_NAV_FONT_SIZE ? '0.4' : '1';
+            plusBtn.style.cursor = currentSize >= MAX_SUB_NAV_FONT_SIZE ? 'not-allowed' : 'pointer';
+        };
+        updateBtns();
+        
+        const adjustFontSize = (delta) => {
+            const currentSize = getSubNavFontSize();
+            const newSize = Math.max(MIN_SUB_NAV_FONT_SIZE, Math.min(MAX_SUB_NAV_FONT_SIZE, currentSize + delta));
+            if (newSize !== currentSize) {
+                setSubNavFontSize(newSize);
+                renderSubNavItems();
+                updateBtns();
+            }
+        };
+        
+        minusBtn.addEventListener('click', () => adjustFontSize(-1));
+        plusBtn.addEventListener('click', () => adjustFontSize(1));
+        
+        // 悬停效果
+        [minusBtn, plusBtn].forEach(btn => {
+            btn.addEventListener('mouseenter', () => {
+                if (btn.style.cursor !== 'not-allowed') {
+                    btn.style.backgroundColor = '#f0f0f0';
+                    btn.style.borderColor = '#ccc';
+                }
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.backgroundColor = '#fff';
+                btn.style.borderColor = '#ddd';
+            });
+        });
+        
+        appendSeveral(btnGroup, minusBtn, plusBtn);
+        return btnGroup;
+    };
 
     // 创建副目录最大宽度按钮
     const createSubNavMaxWidthBtn = (buttonRow) => {
@@ -2681,9 +2756,17 @@
         markmapInstance = null;
         isMindmapOpen = false;
         isMindmapManuallyClosed = isManual; // 记录关闭方式
+        if (isManual) setS(MINDMAP_CLOSED_KEY, 'true'); // 手动关闭时持久化状态
         // 取消1060行的left设置
         updateMindmapLeft();
     };
+
+    // 思维导图各层级字体粗细样式
+    GM_addStyle(`
+        g.markmap-node[data-depth="2"] foreignObject.markmap-foreign div > div { font-weight: 500 !important; }
+        g.markmap-node[data-depth="3"] foreignObject.markmap-foreign div > div { font-weight: 400 !important; }
+        g.markmap-node[data-depth="4"] foreignObject.markmap-foreign div > div { font-weight: 300 !important; }
+    `);
 
     // 渲染思维导图内容（公共函数，供 showMindmapPopup 和 updateMindmapContent 复用）
     const renderMindmapContent = (content) => {
@@ -2927,6 +3010,7 @@
         // 标记思维导图已打开
         isMindmapOpen = true;
         isMindmapManuallyClosed = false; // 重置手动关闭标记
+        GM_deleteValue(MINDMAP_CLOSED_KEY); // 清除持久化的关闭状态
         // 立刻触发对left的设置
         updateMindmapLeft();
 
@@ -3065,8 +3149,9 @@
         titleRow.appendChild(closeBtn);
         titleContainer.appendChild(titleRow);
 
-        // 第二行：思维导图、最大宽度、位置、靠左、靠右按钮
+        // 第二行：字体大小、思维导图、最大宽度、位置、靠左、靠右按钮
         const buttonRow = createTag('div', "", NAV_STYLES.subNavButtonRow);
+        const fontSizeBtnGroup = createSubNavFontSizeBtnGroup();
         const mindmapBtn = createSubNavMindmapBtn();
         const maxWidthBtn = createSubNavMaxWidthBtn(buttonRow);
         const positionBtn = createSubNavPositionBtn(buttonRow);
@@ -3081,7 +3166,7 @@
         alignRightBtn.style.top = 'auto';
         alignRightBtn.style.right = 'auto';
         
-        appendSeveral(buttonRow, mindmapBtn, maxWidthBtn, positionBtn, alignLeftBtn, alignRightBtn);
+        appendSeveral(buttonRow, fontSizeBtnGroup, mindmapBtn, maxWidthBtn, positionBtn, alignLeftBtn, alignRightBtn);
         titleContainer.appendChild(buttonRow);
 
         // 添加到副目录栏
@@ -6130,6 +6215,12 @@
 
         // 移除 json（分组映射已在removeBookmarkFromGroupMap中处理）
         GM_deleteValue(bookmarkKey);
+
+        // 从内存缓存中移除
+        if (bookmarkCacheLoaded && bookmarkDataCache) {
+            delete bookmarkDataCache[bookmarkKey];
+        }
+
         console.log(curDate() + `书签: 已删除 ${bookmarkKey}`);
     }
 
@@ -6270,8 +6361,12 @@
         setTopLevelGroupMap(topLevelGroupMap);
     }
 
-    // 获取分组列表（对象数组：{id, name}）- 二级分组
+    // 获取分组列表（对象数组：{id, name}）- 二级分组（优先从缓存读取）
     function getBookmarkGroups() {
+        // 优先从缓存读取
+        if (bookmarkCacheLoaded && bookmarkGroupsCache) {
+            return bookmarkGroupsCache;
+        }
         let groups = getGV(BOOKMARK_GROUP_LIST) || [];
         // 确保默认分组存在
         const hasDefault = groups.some(g => g.id === DEFAULT_GROUP_ID);
@@ -6280,6 +6375,14 @@
             setGV(BOOKMARK_GROUP_LIST, groups);
         }
         return groups;
+    }
+
+    // 保存分组列表（同时更新缓存）
+    function setBookmarkGroups(groups) {
+        setGV(BOOKMARK_GROUP_LIST, groups);
+        if (bookmarkCacheLoaded) {
+            bookmarkGroupsCache = groups;
+        }
     }
 
     // 根据代号获取分组名称
@@ -6397,7 +6500,7 @@
             return false;
         }
         group.name = trimmedName;
-        setGV(BOOKMARK_GROUP_LIST, groups);
+        setBookmarkGroups(groups);
         return true;
     }
 
@@ -6416,7 +6519,7 @@
         const maxId = groups.length > 0 ? Math.max(...groups.map(g => g.id)) : DEFAULT_GROUP_ID;
         const newId = maxId + 1;
         groups.push({ id: newId, name: trimmedName });
-        setGV(BOOKMARK_GROUP_LIST, groups);
+        setBookmarkGroups(groups);
         return true;
     }
 
@@ -6437,7 +6540,7 @@
             return false;
         }
         groups.splice(index, 1);
-        setGV(BOOKMARK_GROUP_LIST, groups);
+        setBookmarkGroups(groups);
 
         // 将该分组下的所有书签移到默认分组（使用映射快速获取）
         const groupMap = getGroupMap();
@@ -6477,8 +6580,12 @@
         return `${BOOKMARK_PREFIX}${id}`;
     }
 
-    // 获取分组映射
+    // 获取分组映射（优先从缓存读取）
     function getGroupMap() {
+        // 优先从缓存读取
+        if (bookmarkCacheLoaded && bookmarkGroupMapCache) {
+            return bookmarkGroupMapCache;
+        }
         let groupMap = getGV(BOOKMARK_GROUP_MAP);
         if (!groupMap || typeof groupMap !== 'object') {
             groupMap = {};
@@ -6486,9 +6593,13 @@
         return groupMap;
     }
 
-    // 保存分组映射
+    // 保存分组映射（同时更新缓存）
     function setGroupMap(groupMap) {
         setGV(BOOKMARK_GROUP_MAP, groupMap);
+        // 同步更新缓存
+        if (bookmarkCacheLoaded) {
+            bookmarkGroupMapCache = groupMap;
+        }
     }
 
     // 将书签添加到分组映射（存储时移除前缀）
@@ -6586,10 +6697,68 @@
         }
     }
 
+    // ──────────────────────────────────────────────────────────────────────
+    // 13.3.1 书签数据内存缓存（优化性能：避免频繁读取GM存储）
+    // ──────────────────────────────────────────────────────────────────────
+    let bookmarkDataCache = null; // 缓存对象，key为bookmarkKey，value为书签数据
+    let bookmarkGroupsCache = null; // 缓存分组列表
+    let bookmarkGroupMapCache = null; // 缓存分组映射
+    let bookmarkCacheLoaded = false; // 缓存是否已加载
+
     /**
-     * 获取书签数据
+     * 预加载所有书签相关数据到内存缓存（一次性读取GM存储）
+     */
+    function loadBookmarkCache() {
+        if (bookmarkCacheLoaded) return; // 已加载则跳过
+        
+        // 加载分组列表
+        bookmarkGroupsCache = getGV(BOOKMARK_GROUP_LIST) || [];
+        const hasDefault = bookmarkGroupsCache.some(g => g.id === DEFAULT_GROUP_ID);
+        if (!hasDefault) {
+            bookmarkGroupsCache.unshift({ id: DEFAULT_GROUP_ID, name: DEFAULT_GROUP_NAME });
+            setGV(BOOKMARK_GROUP_LIST, bookmarkGroupsCache);
+        }
+        
+        // 加载分组映射
+        bookmarkGroupMapCache = getGV(BOOKMARK_GROUP_MAP) || {};
+        
+        // 加载书签数据
+        bookmarkDataCache = {};
+        const counter = getGV(BOOKMARK_ID_COUNTER) || 0;
+        for (let i = 1; i <= counter; i++) {
+            const key = `${BOOKMARK_PREFIX}${i}`;
+            const data = getGV(key);
+            if (data) {
+                bookmarkDataCache[key] = {
+                    sites: data.sites || [],
+                    group: (typeof data.group === 'number') ? data.group : DEFAULT_GROUP_ID,
+                    question: data.question || '',
+                    title: data.title || ''
+                };
+            }
+        }
+        bookmarkCacheLoaded = true;
+    }
+
+    /**
+     * 清除书签缓存（在需要重新加载时调用）
+     */
+    function clearBookmarkCache() {
+        bookmarkDataCache = null;
+        bookmarkGroupsCache = null;
+        bookmarkGroupMapCache = null;
+        bookmarkCacheLoaded = false;
+    }
+
+    /**
+     * 获取书签数据（优先从缓存读取）
      */
     function getBookmarkData(bookmarkKey) {
+        // 如果缓存已加载，优先从缓存读取
+        if (bookmarkCacheLoaded && bookmarkDataCache) {
+            return bookmarkDataCache[bookmarkKey] || null;
+        }
+        // 未加载缓存时，直接读取GM存储
         const data = getGV(bookmarkKey);
         if (!data) return null;
         return {
@@ -6608,12 +6777,20 @@
         const oldGroupId = oldData ? oldData.group : DEFAULT_GROUP_ID;
         const newGroupId = (typeof group === 'number') ? group : DEFAULT_GROUP_ID;
 
-        setGV(bookmarkKey, {
+        const newData = {
             sites: sites || [],
             group: newGroupId,
             question: truncateBookmarkQuestion(question || ''),
             title: title || ''
-        });
+        };
+
+        // 同步更新GM存储
+        setGV(bookmarkKey, newData);
+
+        // 同步更新内存缓存
+        if (bookmarkCacheLoaded && bookmarkDataCache) {
+            bookmarkDataCache[bookmarkKey] = newData;
+        }
 
         // 更新分组映射（如果分组发生变化）
         if (oldGroupId !== newGroupId) {
@@ -7289,6 +7466,9 @@
      * @param {boolean} skipSaveGroup - 是否跳过保存分组选择，true时不更新GV
      */
     function showBookmarkWindow(selectedGroupId = null, skipSaveGroup = false) {
+        // 预加载书签缓存（仅首次加载，后续切换分组时直接使用缓存）
+        loadBookmarkCache();
+
         // 重置选中的书签（每次打开弹窗时）
         selectedBookmarkKey = null;
         
@@ -7434,24 +7614,6 @@
                     }, 100);
                 });
                 
-                // 双击编辑分组名称
-                let lastClickTime = 0;
-                tab.addEventListener('dblclick', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    if (isDragging) return;
-                    
-                    const currentName = text;
-                    const newName = prompt('请输入新的分组名称：', currentName);
-                    if (newName && newName.trim() && newName.trim() !== currentName) {
-                        if (updateSecondLevelGroupName(groupId, newName.trim())) {
-                            showBookmarkWindow(currentGroupId);
-                        } else {
-                            showMessagePopup('分组名称已存在或无效');
-                        }
-                    }
-                });
-                
                 tab.addEventListener('click', (e) => {
                     // 如果刚刚拖拽过，不触发点击事件
                     if (isDragging) {
@@ -7460,36 +7622,22 @@
                         return;
                     }
                     
-                    // 处理双击：如果两次点击间隔很短，可能是双击，延迟处理单击
-                    const now = Date.now();
-                    if (now - lastClickTime < 300) {
-                        // 可能是双击，不处理单击
-                        lastClickTime = 0;
-                        return;
-                    }
-                    lastClickTime = now;
-                    
-                    // 延迟处理单击，避免与双击冲突
-                    setTimeout(() => {
-                        if (lastClickTime === now) {
-                            if (selectedBookmarkKey) {
-                                // 有选中的书签，切换分组
-                                if (setBookmarkGroup(selectedBookmarkKey, groupId)) {
-                                    selectedBookmarkKey = null;
-                                    // 清除所有行的选中状态
-                                    const allRows = document.querySelectorAll('#bookmark-popup tr[data-bookmark-key]');
-                                    allRows.forEach(row => {
-                                        row.style.backgroundColor = '';
-                                    });
-                                    // 迁移后切换到目标分组
-                                    switchToGroup(groupId);
-                                }
-                            } else {
-                                // 没有选中的书签，切换视图
-                                switchToGroup(groupId);
-                            }
+                    if (selectedBookmarkKey) {
+                        // 有选中的书签，切换分组
+                        if (setBookmarkGroup(selectedBookmarkKey, groupId)) {
+                            selectedBookmarkKey = null;
+                            // 清除所有行的选中状态
+                            const allRows = document.querySelectorAll('#bookmark-popup tr[data-bookmark-key]');
+                            allRows.forEach(row => {
+                                row.style.backgroundColor = '';
+                            });
+                            // 迁移后切换到目标分组
+                            switchToGroup(groupId);
                         }
-                    }, 300);
+                    } else {
+                        // 没有选中的书签，切换视图
+                        switchToGroup(groupId);
+                    }
                 });
             } else {
                 // 一级分组或"全部"按钮：只切换视图
