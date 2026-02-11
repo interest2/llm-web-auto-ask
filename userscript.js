@@ -35,6 +35,7 @@
     'use strict';
     console.log("ai script, start");
 
+    let enableSetContentWidth = false; // 是否对特定站点启用内容宽度设置
     let CONTENT_MAX_WIDTH = 830; // 部分站点内容最大宽度 px
     const DEFAULT_WAIT_ELEMENT_TIME = 20000; // 等待元素出现的超时时间
     const MODEL_GROUP_INDEX = 6;
@@ -42,6 +43,7 @@
     const PANEL_COLUMN_WIDTH = "135px";      // 多选面板模型列固定宽度
     const PANEL_SMALL_BUTTON_WIDTH = "40px"; // 全选/清空等小按钮宽度
     const PANEL_DISABLE_BUTTON_COMPACT_WIDTH = "24px"; // 缩略模式下禁用按钮宽度
+    const SHOW_MINDMAP_BTN = false;    // 副目录顶部思维导图按钮是否显示。注意需配合文件头引入markmap库
 
     /******************************************************************************
      * ═══════════════════════════════════════════════════════════════════════
@@ -93,7 +95,7 @@
 
             [ZCHAT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
             [CHATGPT]: () => document.querySelectorAll('[data-message-author-role="user"]'),
-            [GEMINI]: () => document.getElementsByTagName('user-query'),
+            [GEMINI]: () => document.getElementsByClassName('query-text'),
             [STUDIO]: () => document.querySelectorAll('[data-turn-role="User"]'),
             [CLAUDE]: () => document.querySelectorAll('[data-testid="user-message"]'),
             [GROK]: () => document.querySelectorAll('div.items-end .message-bubble')
@@ -1021,7 +1023,9 @@
         let questions = getQuestionList();
         updateNavQuestions(questions);
 
-        setContentWidth();
+        if(enableSetContentWidth){
+            setContentWidth();
+        }
     }, 2000);
 
     // 封装设置思维导图相关left的逻辑（供setContentWidth和hideMindmapPopup复用）
@@ -3152,7 +3156,6 @@
         // 第二行：字体大小、思维导图、最大宽度、位置、靠左、靠右按钮
         const buttonRow = createTag('div', "", NAV_STYLES.subNavButtonRow);
         const fontSizeBtnGroup = createSubNavFontSizeBtnGroup();
-        const mindmapBtn = createSubNavMindmapBtn();
         const maxWidthBtn = createSubNavMaxWidthBtn(buttonRow);
         const positionBtn = createSubNavPositionBtn(buttonRow);
         const alignLeftBtn = createSubNavAlignLeftBtn();
@@ -3166,7 +3169,13 @@
         alignRightBtn.style.top = 'auto';
         alignRightBtn.style.right = 'auto';
         
-        appendSeveral(buttonRow, fontSizeBtnGroup, mindmapBtn, maxWidthBtn, positionBtn, alignLeftBtn, alignRightBtn);
+        // 根据 SHOW_MINDMAP_BTN 配置决定是否添加思维导图按钮
+        if (SHOW_MINDMAP_BTN) {
+            const mindmapBtn = createSubNavMindmapBtn();
+            appendSeveral(buttonRow, fontSizeBtnGroup, mindmapBtn, maxWidthBtn, positionBtn, alignLeftBtn, alignRightBtn);
+        } else {
+            appendSeveral(buttonRow, fontSizeBtnGroup, maxWidthBtn, positionBtn, alignLeftBtn, alignRightBtn);
+        }
         titleContainer.appendChild(buttonRow);
 
         // 添加到副目录栏
@@ -6523,6 +6532,64 @@
         return true;
     }
 
+    // 导出书签数据为JSON
+    function exportBookmarkData() {
+        try {
+            // 收集所有书签数据
+            const allBookmarks = getAllBookmarks();
+            const bookmarksData = {};
+            allBookmarks.forEach(bookmark => {
+                const bookmarkKey = bookmark.bookmarkKey;
+                const bookmarkData = getBookmarkData(bookmarkKey);
+                if (bookmarkData) {
+                    bookmarksData[bookmarkKey] = {
+                        sites: bookmarkData.sites || [],
+                        group: bookmarkData.group || DEFAULT_GROUP_ID,
+                        question: bookmarkData.question || '',
+                        title: bookmarkData.title || ''
+                    };
+                }
+            });
+
+            // 收集分组列表
+            const groups = getBookmarkGroups();
+
+            // 收集分组映射
+            const groupMap = getGroupMap();
+
+            // 收集书签ID计数器
+            const bookmarkIdCounter = getGV(BOOKMARK_ID_COUNTER) || 0;
+
+            // 组装导出数据
+            const exportData = {
+                bookmarks: bookmarksData,
+                groups: groups,
+                groupMap: groupMap,
+                bookmarkIdCounter: bookmarkIdCounter,
+                exportTime: new Date().toISOString()
+            };
+
+            // 转换为JSON字符串
+            const jsonString = JSON.stringify(exportData, null, 2);
+
+            // 创建下载链接
+            const blob = new Blob([jsonString], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `bookmark-export-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            showMessagePopup('书签数据导出成功');
+        } catch (error) {
+            console.error('导出书签数据失败:', error);
+            showMessagePopup('导出失败: ' + error.message);
+        }
+    }
+
     // 删除分组
     function deleteBookmarkGroup(groupName) {
         if (groupName === DEFAULT_GROUP_NAME) {
@@ -7917,6 +7984,17 @@
         addGroupBtn.addEventListener('mouseenter', () => addGroupBtn.style.opacity = '0.85');
         addGroupBtn.addEventListener('mouseleave', () => addGroupBtn.style.opacity = '1');
         buttonContainer.appendChild(addGroupBtn);
+
+        // 导出按钮
+        const exportBtn = createTag('button', '导出', ADD_GROUP_BTN_STYLE);
+        exportBtn.title = '导出书签数据为JSON';
+        exportBtn.style.background = '#ff9800';
+        exportBtn.addEventListener('click', () => {
+            exportBookmarkData();
+        });
+        exportBtn.addEventListener('mouseenter', () => exportBtn.style.opacity = '0.85');
+        exportBtn.addEventListener('mouseleave', () => exportBtn.style.opacity = '1');
+        buttonContainer.appendChild(exportBtn);
         
         tabContainer.appendChild(buttonContainer);
 
