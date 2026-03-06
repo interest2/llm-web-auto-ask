@@ -18,11 +18,11 @@
 // @match        https://grok.com/*
 // @noframes
 // @grant        GM_addStyle
-// @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue
 // @grant        GM_addValueChangeListener
+// @grant        GM_xmlhttpRequest
 // @require      https://cdn.jsdelivr.net/npm/d3@7
 // @require      https://cdn.jsdelivr.net/npm/markmap-view@0.18.12
 // @require      https://cdn.jsdelivr.net/npm/markmap-lib@0.18.12
@@ -70,9 +70,13 @@
 
     // 输入框类型分类
     const inputAreaTypes = {
-        textarea: [DEEPSEEK, TONGYI, DOUBAO, QWEN, STUDIO],
-        lexical: [KIMI, CHATGPT, ZCHAT, GEMINI, CLAUDE, GROK, YUANBAO]
+        textarea: [DEEPSEEK, DOUBAO, QWEN, STUDIO],
+        lexical: [KIMI, TONGYI, CHATGPT, ZCHAT, GEMINI, CLAUDE, GROK, YUANBAO]
     };
+
+    // lexical 输入框，某些站点直接设置 textContent 不会触发框架的响应式更新，
+    // 必须通过派发 ClipboardEvent paste 事件来注入内容的站点
+    const CLIPBOARD_PASTE_SITES = [TONGYI, KIMI];
 
     // 通用输入框选择器，两类：textarea标签、lexical
     const getContenteditableInput = () => document.querySelector('[contenteditable="true"]:has(p)');
@@ -286,16 +290,60 @@
     };
 
     const INVISIBLE_EDGE_CHARS_REGEX = /^[\u200B-\u200D\uFEFF]+|[\u200B-\u200D\uFEFF]+$/g;
+    const PREFIX_DETECT_MIN_COUNT = 2; // 公共前缀检测所需的最小文本数量（detectCommonPrefix 与 Gemini 前缀检测共用）
+
+    // 检测多个文本的公共前缀（用于Gemini站点）。首字符为中文则前缀视为中文（最小长度2），否则为英文（最小长度3）
+    const detectCommonPrefix = (texts, maxPrefixLength = 12) => {
+        if (!texts || texts.length < PREFIX_DETECT_MIN_COUNT) return '';
+        
+        // 取前 N 个文本的前 maxPrefixLength 个字符
+        const samples = texts.slice(0, PREFIX_DETECT_MIN_COUNT).map(text => {
+            const cleaned = text.replace(INVISIBLE_EDGE_CHARS_REGEX, '').trim();
+            return cleaned.substring(0, maxPrefixLength);
+        });
+        
+        // 如果任何一个样本为空，返回空字符串
+        if (samples.some(s => !s || s.length === 0)) return '';
+        
+        // 找到最短的样本长度
+        const minLength = Math.min(...samples.map(s => s.length));
+        
+        // 逐字符比较找公共前缀
+        let commonPrefix = '';
+        for (let i = 0; i < minLength; i++) {
+            const char = samples[0][i];
+            if (samples.every(s => s[i] === char)) {
+                commonPrefix += char;
+            } else {
+                break;
+            }
+        }
+        
+        const isChineseFirst = /[\u4e00-\u9fff]/.test(samples[0][0]);
+        const minPrefixLen = isChineseFirst ? 2 : 3;
+        return commonPrefix.length >= minPrefixLen ? commonPrefix : '';
+    };
 
     // 标准化问题文本：移除头尾不可见字符 + 特定站点前缀
     const normalizeQuestionText = (text) => {
         if (!text) return '';
         const cleanedText = text.replace(INVISIBLE_EDGE_CHARS_REGEX, '');
         const trimmedText = cleanedText.trim();
-        const removeWord = 'User';
-        if (site === STUDIO && trimmedText.startsWith(removeWord)) {
-            return trimmedText.substring(removeWord.length).trim();
+        
+        // STUDIO 站点移除 "User" 前缀
+        const removeWordStudio = 'User';
+        if (site === STUDIO && trimmedText.startsWith(removeWordStudio)) {
+            return trimmedText.substring(removeWordStudio.length).trim();
         }
+        
+        // GEMINI 站点移除前缀（优先使用动态检测的前缀，否则使用默认的 "You said "）
+        if (site === GEMINI) {
+            const detectedPrefix = getS(GEMINI_PREFIX_KEY) || 'You said ';
+            if (trimmedText.startsWith(detectedPrefix)) {
+                return trimmedText.substring(detectedPrefix.length).trim();
+            }
+        }
+        
         return trimmedText;
     };
 
@@ -574,11 +622,17 @@
     async function pasteContent(editor, content) {
         return new Promise((resolve) => {
             setTimeout(() => {
-                // 输入框粘贴文字，大致分两类处理。其中第一类里 kimi 特殊处理
+                // 输入框粘贴文字，大致分两类处理。其中第一类部分站点特殊处理
                 //  第一类（lexical）
                 if (inputAreaTypes.lexical.includes(site)) {
-                    if ([KIMI].includes(site)) {
-                        editor.dispatchEvent(new InputEvent('input', { bubbles: true, data: content }));
+                   if (CLIPBOARD_PASTE_SITES.includes(site)) {
+                        const dataTransfer = new DataTransfer();
+                        dataTransfer.setData('text/plain', content);
+                        editor.dispatchEvent(new ClipboardEvent('paste', { 
+                            clipboardData: dataTransfer, 
+                            bubbles: true, 
+                            cancelable: true 
+                        }));
                     } else {
                         editor.textContent = content;
                     }
@@ -1366,6 +1420,7 @@
     const TOGGLE_LEFT_KEY = T + 'theBtnLeft';
     const TOGGLE_LEVEL_KEY = T + 'theLevel';
     const TOGGLE_LEFT_DATE_KEY = T + 'theBtnLeftDate';
+    const GEMINI_PREFIX_KEY = T + 'questionPrefix'; // Gemini站点自动检测的前缀
 
     const BUTTON_INPUT_GAP = site === GEMINI ? 40 : 20; // 按钮与输入框的间距
     const DEFAULT_LEFT_OFFSET = 40; // 默认left值的偏移量
@@ -1818,6 +1873,7 @@
     let isSubNavLevelManuallySet = false; // 用户是否手动选择了层级
     let h1Count = 0; // h1标题的数量
     let navCountText = null; // 主目录条数显示元素
+    let hasDetectedGeminiPrefix = false; // Gemini站点是否已检测过前缀（每次页面加载只检测一次）
 
     // 获取过滤后的标题列表（公共方法，供副目录和思维导图复用）
     const getFilteredHeadings = () => {
@@ -3661,6 +3717,16 @@
 
         navBar.appendChild(createTitle());
         navQuestions = thisQuestions;
+
+        // Gemini站点：检测并保存公共前缀（每次页面加载只检测一次）
+        if (site === GEMINI && !hasDetectedGeminiPrefix && navQuestions.length >= PREFIX_DETECT_MIN_COUNT) {
+            const questionTexts = navQuestions.map(el => el.textContent || el.innerText || '');
+            const commonPrefix = detectCommonPrefix(questionTexts);
+            if (commonPrefix) {
+                setS(GEMINI_PREFIX_KEY, commonPrefix);
+            }
+            hasDetectedGeminiPrefix = true; // 标记为已检测
+        }
 
         navQuestions.forEach((el, i) => {
             if(!el?.tagName) return;
